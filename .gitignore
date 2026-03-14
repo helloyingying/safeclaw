@@ -1,0 +1,40 @@
+# Node dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+lib/
+coverage/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+
+# Optional npm cache
+.npm/
+.pnpm-store/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Misc
+*.tmp
+npm-debug.log*
+coverage/

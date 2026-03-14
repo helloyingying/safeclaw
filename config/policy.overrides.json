@@ -1,1 +1,90 @@
-{}
+{
+  "updated_at": "2026-03-14T12:47:44.702Z",
+  "environment": "prod",
+  "risk": {
+    "base_score": 35,
+    "warn_threshold": 46,
+    "challenge_threshold": 64,
+    "block_threshold": 80
+  },
+  "policies": [
+    {
+      "rule_id": "prod-shell-block",
+      "enabled": false,
+      "priority": 100,
+      "decision": "block",
+      "reason_codes": [
+        "SCOPE_DENY",
+        "PROD_SHELL_BLOCK"
+      ],
+      "match": {
+        "scope": [
+          "prod"
+        ],
+        "tool": [
+          "shell.exec",
+          "exec"
+        ]
+      }
+    },
+    {
+      "rule_id": "contractor-network-challenge",
+      "enabled": false,
+      "priority": 80,
+      "decision": "challenge",
+      "risk_threshold": 55,
+      "reason_codes": [
+        "IDENTITY_REQUIRES_APPROVAL"
+      ],
+      "challenge": {
+        "ttl_seconds": 600
+      },
+      "match": {
+        "identity": [
+          "contractor"
+        ],
+        "tool": [
+          "network.http"
+        ]
+      }
+    },
+    {
+      "rule_id": "prod-filesystem-list-challenge",
+      "enabled": false,
+      "priority": 75,
+      "decision": "challenge",
+      "reason_codes": [
+        "SCOPE_DENY",
+        "PROD_FILE_ENUMERATION_REQUIRES_APPROVAL"
+      ],
+      "challenge": {
+        "ttl_seconds": 600
+      },
+      "match": {
+        "scope": [
+          "prod"
+        ],
+        "tool": [
+          "filesystem.list"
+        ]
+      }
+    },
+    {
+      "rule_id": "finance-write-warn",
+      "enabled": false,
+      "priority": 60,
+      "decision": "warn",
+      "reason_codes": [
+        "FINANCE_WRITE_AUDIT"
+      ],
+      "match": {
+        "scope": [
+          "finance"
+        ],
+        "tool": [
+          "filesystem.write"
+        ]
+      }
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import { RiskScorer } from "./src/engine/risk_scorer.ts";
 import { RuleEngine } from "./src/engine/rule_engine.ts";
 import { EventEmitter, HttpEventSink } from "./src/events/emitter.ts";
 import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
+import { startAdminServer } from "./admin/server.ts";
 import type {
   DecisionContext,
   DlpFinding,
@@ -43,6 +44,8 @@ type SafeClawPluginConfig = {
   persistMode?: "strict" | "compat";
   decisionLogMaxLength?: number;
   statusPath?: string;
+  adminAutoStart?: boolean;
+  adminPort?: number;
 };
 
 type ResolvedSecurityConfig = {
@@ -246,6 +249,7 @@ const plugin = {
     const resolved = toSecurityConfig(api);
     const config = resolved.config;
     const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
+    const adminAutoStart = pluginConfig.adminAutoStart ?? true;
     const decisionLogMaxLength = pluginConfig.decisionLogMaxLength ?? 240;
     const statusPath = pluginConfig.statusPath
       ? path.isAbsolute(pluginConfig.statusPath)
@@ -266,6 +270,22 @@ const plugin = {
       override_path: resolved.overridePath,
       override_loaded: resolved.overrideLoaded
     });
+    if (adminAutoStart) {
+      void startAdminServer({
+        port: pluginConfig.adminPort,
+        configPath: resolved.configPath,
+        overridePath: resolved.overridePath,
+        statusPath,
+        logger: {
+          info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
+          warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`)
+        }
+      }).catch((error) => {
+        api.logger.warn?.(`safeclaw: failed to auto-start admin dashboard (${String(error)})`);
+      });
+    } else {
+      api.logger.info?.("safeclaw: admin auto-start disabled by config");
+    }
 
     api.logger.info?.(
       `safeclaw: boot env=${config.environment} policy_version=${config.policy_version} dlp_mode=${config.dlp.on_dlp_hit} rules=${config.policies.length}`,

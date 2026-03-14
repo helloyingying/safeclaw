@@ -13,10 +13,40 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.resolve(ROOT, "admin/public");
-const PORT = Number(process.env.SAFECLAW_ADMIN_PORT ?? 4780);
-const CONFIG_PATH = process.env.SAFECLAW_CONFIG_PATH ?? path.resolve(ROOT, "config/policy.default.yaml");
-const OVERRIDE_PATH = process.env.SAFECLAW_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
-const STATUS_PATH = process.env.SAFECLAW_STATUS_PATH ?? path.resolve(ROOT, "runtime/safeclaw-status.json");
+const DEFAULT_PORT = Number(process.env.SAFECLAW_ADMIN_PORT ?? 4780);
+const DEFAULT_CONFIG_PATH = process.env.SAFECLAW_CONFIG_PATH ?? path.resolve(ROOT, "config/policy.default.yaml");
+const DEFAULT_OVERRIDE_PATH = process.env.SAFECLAW_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
+const DEFAULT_STATUS_PATH = process.env.SAFECLAW_STATUS_PATH ?? path.resolve(ROOT, "runtime/safeclaw-status.json");
+
+type AdminLogger = {
+  info?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+};
+
+type AdminServerOptions = {
+  port?: number;
+  configPath?: string;
+  overridePath?: string;
+  statusPath?: string;
+  logger?: AdminLogger;
+};
+
+type AdminRuntime = {
+  port: number;
+  configPath: string;
+  overridePath: string;
+  statusPath: string;
+};
+
+type AdminServerStartResult = {
+  state: "started" | "already-running";
+  runtime: AdminRuntime;
+};
+
+type GlobalWithSafeClawAdmin = typeof globalThis & {
+  __safeclawAdminStartPromise?: Promise<AdminServerStartResult>;
+};
 
 type JsonRecord = Record<string, unknown>;
 
@@ -46,32 +76,21 @@ async function readBody(req: http.IncomingMessage): Promise<JsonRecord> {
   return parsed as JsonRecord;
 }
 
-function safeReadStatus(): JsonRecord {
-  if (!existsSync(STATUS_PATH)) {
+function safeReadStatus(statusPath: string): JsonRecord {
+  if (!existsSync(statusPath)) {
     return {
       message: "status file not found yet",
-      status_path: STATUS_PATH
+      status_path: statusPath
     };
   }
   try {
-    return JSON.parse(readFileSync(STATUS_PATH, "utf8")) as JsonRecord;
+    return JSON.parse(readFileSync(statusPath, "utf8")) as JsonRecord;
   } catch {
     return {
       message: "status file exists but cannot be parsed",
-      status_path: STATUS_PATH
+      status_path: statusPath
     };
   }
-}
-
-function readEffectivePolicy(): {
-  base: ReturnType<ConfigManager["getConfig"]>;
-  effective: ReturnType<ConfigManager["getConfig"]>;
-  override?: RuntimeOverride;
-} {
-  const base = ConfigManager.fromFile(CONFIG_PATH).getConfig();
-  const override = readRuntimeOverride(OVERRIDE_PATH);
-  const effective = override ? applyRuntimeOverride(base, override) : base;
-  return { base, effective, override };
 }
 
 function summarizeTotals(status: JsonRecord): JsonRecord {
@@ -91,16 +110,21 @@ function summarizeTotals(status: JsonRecord): JsonRecord {
   return { total, allow, warn, challenge, block };
 }
 
-function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
+function handleApi(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+  runtime: AdminRuntime,
+): void {
   if (req.method === "GET" && url.pathname === "/api/status") {
     try {
-      const status = safeReadStatus();
-      const { effective, override } = readEffectivePolicy();
+      const status = safeReadStatus(runtime.statusPath);
+      const { effective, override } = readEffectivePolicy(runtime);
       sendJson(res, 200, {
         paths: {
-          config_path: CONFIG_PATH,
-          override_path: OVERRIDE_PATH,
-          status_path: STATUS_PATH
+          config_path: runtime.configPath,
+          override_path: runtime.overridePath,
+          status_path: runtime.statusPath
         },
         status,
         totals: summarizeTotals(status),
@@ -120,11 +144,11 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL
 
   if (req.method === "GET" && url.pathname === "/api/strategy") {
     try {
-      const { effective, override } = readEffectivePolicy();
+      const { effective, override } = readEffectivePolicy(runtime);
       sendJson(res, 200, {
         paths: {
-          config_path: CONFIG_PATH,
-          override_path: OVERRIDE_PATH
+          config_path: runtime.configPath,
+          override_path: runtime.overridePath
         },
         override: override ?? {},
         strategy: {
@@ -149,7 +173,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     void (async () => {
       try {
         const body = await readBody(req);
-        const current = readRuntimeOverride(OVERRIDE_PATH) ?? {};
+        const current = readRuntimeOverride(runtime.overridePath) ?? {};
 
         const nextOverride: RuntimeOverride = {
           ...current,
@@ -168,9 +192,9 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL
               : current.policies
         };
 
-        const base = ConfigManager.fromFile(CONFIG_PATH).getConfig();
+        const base = ConfigManager.fromFile(runtime.configPath).getConfig();
         const validated = applyRuntimeOverride(base, nextOverride);
-        writeRuntimeOverride(OVERRIDE_PATH, nextOverride);
+        writeRuntimeOverride(runtime.overridePath, nextOverride);
 
         sendJson(res, 200, {
           ok: true,
@@ -211,18 +235,92 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: U
   sendText(res, 200, readFileSync(absolute, "utf8"), contentType);
 }
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  if (url.pathname.startsWith("/api/")) {
-    handleApi(req, res, url);
-    return;
-  }
-  serveStatic(req, res, url);
-});
+function readEffectivePolicy(runtime: AdminRuntime): {
+  base: ReturnType<ConfigManager["getConfig"]>;
+  effective: ReturnType<ConfigManager["getConfig"]>;
+  override?: RuntimeOverride;
+} {
+  const base = ConfigManager.fromFile(runtime.configPath).getConfig();
+  const override = readRuntimeOverride(runtime.overridePath);
+  const effective = override ? applyRuntimeOverride(base, override) : base;
+  return { base, effective, override };
+}
 
-server.listen(PORT, () => {
-  console.log(`SafeClaw admin listening on http://127.0.0.1:${PORT}`);
-  console.log(`Using config: ${CONFIG_PATH}`);
-  console.log(`Using override: ${OVERRIDE_PATH}`);
-  console.log(`Using status: ${STATUS_PATH}`);
-});
+function resolveRuntime(options: AdminServerOptions): AdminRuntime {
+  return {
+    port: options.port ?? DEFAULT_PORT,
+    configPath: options.configPath ?? DEFAULT_CONFIG_PATH,
+    overridePath: options.overridePath ?? DEFAULT_OVERRIDE_PATH,
+    statusPath: options.statusPath ?? DEFAULT_STATUS_PATH
+  };
+}
+
+export function startAdminServer(options: AdminServerOptions = {}): Promise<AdminServerStartResult> {
+  const state = globalThis as GlobalWithSafeClawAdmin;
+  if (state.__safeclawAdminStartPromise) {
+    return state.__safeclawAdminStartPromise;
+  }
+
+  const runtime = resolveRuntime(options);
+  const logger: AdminLogger = options.logger ?? {
+    info: (message: string) => console.log(message),
+    warn: (message: string) => console.warn(message),
+    error: (message: string) => console.error(message)
+  };
+
+  const startPromise = new Promise<AdminServerStartResult>((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      if (url.pathname.startsWith("/api/")) {
+        handleApi(req, res, url, runtime);
+        return;
+      }
+      serveStatic(req, res, url);
+    });
+
+    let resolved = false;
+    server.once("error", (error: Error & { code?: string }) => {
+      if (error.code === "EADDRINUSE") {
+        resolved = true;
+        logger.warn?.(
+          `SafeClaw admin already running on http://127.0.0.1:${runtime.port} (port in use); reusing existing server.`,
+        );
+        resolve({ state: "already-running", runtime });
+        return;
+      }
+      logger.error?.(`SafeClaw admin failed to start: ${String(error)}`);
+      reject(error);
+    });
+
+    server.listen(runtime.port, "127.0.0.1", () => {
+      resolved = true;
+      logger.info?.(`SafeClaw admin listening on http://127.0.0.1:${runtime.port}`);
+      logger.info?.(`Using config: ${runtime.configPath}`);
+      logger.info?.(`Using override: ${runtime.overridePath}`);
+      logger.info?.(`Using status: ${runtime.statusPath}`);
+      resolve({ state: "started", runtime });
+    });
+
+    server.on("close", () => {
+      const current = globalThis as GlobalWithSafeClawAdmin;
+      if (current.__safeclawAdminStartPromise && resolved) {
+        delete current.__safeclawAdminStartPromise;
+      }
+    });
+  });
+
+  state.__safeclawAdminStartPromise = startPromise.catch((error) => {
+    delete state.__safeclawAdminStartPromise;
+    throw error;
+  });
+  return state.__safeclawAdminStartPromise;
+}
+
+const thisFile = fileURLToPath(import.meta.url);
+const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : undefined;
+if (entryFile && entryFile === thisFile) {
+  void startAdminServer().catch((error) => {
+    console.error(`SafeClaw admin startup failed: ${String(error)}`);
+    process.exitCode = 1;
+  });
+}

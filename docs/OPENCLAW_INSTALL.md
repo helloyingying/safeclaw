@@ -30,7 +30,9 @@ Add this to `~/.openclaw/openclaw.json`:
         "config": {
           "configPath": "./config/policy.default.yaml",
           "overridePath": "./config/policy.overrides.json",
-          "statusPath": "./runtime/safeclaw-status.json"
+          "statusPath": "./runtime/safeclaw-status.json",
+          "adminAutoStart": true,
+          "adminPort": 4780
         }
       }
     }
@@ -49,6 +51,8 @@ Add this to `~/.openclaw/openclaw.json`:
 - `config.configPath` is resolved relative to the plugin root, so `./config/policy.default.yaml` points to this repo's default policy.
 - `config.overridePath` stores dashboard-updated strategy overrides (JSON). Keep this file under versioned backup if needed.
 - `config.statusPath` is written continuously by SafeClaw and powers runtime status in the admin panel.
+- `config.adminAutoStart` defaults to `true`, so dashboard starts automatically after plugin load.
+- `config.adminPort` controls dashboard bind port (default `4780`).
 - If you want webhook audit delivery, set `plugins.entries.safeclaw.config.webhookUrl`.
 - `before_tool_call` policy matching uses plugin `environment` as default `scope` (default is `prod`). Keep this value aligned with your target environment so sensitive tools can be blocked by scope rules.
 - `before_tool_call` maps `challenge` to a blocked call with an approval-required reason because OpenClaw does not expose a native pause-and-resume approval hook in this path.

@@ -1,0 +1,57 @@
+{
+  "updated_at": "2026-03-14T12:55:43.155Z",
+  "started_at": "2026-03-14T12:55:43.155Z",
+  "config": {
+    "environment": "prod",
+    "policy_version": "2026-03-13",
+    "policy_count": 4,
+    "config_path": "/Users/liuzhuangm4/develop/safeclaw/config/policy.default.yaml",
+    "override_path": "/Users/liuzhuangm4/develop/safeclaw/config/policy.overrides.json",
+    "override_loaded": true
+  },
+  "hooks": {
+    "before_prompt_build": {
+      "total": 0,
+      "allow": 0,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0
+    },
+    "before_tool_call": {
+      "total": 0,
+      "allow": 0,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0
+    },
+    "after_tool_call": {
+      "total": 0,
+      "allow": 0,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0
+    },
+    "tool_result_persist": {
+      "total": 0,
+      "allow": 0,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0
+    },
+    "before_message_write": {
+      "total": 0,
+      "allow": 0,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0
+    },
+    "message_sending": {
+      "total": 0,
+      "allow": 0,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0
+    }
+  },
+  "recent_decisions": []
+}
