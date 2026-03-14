@@ -1,6 +1,6 @@
 {
-  "updated_at": "2026-03-14T12:55:43.155Z",
-  "started_at": "2026-03-14T12:55:43.155Z",
+  "updated_at": "2026-03-14T13:30:28.595Z",
+  "started_at": "2026-03-14T13:29:04.366Z",
   "config": {
     "environment": "prod",
     "policy_version": "2026-03-13",
@@ -11,32 +11,42 @@
   },
   "hooks": {
     "before_prompt_build": {
-      "total": 0,
-      "allow": 0,
+      "total": 1,
+      "allow": 1,
       "warn": 0,
       "challenge": 0,
-      "block": 0
+      "block": 0,
+      "last_ts": "2026-03-14T13:30:22.121Z",
+      "last_scope": "workspace"
     },
     "before_tool_call": {
-      "total": 0,
+      "total": 1,
       "allow": 0,
       "warn": 0,
       "challenge": 0,
-      "block": 0
+      "block": 1,
+      "last_ts": "2026-03-14T13:30:28.571Z",
+      "last_tool": "shell.exec",
+      "last_scope": "prod"
     },
     "after_tool_call": {
-      "total": 0,
-      "allow": 0,
+      "total": 1,
+      "allow": 1,
       "warn": 0,
       "challenge": 0,
-      "block": 0
+      "block": 0,
+      "last_ts": "2026-03-14T13:30:28.593Z",
+      "last_tool": "exec",
+      "last_scope": "prod"
     },
     "tool_result_persist": {
-      "total": 0,
-      "allow": 0,
+      "total": 1,
+      "allow": 1,
       "warn": 0,
       "challenge": 0,
-      "block": 0
+      "block": 0,
+      "last_ts": "2026-03-14T13:30:28.595Z",
+      "last_tool": "exec"
     },
     "before_message_write": {
       "total": 0,
@@ -53,5 +63,56 @@
       "block": 0
     }
   },
-  "recent_decisions": []
+  "recent_decisions": [
+    {
+      "ts": "2026-03-14T13:30:28.595Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_KQUBorWbQ8tPYmOtwH97RKGn|fc_0622fcb1999661ee0169b562f396bc8191a61039e089ae0632",
+      "tool": "exec",
+      "decision": "allow",
+      "risk": 0,
+      "reasons": [
+        "PERSIST_OK"
+      ]
+    },
+    {
+      "ts": "2026-03-14T13:30:28.593Z",
+      "hook": "after_tool_call",
+      "trace_id": "eae95f9e-5285-4d80-8687-f6374285f866",
+      "actor": "main",
+      "scope": "prod",
+      "tool": "exec",
+      "decision": "allow",
+      "risk": 0,
+      "reasons": [
+        "RESULT_OK"
+      ]
+    },
+    {
+      "ts": "2026-03-14T13:30:28.571Z",
+      "hook": "before_tool_call",
+      "trace_id": "eae95f9e-5285-4d80-8687-f6374285f866",
+      "actor": "main",
+      "scope": "prod",
+      "tool": "shell.exec",
+      "decision": "block",
+      "risk": 100,
+      "reasons": [
+        "RISK_BLOCK_THRESHOLD"
+      ],
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-14T13:30:22.121Z",
+      "hook": "before_prompt_build",
+      "trace_id": "eb8ad096-d0d3-4cba-bd51-240bf0fb55e3",
+      "actor": "main",
+      "scope": "workspace",
+      "decision": "allow",
+      "risk": 0,
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ]
+    }
+  ]
 }

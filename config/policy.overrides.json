@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-03-14T12:47:44.702Z",
+  "updated_at": "2026-03-14T13:21:24.355Z",
   "environment": "prod",
   "risk": {
     "base_score": 35,
@@ -29,7 +29,7 @@
     },
     {
       "rule_id": "contractor-network-challenge",
-      "enabled": false,
+      "enabled": true,
       "priority": 80,
       "decision": "challenge",
       "risk_threshold": 55,
@@ -50,7 +50,7 @@
     },
     {
       "rule_id": "prod-filesystem-list-challenge",
-      "enabled": false,
+      "enabled": true,
       "priority": 75,
       "decision": "challenge",
       "reason_codes": [
@@ -71,7 +71,7 @@
     },
     {
       "rule_id": "finance-write-warn",
-      "enabled": false,
+      "enabled": true,
       "priority": 60,
       "decision": "warn",
       "reason_codes": [

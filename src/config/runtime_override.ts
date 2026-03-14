@@ -5,18 +5,18 @@ import type { DlpConfig, PolicyRule, RiskWeights, SafeClawConfig } from "../type
 import { validateConfig } from "./validator.ts";
 
 export type RuntimeOverride = {
-  updated_at?: string;
-  environment?: string;
-  policy_version?: string;
-  defaults?: Partial<SafeClawConfig["defaults"]>;
-  risk?: Partial<Omit<RiskWeights, "tags" | "tools" | "scopes" | "identities">> & {
+  updated_at?: string | undefined;
+  environment?: string | undefined;
+  policy_version?: string | undefined;
+  defaults?: Partial<SafeClawConfig["defaults"]> | undefined;
+  risk?: (Partial<Omit<RiskWeights, "tags" | "tools" | "scopes" | "identities">> & {
     tags?: Record<string, number>;
     tools?: Record<string, number>;
     scopes?: Record<string, number>;
     identities?: Record<string, number>;
-  };
-  policies?: PolicyRule[];
-  dlp?: Partial<Omit<DlpConfig, "patterns">> & { patterns?: DlpConfig["patterns"] };
+  }) | undefined;
+  policies?: PolicyRule[] | undefined;
+  dlp?: (Partial<Omit<DlpConfig, "patterns">> & { patterns?: DlpConfig["patterns"]; }) | undefined;
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {

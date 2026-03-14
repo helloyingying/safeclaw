@@ -1,4 +1,5 @@
 import http from "node:http";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +31,7 @@ type AdminServerOptions = {
   overridePath?: string;
   statusPath?: string;
   logger?: AdminLogger;
+  reclaimPortOnStart?: boolean;
 };
 
 type AdminRuntime = {
@@ -231,6 +233,8 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: U
         ? "text/javascript; charset=utf-8"
         : ext === ".css"
           ? "text/css; charset=utf-8"
+          : ext === ".svg"
+            ? "image/svg+xml"
           : "application/octet-stream";
   sendText(res, 200, readFileSync(absolute, "utf8"), contentType);
 }
@@ -243,7 +247,7 @@ function readEffectivePolicy(runtime: AdminRuntime): {
   const base = ConfigManager.fromFile(runtime.configPath).getConfig();
   const override = readRuntimeOverride(runtime.overridePath);
   const effective = override ? applyRuntimeOverride(base, override) : base;
-  return { base, effective, override };
+  return override !== undefined ? { base, effective, override } : { base, effective };
 }
 
 function resolveRuntime(options: AdminServerOptions): AdminRuntime {
@@ -253,6 +257,57 @@ function resolveRuntime(options: AdminServerOptions): AdminRuntime {
     overridePath: options.overridePath ?? DEFAULT_OVERRIDE_PATH,
     statusPath: options.statusPath ?? DEFAULT_STATUS_PATH
   };
+}
+
+function parsePids(output: string): number[] {
+  return output
+    .split(/\s+/)
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function listListeningPidsByPort(port: number): number[] {
+  const result = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8" });
+  if (result.error || result.status !== 0) {
+    return [];
+  }
+  return parsePids(result.stdout);
+}
+
+function readProcessCommand(pid: number): string {
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+  if (result.error || result.status !== 0) {
+    return "";
+  }
+  return result.stdout.trim();
+}
+
+function looksLikeOpenClawProcess(command: string): boolean {
+  return /(openclaw|safeclaw|admin\/server|gateway)/i.test(command);
+}
+
+function reclaimAdminPort(port: number, logger: AdminLogger): void {
+  const pids = listListeningPidsByPort(port);
+  for (const pid of pids) {
+    if (pid === process.pid) {
+      continue;
+    }
+
+    const command = readProcessCommand(pid);
+    if (!looksLikeOpenClawProcess(command)) {
+      logger.warn?.(
+        `SafeClaw admin: port ${port} is in use by pid=${pid}, but command is not OpenClaw/SafeClaw; skip terminate.`,
+      );
+      continue;
+    }
+
+    try {
+      process.kill(pid, "SIGKILL");
+      logger.warn?.(`SafeClaw admin: killed stale admin process pid=${pid} on port ${port}.`);
+    } catch (error) {
+      logger.warn?.(`SafeClaw admin: failed to kill pid=${pid} on port ${port} (${String(error)}).`);
+    }
+  }
 }
 
 export function startAdminServer(options: AdminServerOptions = {}): Promise<AdminServerStartResult> {
@@ -267,6 +322,11 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     warn: (message: string) => console.warn(message),
     error: (message: string) => console.error(message)
   };
+  const reclaimPortOnStart = options.reclaimPortOnStart ?? true;
+
+  if (reclaimPortOnStart) {
+    reclaimAdminPort(runtime.port, logger);
+  }
 
   const startPromise = new Promise<AdminServerStartResult>((resolve, reject) => {
     const server = http.createServer((req, res) => {
