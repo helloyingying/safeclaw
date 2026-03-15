@@ -102,6 +102,12 @@ button.ghost {
   font-weight: 700;
 }
 
+button.small {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
 button.primary {
   color: #fff;
   background: linear-gradient(135deg, #0f6ea9 0%, #16a0cf 100%);
@@ -162,11 +168,21 @@ button.ghost {
   gap: 14px;
 }
 
+.card-head {
+  margin-bottom: 14px;
+}
+
 .workspace-title h1 {
   margin: 8px 0 0;
   font-size: clamp(34px, 4vw, 58px);
   line-height: 0.98;
   letter-spacing: -0.04em;
+}
+
+.workspace-nav {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 4px;
 }
 
 .card-head h2,
@@ -264,6 +280,10 @@ button.ghost {
 
 .tab-panel {
   animation: rise-in 220ms ease;
+}
+
+.card-head-compact {
+  margin-bottom: 20px;
 }
 
 .overview-grid {
@@ -546,26 +566,93 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 
-.rule-label {
+.rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rule-action-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(141, 171, 201, 0.26);
+  background: rgba(255, 255, 255, 0.82);
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
 }
 
-.rule-select {
-  min-width: 150px;
-  min-height: 42px;
-  padding: 0 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(141, 171, 201, 0.36);
+.rule-action-button.active {
   color: var(--ink);
-  background: #fff;
+  box-shadow: 0 8px 18px rgba(16, 44, 76, 0.08);
+}
+
+.rule-action-button.allow.active {
+  border-color: rgba(24, 117, 95, 0.28);
+  background: rgba(24, 117, 95, 0.12);
+  color: var(--good);
+}
+
+.rule-action-button.warn.active,
+.rule-action-button.challenge.active {
+  border-color: rgba(169, 98, 17, 0.28);
+  background: rgba(169, 98, 17, 0.12);
+  color: var(--warn);
+}
+
+.rule-action-button.block.active {
+  border-color: rgba(192, 58, 75, 0.28);
+  background: rgba(192, 58, 75, 0.12);
+  color: var(--bad);
 }
 
 .rule-desc {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.pagination {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(141, 171, 201, 0.18);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pagination-summary {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.page-button {
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(141, 171, 201, 0.24);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.page-button.active {
+  border-color: rgba(15, 110, 169, 0.28);
+  background: linear-gradient(135deg, rgba(15, 110, 169, 0.16) 0%, rgba(22, 160, 207, 0.1) 100%);
+  color: var(--ink);
 }
 
 @keyframes rise-in {
@@ -627,6 +714,10 @@ tbody tr:hover {
     flex-basis: auto;
   }
 
+  .pagination {
+    align-items: stretch;
+  }
+
   th,
   td {
     padding: 12px 10px;
@@ -653,6 +744,10 @@ tbody tr:hover {
 
   .tab-count {
     min-width: 24px;
+  }
+
+  .pagination-controls {
+    width: 100%;
   }
 }
 

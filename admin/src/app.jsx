@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 const REFRESH_INTERVAL_MS = 15000;
+const DECISIONS_PER_PAGE = 12;
 const TAB_ITEMS = [
   {
     id: "overview",
@@ -131,6 +132,16 @@ function formatPercent(value, total) {
   return `${Math.round((value / total) * 100)}%`;
 }
 
+function buildPageItems(currentPage, totalPages) {
+  if (totalPages <= 5) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+  const start = Math.max(1, currentPage - 2);
+  const end = Math.min(totalPages, start + 4);
+  const adjustedStart = Math.max(1, end - 4);
+  return Array.from({ length: end - adjustedStart + 1 }, (_, index) => adjustedStart + index);
+}
+
 function DecisionTag({ decision }) {
   return <span className={`tag ${decision || "allow"}`}>{decisionLabel(decision)}</span>;
 }
@@ -144,6 +155,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
+  const [decisionPage, setDecisionPage] = useState(1);
 
   const hasPendingChanges = useMemo(
     () => JSON.stringify(policies) !== JSON.stringify(publishedPolicies),
@@ -200,6 +212,14 @@ function App() {
   const totals = statusPayload?.totals || {};
   const decisions = toArray(statusPayload?.status?.recent_decisions);
   const latestDecision = decisions[0] || null;
+  const totalDecisionPages = Math.max(1, Math.ceil(decisions.length / DECISIONS_PER_PAGE));
+  const pagedDecisions = decisions.slice(
+    (decisionPage - 1) * DECISIONS_PER_PAGE,
+    decisionPage * DECISIONS_PER_PAGE
+  );
+  const pageItems = buildPageItems(decisionPage, totalDecisionPages);
+  const firstDecisionIndex = decisions.length === 0 ? 0 : (decisionPage - 1) * DECISIONS_PER_PAGE + 1;
+  const lastDecisionIndex = Math.min(decisionPage * DECISIONS_PER_PAGE, decisions.length);
 
   const stats = {
     total: Number(totals.total || 0),
@@ -251,6 +271,10 @@ function App() {
     return () => clearTimeout(timer);
   }, [hasPendingChanges, loading, policies, savePolicies, saving]);
 
+  useEffect(() => {
+    setDecisionPage((current) => Math.min(current, totalDecisionPages));
+  }, [totalDecisionPages]);
+
   function onDecisionChange(index, decision) {
     setPolicies((current) => {
       const next = clone(current);
@@ -287,30 +311,32 @@ function App() {
           </div>
         </div>
 
-        <div className="tablist" role="tablist" aria-label="后台模块页签">
-          {TAB_ITEMS.map((tab) => (
-            <button
-              key={tab.id}
-              id={`tab-${tab.id}`}
-              className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === tab.id}
-              aria-controls={`panel-${tab.id}`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              <span className="tab-label">{tab.label}</span>
-              <span className="tab-count">{tabCounts[tab.id]}</span>
-            </button>
-          ))}
-        </div>
-
-        {shouldShowStatus ? (
-          <div className={`status-inline ${statusTone}`}>
-            <span className="status-dot" />
-            <span>{statusMessage}</span>
+        <div className="workspace-nav">
+          <div className="tablist" role="tablist" aria-label="后台模块页签">
+            {TAB_ITEMS.map((tab) => (
+              <button
+                key={tab.id}
+                id={`tab-${tab.id}`}
+                className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                aria-controls={`panel-${tab.id}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <span className="tab-label">{tab.label}</span>
+                <span className="tab-count">{tabCounts[tab.id]}</span>
+              </button>
+            ))}
           </div>
-        ) : null}
+
+          {shouldShowStatus ? (
+            <div className={`status-inline ${statusTone}`}>
+              <span className="status-dot" />
+              <span>{statusMessage}</span>
+            </div>
+          ) : null}
+        </div>
 
         {activeTab === "overview" ? (
           <section
@@ -388,11 +414,11 @@ function App() {
             aria-labelledby="tab-events"
           >
             <div className="panel-card">
-              <div className="card-head">
+              <div className="card-head card-head-compact">
                 <h2>决策记录</h2>
                 <div className="header-actions">
                   <button
-                    className="ghost"
+                    className="ghost small"
                     type="button"
                     onClick={() => void loadData(!hasPendingChanges && !saving, false)}
                   >
@@ -400,8 +426,8 @@ function App() {
                   </button>
                 </div>
               </div>
-              <div className="table-wrap">
-                <table>
+                <div className="table-wrap">
+                  <table>
                   <thead>
                     <tr>
                       <th>时间</th>
@@ -419,8 +445,8 @@ function App() {
                         <td colSpan={7}>{loading ? "加载中..." : "暂无决策记录"}</td>
                       </tr>
                     ) : (
-                      decisions.map((item, index) => (
-                        <tr key={`${item.trace_id || "trace"}-${index}`}>
+                      pagedDecisions.map((item, index) => (
+                        <tr key={`${item.trace_id || "trace"}-${firstDecisionIndex + index}`}>
                           <td>{formatTime(item.ts)}</td>
                           <td>
                             <DecisionTag decision={item.decision} />
@@ -436,6 +462,42 @@ function App() {
                   </tbody>
                 </table>
               </div>
+              {decisions.length > 0 ? (
+                <div className="pagination">
+                  <div className="pagination-summary">
+                    显示 {firstDecisionIndex}-{lastDecisionIndex} / {decisions.length} · 第 {decisionPage} / {totalDecisionPages} 页
+                  </div>
+                  <div className="pagination-controls">
+                    <button
+                      className="ghost small"
+                      type="button"
+                      disabled={decisionPage === 1}
+                      onClick={() => setDecisionPage((current) => Math.max(1, current - 1))}
+                    >
+                      上一页
+                    </button>
+                    {pageItems.map((page) => (
+                      <button
+                        key={page}
+                        className={`page-button ${page === decisionPage ? "active" : ""}`}
+                        type="button"
+                        aria-current={page === decisionPage ? "page" : undefined}
+                        onClick={() => setDecisionPage(page)}
+                      >
+                        {page}
+                      </button>
+                    ))}
+                    <button
+                      className="ghost small"
+                      type="button"
+                      disabled={decisionPage === totalDecisionPages}
+                      onClick={() => setDecisionPage((current) => Math.min(totalDecisionPages, current + 1))}
+                    >
+                      下一页
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -469,20 +531,18 @@ function App() {
                             <div className="rule-title">{RULE_TITLE[policy.rule_id] || policy.rule_id || `规则 ${index + 1}`}</div>
                             <DecisionTag decision={policy.decision} />
                           </div>
-                          <div className="rule-row">
-                            <label className="rule-label" htmlFor={`decision-${index}`}>策略动作</label>
-                            <select
-                              id={`decision-${index}`}
-                              className="rule-select"
-                              value={policy.decision || "allow"}
-                              onChange={(event) => onDecisionChange(index, event.target.value)}
-                            >
-                              {DECISION_OPTIONS.map((decision) => (
-                                <option key={decision} value={decision}>
-                                  {decisionLabel(decision)}
-                                </option>
-                              ))}
-                            </select>
+                          <div className="rule-actions" role="group" aria-label={`规则 ${policy.rule_id || index + 1} 的策略动作`}>
+                            {DECISION_OPTIONS.map((decision) => (
+                              <button
+                                key={decision}
+                                className={`rule-action-button ${decision} ${policy.decision === decision ? "active" : ""}`}
+                                type="button"
+                                aria-pressed={policy.decision === decision}
+                                onClick={() => onDecisionChange(index, decision)}
+                              >
+                                {decisionLabel(decision)}
+                              </button>
+                            ))}
                           </div>
                           <div className="rule-desc">{ruleDescription(policy)}</div>
                         </article>
