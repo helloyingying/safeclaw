@@ -443,6 +443,26 @@ button.ghost {
   font-weight: 700;
 }
 
+.meta-pill.severity-high,
+.meta-pill.severity-critical {
+  background: rgba(192, 58, 75, 0.12);
+  color: var(--bad);
+}
+
+.meta-pill.severity-medium {
+  background: rgba(169, 98, 17, 0.12);
+  color: var(--warn);
+}
+
+.meta-pill.severity-low {
+  background: rgba(24, 117, 95, 0.12);
+  color: var(--good);
+}
+
+.link-pill {
+  text-decoration: none;
+}
+
 .table-wrap {
   overflow-x: auto;
   border-radius: 18px;
@@ -566,6 +586,10 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 
+.rule-meta-row {
+  row-gap: 8px;
+}
+
 .rule-actions {
   display: flex;
   flex-wrap: wrap;
@@ -611,6 +635,11 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.rule-match,
+.rule-approval {
+  margin-top: -4px;
 }
 
 .pagination {

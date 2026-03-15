@@ -32,19 +32,20 @@ const DECISION_SOURCE_TEXT = {
   approval: "审批放行"
 };
 
-const RULE_TITLE = {
-  "shell-block": "阻止高风险命令",
-  "contractor-network-challenge": "外包账号访问外网需确认",
-  "filesystem-list-challenge": "目录枚举需确认",
-  "finance-write-warn": "财务范围写入操作提醒"
+const CONTROL_DOMAIN_TEXT = {
+  execution_control: "执行控制",
+  data_access: "数据访问",
+  data_egress: "数据外发",
+  credential_protection: "凭据保护",
+  change_control: "变更控制",
+  approval_exception: "审批例外"
 };
 
-const RULE_GROUP_TITLE = {
-  file: "文件相关",
-  filesystem: "文件相关",
-  email: "邮件相关",
-  album: "相册相关",
-  general: "通用规则"
+const SEVERITY_TEXT = {
+  low: "低风险",
+  medium: "中风险",
+  high: "高风险",
+  critical: "严重"
 };
 
 function clone(value) {
@@ -102,29 +103,84 @@ function extractPolicies(strategyPayload) {
     : [];
 }
 
+function formatList(values) {
+  return values.join(" | ");
+}
+
 function summarizeMatch(match) {
   const scopes = toArray(match?.scope);
   const tools = toArray(match?.tool);
+  const toolGroups = toArray(match?.tool_group);
+  const operations = toArray(match?.operation);
   const identities = toArray(match?.identity);
+  const resourceScopes = toArray(match?.resource_scope);
+  const fileTypes = toArray(match?.file_type);
+  const assetLabels = toArray(match?.asset_labels);
+  const dataLabels = toArray(match?.data_labels);
+  const trustLevels = toArray(match?.trust_level);
+  const destinationTypes = toArray(match?.destination_type);
+  const destinationDomains = toArray(match?.dest_domain);
+  const destinationIpClasses = toArray(match?.dest_ip_class);
+  const pathMatchers = [
+    ...toArray(match?.path_prefix),
+    ...toArray(match?.path_glob),
+    ...toArray(match?.path_regex)
+  ];
+  const argMatchers = [...toArray(match?.tool_args_summary), ...toArray(match?.tool_args_regex)];
 
   const parts = [];
-  parts.push(`范围: ${scopes.length ? scopes.join(" | ") : "全部"}`);
-  parts.push(`操作: ${tools.length ? tools.join(" | ") : "全部"}`);
-  if (identities.length) {
-    parts.push(`用户: ${identities.join(" | ")}`);
-  }
-  return parts.join(" · ");
+  if (scopes.length) parts.push(`范围: ${formatList(scopes)}`);
+  if (tools.length) parts.push(`工具: ${formatList(tools)}`);
+  if (toolGroups.length) parts.push(`工具组: ${formatList(toolGroups)}`);
+  if (operations.length) parts.push(`动作: ${formatList(operations)}`);
+  if (identities.length) parts.push(`身份: ${formatList(identities)}`);
+  if (resourceScopes.length) parts.push(`资源范围: ${formatList(resourceScopes.map(resourceScopeLabel))}`);
+  if (fileTypes.length) parts.push(`文件类型: ${formatList(fileTypes)}`);
+  if (assetLabels.length) parts.push(`资产标签: ${formatList(assetLabels)}`);
+  if (dataLabels.length) parts.push(`数据标签: ${formatList(dataLabels)}`);
+  if (trustLevels.length) parts.push(`信任级别: ${formatList(trustLevels)}`);
+  if (destinationTypes.length) parts.push(`目的地类型: ${formatList(destinationTypes)}`);
+  if (destinationDomains.length) parts.push(`目的地域名: ${formatList(destinationDomains)}`);
+  if (destinationIpClasses.length) parts.push(`目标 IP: ${formatList(destinationIpClasses)}`);
+  if (pathMatchers.length) parts.push(`路径条件: ${pathMatchers.length} 条`);
+  if (argMatchers.length) parts.push(`参数特征: ${argMatchers.length} 条`);
+  if (typeof match?.min_file_count === "number") parts.push(`文件数 >= ${match.min_file_count}`);
+  if (typeof match?.min_bytes === "number") parts.push(`字节数 >= ${match.min_bytes}`);
+  if (typeof match?.min_record_count === "number") parts.push(`记录数 >= ${match.min_record_count}`);
+  return parts.join(" · ") || "无附加匹配条件";
 }
 
 function ruleDescription(policy) {
+  if (policy?.description) {
+    return policy.description;
+  }
   const action = decisionLabel(policy?.decision);
   const match = summarizeMatch(policy?.match);
   return `命中条件时执行“${action}”。${match}。`;
 }
 
-function groupLabel(group) {
-  if (!group) return "通用规则";
-  return RULE_GROUP_TITLE[group] || group;
+function controlDomainLabel(domain) {
+  if (!domain) return "未分类";
+  return CONTROL_DOMAIN_TEXT[domain] || domain;
+}
+
+function severityLabel(severity) {
+  return SEVERITY_TEXT[severity] || severity || "未分级";
+}
+
+function policyTitle(policy, index) {
+  return policy?.title || policy?.rule_id || `规则 ${index + 1}`;
+}
+
+function approvalSummary(requirements) {
+  if (!requirements) return "";
+  const parts = [];
+  if (requirements.ticket_required) parts.push("工单必填");
+  if (toArray(requirements.approver_roles).length) parts.push(`审批角色: ${formatList(requirements.approver_roles)}`);
+  if (requirements.single_use) parts.push("单次放行");
+  if (requirements.trace_binding === "trace") parts.push("绑定当前 trace");
+  if (typeof requirements.ttl_seconds === "number") parts.push(`有效期 ${requirements.ttl_seconds} 秒`);
+  return parts.join(" · ");
 }
 
 function formatPercent(value, total) {
@@ -164,7 +220,7 @@ function App() {
   const groupedPolicies = useMemo(() => {
     const groups = new Map();
     policies.forEach((policy, index) => {
-      const key = policy?.group || "general";
+      const key = policy?.control_domain || policy?.group || "general";
       const list = groups.get(key) || [];
       list.push({ policy, index });
       groups.set(key, list);
@@ -524,12 +580,22 @@ function App() {
                 ) : (
                   groupedPolicies.map(([group, entries]) => (
                     <section key={group} className="rule-group">
-                      <h4 className="rule-group-title">{groupLabel(group)}</h4>
+                      <h4 className="rule-group-title">{controlDomainLabel(group)}</h4>
                       {entries.map(({ policy, index }) => (
                         <article key={policy.rule_id || String(index)} className="rule">
                           <div className="rule-head">
-                            <div className="rule-title">{RULE_TITLE[policy.rule_id] || policy.rule_id || `规则 ${index + 1}`}</div>
+                            <div className="rule-title">{policyTitle(policy, index)}</div>
                             <DecisionTag decision={policy.decision} />
+                          </div>
+                          <div className="rule-row rule-meta-row">
+                            <span className="meta-pill">{controlDomainLabel(policy.control_domain || policy.group)}</span>
+                            {policy.severity ? <span className={`meta-pill severity-${policy.severity}`}>{severityLabel(policy.severity)}</span> : null}
+                            {policy.owner ? <span className="meta-pill">{policy.owner}</span> : null}
+                            {policy.playbook_url ? (
+                              <a className="meta-pill link-pill" href={policy.playbook_url} target="_blank" rel="noreferrer">
+                                Playbook
+                              </a>
+                            ) : null}
                           </div>
                           <div className="rule-actions" role="group" aria-label={`规则 ${policy.rule_id || index + 1} 的策略动作`}>
                             {DECISION_OPTIONS.map((decision) => (
@@ -545,6 +611,10 @@ function App() {
                             ))}
                           </div>
                           <div className="rule-desc">{ruleDescription(policy)}</div>
+                          <div className="rule-desc rule-match">{summarizeMatch(policy.match)}</div>
+                          {policy.approval_requirements ? (
+                            <div className="rule-desc rule-approval">{approvalSummary(policy.approval_requirements)}</div>
+                          ) : null}
                         </article>
                       ))}
                     </section>

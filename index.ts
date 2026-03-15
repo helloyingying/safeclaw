@@ -1,4 +1,5 @@
 import os from "node:os";
+import { isIP } from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,7 @@ import {
   type ChatApprovalTarget,
   type StoredApprovalNotification,
   type StoredApprovalRecord,
+  createApprovalRequestKey,
 } from "./src/approvals/chat_approval_store.ts";
 import { DecisionEngine } from "./src/engine/decision_engine.ts";
 import { DlpEngine } from "./src/engine/dlp_engine.ts";
@@ -104,7 +106,28 @@ const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
 const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
 const APPROVAL_NOTIFICATION_HISTORY_LIMIT = 12;
 const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
+const COMMAND_KEY_PATTERN = /(command|cmd|script|query|sql)/i;
+const URL_KEY_PATTERN = /(url|uri|endpoint|host|domain|upload|webhook|callback|proxy|origin|destination|dest)/i;
 const SYSTEM_PATH_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/private/etc", "/System", "/Library"];
+const DEFAULT_MESSAGES_DB_PATH = path.join(HOME_DIR, "Library/Messages/chat.db");
+const MESSAGE_DB_PATH_PATTERN = /(?:~\/Library\/Messages\/chat\.db|\/Users\/[^/\s"'`;]+\/Library\/Messages\/chat\.db)/i;
+const OTP_PATTERN = /otp|one[- ]time|verification code|验证码|passcode|login (?:code|notification|alert)|登录提醒/i;
+const PERSONAL_STORAGE_DOMAINS = [
+  "dropbox.com",
+  "drive.google.com",
+  "docs.google.com",
+  "onedrive.live.com",
+  "1drv.ms",
+  "notion.so",
+  "notion.site",
+];
+const PASTE_SERVICE_DOMAINS = [
+  "pastebin.com",
+  "gist.github.com",
+  "gist.githubusercontent.com",
+  "hastebin.com",
+  "transfer.sh",
+];
 
 function resolveScope(ctx: { workspaceDir?: string | undefined; channelId?: string | undefined }): string {
   if (ctx.workspaceDir) {
@@ -125,6 +148,17 @@ function isPathLike(value: string, keyHint: string): boolean {
   );
 }
 
+function extractEmbeddedPathCandidates(value: string): string[] {
+  const matches = value.match(/(?:^|[\s"'=])((?:~\/|\/|\.\/|\.\.\/)[^\s"'`;|&<>]+)/g) ?? [];
+  return matches
+    .map((match) => match.trim().replace(/^["'=]+/, ""))
+    .map((match) => {
+      const pathMatch = match.match(/(?:~\/|\/|\.\/|\.\.\/)[^\s"'`;|&<>]+/);
+      return pathMatch ? pathMatch[0] : "";
+    })
+    .filter(Boolean);
+}
+
 function collectPathCandidates(value: unknown, keyHint = "", depth = 0, output: string[] = []): string[] {
   if (depth > 4 || output.length >= 24) {
     return output;
@@ -134,6 +168,13 @@ function collectPathCandidates(value: unknown, keyHint = "", depth = 0, output: 
     const trimmed = value.trim();
     if (trimmed && isPathLike(trimmed, keyHint)) {
       output.push(trimmed);
+    } else if (trimmed && (COMMAND_KEY_PATTERN.test(keyHint) || trimmed.includes("~/") || trimmed.includes("/"))) {
+      for (const candidate of extractEmbeddedPathCandidates(trimmed)) {
+        output.push(candidate);
+        if (output.length >= 24) {
+          break;
+        }
+      }
     }
     return output;
   }
@@ -191,16 +232,10 @@ function isSystemPath(candidate: string): boolean {
   return SYSTEM_PATH_PREFIXES.some((prefix) => candidate === prefix || candidate.startsWith(`${prefix}/`));
 }
 
-function extractResourceContext(args: unknown, workspaceDir?: string): { resourceScope: ResourceScope; resourcePaths: string[] } {
-  const candidates = collectPathCandidates(args);
-  const resolved = Array.from(
-    new Set(
-      candidates
-        .map((candidate) => resolvePathCandidate(candidate, workspaceDir))
-        .filter((value): value is string => Boolean(value)),
-    ),
-  ).slice(0, 12);
-
+function classifyResolvedResourcePaths(
+  resolved: string[],
+  workspaceDir?: string,
+): { resourceScope: ResourceScope; resourcePaths: string[] } {
   if (resolved.length === 0) {
     return { resourceScope: "none", resourcePaths: [] };
   }
@@ -231,6 +266,382 @@ function extractResourceContext(args: unknown, workspaceDir?: string): { resourc
     return { resourceScope: "workspace_inside", resourcePaths: resolved };
   }
   return { resourceScope: "none", resourcePaths: resolved };
+}
+
+function extractResourceContext(args: unknown, workspaceDir?: string): { resourceScope: ResourceScope; resourcePaths: string[] } {
+  const candidates = collectPathCandidates(args);
+  const resolved = Array.from(
+    new Set(
+      candidates
+        .map((candidate) => resolvePathCandidate(candidate, workspaceDir))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ).slice(0, 12);
+  return classifyResolvedResourcePaths(resolved, workspaceDir);
+}
+
+function isUrlLike(value: string, keyHint: string): boolean {
+  return URL_KEY_PATTERN.test(keyHint) || value.startsWith("http://") || value.startsWith("https://");
+}
+
+function collectUrlCandidates(value: unknown, keyHint = "", depth = 0, output: string[] = []): string[] {
+  if (depth > 4 || output.length >= 12) {
+    return output;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed && isUrlLike(trimmed, keyHint)) {
+      output.push(trimmed);
+    }
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectUrlCandidates(item, keyHint, depth + 1, output);
+      if (output.length >= 12) {
+        break;
+      }
+    }
+    return output;
+  }
+
+  if (!value || typeof value !== "object") {
+    return output;
+  }
+
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    collectUrlCandidates(item, key, depth + 1, output);
+    if (output.length >= 12) {
+      break;
+    }
+  }
+  return output;
+}
+
+function isPrivateIp(host: string): boolean {
+  if (isIP(host) !== 4) {
+    return false;
+  }
+  const octets = host.split(".").map((value) => Number(value));
+  return (
+    octets[0] === 10 ||
+    octets[0] === 127 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  );
+}
+
+function isLoopbackIp(host: string): boolean {
+  if (isIP(host) === 4) {
+    return host.startsWith("127.");
+  }
+  return host === "::1";
+}
+
+function classifyDestination(urls: string[]): Pick<
+  DecisionContext,
+  "destination_type" | "dest_domain" | "dest_ip_class"
+> {
+  for (const candidate of urls) {
+    try {
+      const parsed = new URL(candidate);
+      const host = parsed.hostname.toLowerCase();
+      const ipVersion = isIP(host);
+      const isInternalHost =
+        host === "localhost" ||
+        host.endsWith(".internal") ||
+        host.endsWith(".corp") ||
+        host.endsWith(".local") ||
+        host.endsWith(".lan") ||
+        isPrivateIp(host);
+
+      const destinationType =
+        PERSONAL_STORAGE_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))
+          ? "personal_storage"
+          : PASTE_SERVICE_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))
+            ? "paste_service"
+            : isInternalHost
+              ? "internal"
+              : "public";
+
+      const destIpClass =
+        ipVersion === 0
+          ? destinationType === "internal"
+            ? "private"
+            : "unknown"
+          : isLoopbackIp(host)
+            ? "loopback"
+            : isPrivateIp(host)
+              ? "private"
+              : "public";
+
+      return {
+        destination_type: destinationType,
+        dest_domain: host,
+        dest_ip_class: destIpClass,
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return {};
+}
+
+function inferToolGroup(toolName: string): string | undefined {
+  const normalized = toolName.trim().toLowerCase();
+  if (normalized.startsWith("shell.")) {
+    return "execution";
+  }
+  if (normalized.startsWith("filesystem.")) {
+    return "filesystem";
+  }
+  if (normalized.startsWith("network.") || normalized.startsWith("http.")) {
+    return "network";
+  }
+  if (normalized.startsWith("email.") || normalized.startsWith("mail.")) {
+    return "email";
+  }
+  if (
+    normalized.startsWith("sms.") ||
+    normalized.startsWith("message.") ||
+    normalized.startsWith("messages.")
+  ) {
+    return "sms";
+  }
+  if (normalized.startsWith("album.") || normalized.startsWith("photo.") || normalized.startsWith("media.")) {
+    return "album";
+  }
+  if (normalized.startsWith("browser.")) {
+    return "browser";
+  }
+  if (
+    normalized.startsWith("archive.") ||
+    normalized.startsWith("compress.") ||
+    normalized.includes(".archive") ||
+    normalized.includes(".compress") ||
+    normalized.includes(".zip")
+  ) {
+    return "archive";
+  }
+  if (
+    normalized.startsWith("crm.") ||
+    normalized.startsWith("erp.") ||
+    normalized.startsWith("hr.") ||
+    normalized.startsWith("finance.") ||
+    normalized.startsWith("jira.") ||
+    normalized.startsWith("servicenow.") ||
+    normalized.startsWith("zendesk.")
+  ) {
+    return "business";
+  }
+  return undefined;
+}
+
+function inferOperation(toolName: string): string | undefined {
+  const normalized = toolName.trim().toLowerCase();
+  if (normalized.startsWith("network.") || normalized.startsWith("http.")) {
+    return "request";
+  }
+  if (/(exec|run|spawn)$/.test(normalized) || normalized.endsWith(".exec")) {
+    return "execute";
+  }
+  if (/(delete|remove|unlink|destroy)$/.test(normalized) || normalized.endsWith(".rm")) {
+    return "delete";
+  }
+  if (/(write|save|create|update|append|put)$/.test(normalized)) {
+    return "write";
+  }
+  if (/(list|ls|enumerate)$/.test(normalized)) {
+    return "list";
+  }
+  if (/(search|query|find)$/.test(normalized)) {
+    return "search";
+  }
+  if (/(read|get|open|cat|fetch|download)$/.test(normalized)) {
+    return "read";
+  }
+  if (/(upload|send|post|reply)$/.test(normalized)) {
+    return "upload";
+  }
+  if (/(export|dump)$/.test(normalized)) {
+    return "export";
+  }
+  if (/(archive|compress|zip|tar|bundle)$/.test(normalized)) {
+    return "archive";
+  }
+  if (/(deploy|apply|terraform|kubectl)$/.test(normalized)) {
+    return "modify";
+  }
+  return undefined;
+}
+
+function inferFileType(resourcePaths: string[]): string | undefined {
+  for (const candidate of resourcePaths) {
+    const basename = path.basename(candidate);
+    if (basename === "Dockerfile") {
+      return "dockerfile";
+    }
+    const extension = path.extname(basename).toLowerCase().replace(/^\./, "");
+    if (extension) {
+      return extension;
+    }
+  }
+  return undefined;
+}
+
+function addLabel(labels: Set<string>, condition: boolean, label: string): void {
+  if (condition) {
+    labels.add(label);
+  }
+}
+
+function extractShellCommandText(args: unknown): string | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
+  }
+  const record = args as Record<string, unknown>;
+  for (const key of ["command", "cmd", "script"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function isMessagesDbPath(candidate: string): boolean {
+  return /\/Library\/Messages\/chat\.db$/i.test(candidate);
+}
+
+function isMessagesShellAccess(commandText: string | undefined, resourcePaths: string[]): boolean {
+  if (resourcePaths.some((candidate) => isMessagesDbPath(candidate))) {
+    return true;
+  }
+  const corpus = [commandText ?? "", ...resourcePaths].join(" ");
+  return /\bimsg\b/i.test(corpus) || (/\bsqlite3\b/i.test(corpus) && MESSAGE_DB_PATH_PATTERN.test(corpus));
+}
+
+function inferMessagesOperation(commandText: string | undefined): string {
+  const normalized = (commandText ?? "").toLowerCase();
+  if (/\b(export|dump)\b/.test(normalized)) {
+    return "export";
+  }
+  if (/\b(search|find|query)\b/.test(normalized)) {
+    return "search";
+  }
+  return "read";
+}
+
+function deriveToolContext(
+  normalizedToolName: string | undefined,
+  args: unknown,
+  resourceScope: ResourceScope,
+  resourcePaths: string[],
+  workspaceDir?: string,
+): {
+  toolGroup?: string;
+  operation?: string;
+  resourceScope: ResourceScope;
+  resourcePaths: string[];
+  tags: string[];
+} {
+  let nextResourcePaths = [...resourcePaths];
+  let nextResourceScope = resourceScope;
+  let toolGroup = normalizedToolName ? inferToolGroup(normalizedToolName) : undefined;
+  let operation = normalizedToolName ? inferOperation(normalizedToolName) : undefined;
+  const tags: string[] = [];
+
+  if (normalizedToolName === "shell.exec") {
+    const commandText = extractShellCommandText(args);
+    if (isMessagesShellAccess(commandText, nextResourcePaths)) {
+      toolGroup = "sms";
+      operation = inferMessagesOperation(commandText);
+      if (!nextResourcePaths.some((candidate) => isMessagesDbPath(candidate))) {
+        nextResourcePaths = [...nextResourcePaths, DEFAULT_MESSAGES_DB_PATH];
+      }
+      const classified = classifyResolvedResourcePaths(nextResourcePaths, workspaceDir);
+      nextResourcePaths = classified.resourcePaths;
+      nextResourceScope = classified.resourceScope;
+      tags.push("messages_shell_access");
+    }
+  }
+
+  return {
+    ...(toolGroup !== undefined ? { toolGroup } : {}),
+    ...(operation !== undefined ? { operation } : {}),
+    resourceScope: nextResourceScope,
+    resourcePaths: nextResourcePaths,
+    tags,
+  };
+}
+
+function inferLabels(
+  toolGroup: string | undefined,
+  resourcePaths: string[],
+  toolArgsSummary: string | undefined,
+): Pick<DecisionContext, "asset_labels" | "data_labels"> {
+  const corpus = [...resourcePaths, toolArgsSummary ?? ""].join(" ").toLowerCase();
+  const assetLabels = new Set<string>();
+  const dataLabels = new Set<string>();
+
+  addLabel(assetLabels, /finance|invoice|billing|payroll|ledger/.test(corpus), "financial");
+  addLabel(dataLabels, /finance|invoice|billing|payroll|ledger/.test(corpus), "financial");
+  addLabel(assetLabels, /customer|client|crm|contact/.test(corpus), "customer_data");
+  addLabel(dataLabels, /customer|client|crm|contact/.test(corpus), "customer_data");
+  addLabel(assetLabels, /hr|personnel|resume|employee|salary/.test(corpus), "hr");
+  addLabel(dataLabels, /hr|personnel|resume|employee|salary/.test(corpus), "pii");
+  addLabel(assetLabels, /\.env\b|\.npmrc\b|\.pypirc\b|\.ssh\b|id_rsa\b|kubeconfig\b|aws\/credentials\b/.test(corpus), "credential");
+  addLabel(dataLabels, /token|secret|password|bearer|cookie|session|jwt|private key|id_rsa/.test(corpus), "secret");
+  addLabel(dataLabels, OTP_PATTERN.test(corpus), "otp");
+  addLabel(assetLabels, /\.github\/workflows\/|dockerfile\b|terraform|\.tf\b|k8s|kubernetes|deployment\.ya?ml|secret\.ya?ml|iam/.test(corpus), "control_plane");
+  addLabel(dataLabels, toolGroup === "email" || toolGroup === "sms", "communications");
+  addLabel(dataLabels, toolGroup === "album", "media");
+  addLabel(dataLabels, toolGroup === "browser", "browser_secret");
+
+  return {
+    asset_labels: [...assetLabels],
+    data_labels: [...dataLabels],
+  };
+}
+
+function inferVolume(args: unknown, resourcePaths: string[]): DecisionContext["volume"] {
+  const metrics: DecisionContext["volume"] = {};
+  if (resourcePaths.length > 0) {
+    metrics.file_count = resourcePaths.length;
+  }
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return metrics;
+  }
+
+  const record = args as Record<string, unknown>;
+  for (const [key, value] of Object.entries(record)) {
+    const lower = key.toLowerCase();
+    if (Array.isArray(value)) {
+      if (/(files|paths|attachments|items|results|records|messages)/.test(lower)) {
+        if ((metrics.file_count ?? 0) < value.length) {
+          metrics.file_count = value.length;
+        }
+        if (/(results|records|messages)/.test(lower) && (metrics.record_count ?? 0) < value.length) {
+          metrics.record_count = value.length;
+        }
+      }
+      continue;
+    }
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      continue;
+    }
+    if (/(bytes|size|length)/.test(lower)) {
+      metrics.bytes = value;
+    }
+    if (/(count|limit|total|records)/.test(lower)) {
+      metrics.record_count = value;
+    }
+  }
+
+  return metrics;
 }
 
 function trimText(value: string, maxLength: number): string {
@@ -852,18 +1263,42 @@ function buildDecisionContext(
   tags: string[] = [],
   resourceScope: ResourceScope = "none",
   resourcePaths: string[] = [],
+  args?: unknown,
+  toolArgsSummary?: string,
 ): DecisionContext {
   const workspace = "workspaceDir" in ctx ? ctx.workspaceDir : undefined;
   const runtimeScope = resolveScope({ workspaceDir: workspace, channelId: "channelId" in ctx ? ctx.channelId : undefined });
   const scope = config.environment || runtimeScope;
-  const mergedTags = [...new Set([...tags, `resource_scope:${resourceScope}`])];
+  const normalizedToolName = toolName ? normalizeToolName(toolName) : undefined;
+  const derivedToolContext = deriveToolContext(normalizedToolName, args, resourceScope, resourcePaths, workspace);
+  const mergedTags = [...new Set([...tags, ...derivedToolContext.tags, `resource_scope:${derivedToolContext.resourceScope}`])];
+  const toolGroup = derivedToolContext.toolGroup;
+  const operation = derivedToolContext.operation;
+  const urlCandidates = args !== undefined ? collectUrlCandidates(args) : [];
+  const destination = classifyDestination(urlCandidates);
+  const fileType = inferFileType(derivedToolContext.resourcePaths);
+  const summary = toolArgsSummary ?? (args !== undefined ? summarizeForLog(args, 240) : undefined);
+  const labels = inferLabels(toolGroup, derivedToolContext.resourcePaths, summary);
+  const volume = inferVolume(args, derivedToolContext.resourcePaths);
+
   return {
     actor_id: ctx.agentId ?? "unknown-agent",
     scope,
+    ...(normalizedToolName !== undefined ? { tool_name: normalizedToolName } : {}),
+    ...(toolGroup !== undefined ? { tool_group: toolGroup } : {}),
+    ...(operation !== undefined ? { operation } : {}),
     tags: mergedTags,
-    resource_scope: resourceScope,
-    resource_paths: resourcePaths,
-    ...(toolName !== undefined ? { tool_name: toolName } : {}),
+    resource_scope: derivedToolContext.resourceScope,
+    resource_paths: derivedToolContext.resourcePaths,
+    ...(fileType !== undefined ? { file_type: fileType } : {}),
+    asset_labels: labels.asset_labels,
+    data_labels: labels.data_labels,
+    trust_level: mergedTags.includes("untrusted") ? "untrusted" : "unknown",
+    ...(destination.destination_type !== undefined ? { destination_type: destination.destination_type } : {}),
+    ...(destination.dest_domain !== undefined ? { dest_domain: destination.dest_domain } : {}),
+    ...(destination.dest_ip_class !== undefined ? { dest_ip_class: destination.dest_ip_class } : {}),
+    ...(summary !== undefined ? { tool_args_summary: summary } : {}),
+    volume,
     security_context: {
       trace_id: ctx.runId ?? ctx.sessionId ?? ctx.sessionKey ?? `trace-${Date.now()}`,
       actor_id: ctx.agentId ?? "unknown-agent",
@@ -1227,6 +1662,7 @@ const plugin = {
         const normalizedToolName = normalizeToolName(event.toolName);
         const rawArguments = event.params;
         const resource = extractResourceContext(rawArguments, hookContext.workspaceDir);
+        const argsSummary = summarizeForLog(rawArguments, decisionLogMaxLength);
         const decisionContext = buildDecisionContext(
           current.config,
           hookContext,
@@ -1234,13 +1670,27 @@ const plugin = {
           [],
           resource.resourceScope,
           resource.resourcePaths,
+          rawArguments,
+          argsSummary,
         );
         const matches = current.ruleEngine.match(decisionContext);
         const rules = matchedRuleIds(matches);
         const outcome = current.decisionEngine.evaluate(decisionContext, matches);
         const traceId = decisionContext.security_context.trace_id;
-        const argsSummary = summarizeForLog(rawArguments, decisionLogMaxLength);
         const ruleIds = matches.map((match) => match.rule.rule_id);
+        const approvalRequestKey = createApprovalRequestKey({
+          policy_version: current.config.policy_version,
+          scope: decisionContext.scope,
+          tool_name: normalizedToolName,
+          resource_scope: decisionContext.resource_scope,
+          resource_paths: [],
+          params: {
+            operation: decisionContext.operation ?? null,
+            destination_type: decisionContext.destination_type ?? null,
+            dest_domain: decisionContext.dest_domain ?? null,
+            rule_ids: ruleIds,
+          },
+        });
         let effectiveDecision = outcome.decision;
         let effectiveDecisionSource = outcome.decision_source;
         let effectiveReasonCodes = [...outcome.reason_codes];
@@ -1249,13 +1699,13 @@ const plugin = {
         if (outcome.decision === "challenge" && approvalBridge.enabled) {
           const approvalSubject = resolveApprovalSubject(hookContext);
           const approvalScope = decisionContext.scope;
-          const approved = approvalStore.findApproved(approvalSubject, approvalScope);
+          const approved = approvalStore.findApproved(approvalSubject, approvalRequestKey);
           if (approved) {
             effectiveDecision = "allow";
             effectiveDecisionSource = "approval";
             effectiveReasonCodes = ["APPROVAL_GRANTED"];
           } else {
-            let pending = approvalStore.findPending(approvalSubject, approvalScope);
+            let pending = approvalStore.findPending(approvalSubject, approvalRequestKey);
             let notificationResult: ApprovalNotificationResult = {
               sent: Boolean(pending?.notifications.length),
               notifications: pending?.notifications ?? [],
@@ -1263,7 +1713,7 @@ const plugin = {
 
             if (!pending) {
               pending = approvalStore.create({
-                request_key: approvalScope,
+                request_key: approvalRequestKey,
                 session_scope: approvalSubject,
                 expires_at: new Date(
                   Date.now() +

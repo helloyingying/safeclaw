@@ -240,7 +240,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     const first = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "." },
+        params: { path: "Downloads" },
       },
       {
         agentId: "main",
@@ -265,7 +265,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     const secondPending = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "/tmp/workspace/another" },
+        params: { path: "/tmp/workspace/Downloads/another" },
       },
       {
         agentId: "main",
@@ -313,7 +313,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     const approved = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "/tmp/workspace/third" },
+        params: { path: "/tmp/workspace/Downloads/third" },
       },
       {
         agentId: "main",
@@ -356,7 +356,7 @@ test("chat approval bridge supports long-lived subject authorization", async () 
     const blocked = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "." },
+        params: { path: "Downloads" },
       },
       {
         agentId: "main",
@@ -390,7 +390,7 @@ test("chat approval bridge supports long-lived subject authorization", async () 
     const allowed = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "/tmp/workspace/future" },
+        params: { path: "/tmp/workspace/Downloads/future" },
       },
       {
         agentId: "main",
@@ -426,7 +426,7 @@ test("chat approval bridge retries transient telegram send failures", async () =
     const blocked = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "." },
+        params: { path: "Downloads" },
       },
       {
         agentId: "main",
@@ -466,7 +466,7 @@ test("chat approval bridge re-sends stale pending approvals after cooldown", asy
     const first = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "." },
+        params: { path: "Downloads" },
       },
       {
         agentId: "main",
@@ -486,7 +486,7 @@ test("chat approval bridge re-sends stale pending approvals after cooldown", asy
     const second = await beforeToolCall(
       {
         toolName: "filesystem.list",
-        params: { path: "." },
+        params: { path: "Downloads" },
       },
       {
         agentId: "main",

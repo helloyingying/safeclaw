@@ -19,7 +19,12 @@ export class DecisionEngine {
       };
       if (decisiveRule.rule.decision === "challenge") {
         outcome.challenge_ttl_seconds =
-          decisiveRule.rule.challenge?.ttl_seconds ?? this.config.defaults.approval_ttl_seconds;
+          decisiveRule.rule.approval_requirements?.ttl_seconds ??
+          decisiveRule.rule.challenge?.ttl_seconds ??
+          this.config.defaults.approval_ttl_seconds;
+        if (decisiveRule.rule.approval_requirements) {
+          outcome.approval_requirements = decisiveRule.rule.approval_requirements;
+        }
       }
       return outcome;
     }

@@ -9,55 +9,90 @@ import { DecisionEngine } from "../src/engine/decision_engine.ts";
 import { DlpEngine } from "../src/engine/dlp_engine.ts";
 import { EventEmitter } from "../src/events/emitter.ts";
 import { createSafeClawPlugin } from "../src/index.ts";
-import type { EventSink, SafeClawConfig, SecurityDecisionEvent } from "../src/types.ts";
+import type {
+  BeforeToolCallInput,
+  DecisionContext,
+  EventSink,
+  SafeClawConfig,
+  SecurityDecisionEvent,
+} from "../src/types.ts";
 
 function createConfig(): SafeClawConfig {
   return ConfigManager.fromFile("./config/policy.default.yaml").getConfig();
 }
 
+function createDecisionContext(
+  overrides: Partial<DecisionContext> = {},
+  securityOverrides: Partial<DecisionContext["security_context"]> = {},
+): DecisionContext {
+  return {
+    actor_id: "employee",
+    scope: "default",
+    tool_name: "network.http",
+    tool_group: "network",
+    operation: "request",
+    tags: [],
+    resource_scope: "none",
+    resource_paths: [],
+    asset_labels: [],
+    data_labels: [],
+    trust_level: "unknown",
+    destination_type: "public",
+    dest_domain: "api.example.com",
+    dest_ip_class: "unknown",
+    volume: {},
+    security_context: {
+      trace_id: "trace-1",
+      actor_id: "employee",
+      workspace: "payments",
+      policy_version: "2026-03-15",
+      untrusted: false,
+      tags: [],
+      created_at: "2026-03-15T00:00:00.000Z",
+      ...securityOverrides
+    },
+    ...overrides
+  };
+}
+
+function findRule(config: SafeClawConfig, ruleId: string) {
+  const rule = config.policies.find((item) => item.rule_id === ruleId);
+  assert.ok(rule, `missing rule ${ruleId}`);
+  return rule;
+}
+
 test("config loader reads default YAML and keeps policies", () => {
   const config = createConfig();
   assert.equal(config.version, "1.0");
-  assert.equal(config.policies.length, 4);
+  assert.equal(config.policies.length, 16);
   assert.equal(config.hooks.before_tool_call.fail_mode, "close");
   assert.equal(config.dlp.patterns[0].name, "email");
+  assert.equal(config.policies[0]?.title, "高危命令模式默认拦截");
 });
 
 test("decision engine uses matched rule decision", () => {
   const config = createConfig();
   const engine = new DecisionEngine(config);
+  const publicEgressRule = config.policies.find((rule) => rule.rule_id === "public-network-egress-challenge");
+  const highRiskRule = config.policies.find((rule) => rule.rule_id === "high-risk-command-block");
+  assert.ok(publicEgressRule);
+  assert.ok(highRiskRule);
   const outcome = engine.evaluate(
-    {
-      actor_id: "contractor",
-      scope: "default",
-      tool_name: "network.http",
-      tags: [],
-      resource_scope: "none",
-      resource_paths: [],
-      security_context: {
-        trace_id: "trace-1",
-        actor_id: "contractor",
-        workspace: "payments",
-        policy_version: "2026-03-13",
-        untrusted: false,
-        tags: [],
-        created_at: "2026-03-13T00:00:00.000Z"
-      }
-    },
+    createDecisionContext({ actor_id: "contractor" }, { actor_id: "contractor" }),
     [
       {
-        precedence: 3,
-        rule: config.policies[1]
+        precedence: 7,
+        rule: publicEgressRule
       },
       {
-        precedence: 2,
-        rule: config.policies[0]
+        precedence: 4,
+        rule: highRiskRule
       }
     ],
   );
   assert.equal(outcome.decision, "challenge");
   assert.equal(outcome.challenge_ttl_seconds, 600);
-  assert.deepEqual(outcome.reason_codes, ["IDENTITY_REQUIRES_APPROVAL"]);
+  assert.deepEqual(outcome.reason_codes, ["PUBLIC_EGRESS_REQUIRES_APPROVAL"]);
   assert.equal(outcome.decision_source, "rule");
 });
 
@@ -65,25 +100,11 @@ test("approval FSM expires pending approvals after TTL", () => {
   let now = 0;
   const approvals = new ApprovalFsm(() => now);
   const record = approvals.requestApproval(
+    createDecisionContext({ actor_id: "contractor" }, { actor_id: "contractor" }),
     {
-      actor_id: "contractor",
-      scope: "default",
-      tool_name: "network.http",
-      tags: [],
-      resource_scope: "none",
-      resource_paths: [],
-      security_context: {
-        trace_id: "trace-1",
-        actor_id: "contractor",
-        workspace: "payments",
-        policy_version: "2026-03-13",
-        untrusted: false,
-        tags: [],
-        created_at: "2026-03-13T00:00:00.000Z"
-      }
+      ttl_seconds: 1,
+      reason_codes: ["PUBLIC_EGRESS_REQUIRES_APPROVAL"]
     },
-    1,
-    ["IDENTITY_REQUIRES_APPROVAL"],
   );
   now = 2_000;
   assert.equal(approvals.getApprovalStatus(record.approval_id)?.status, "expired");
@@ -140,16 +161,157 @@ test("event emitter retries failed webhook sends", async () => {
   assert.equal(emitter.getStats().queued, 0);
 });
 
+test("default policy matrix covers every configured rule", async (t) => {
+  const config = createConfig();
+  const cases: Record<string, Omit<BeforeToolCallInput, "actor_id" | "workspace" | "scope">> = {
+    "high-risk-command-block": {
+      tool_name: "shell.exec",
+      tool_group: "execution",
+      operation: "execute",
+      tool_args_summary: "rm -rf /tmp/demo"
+    },
+    "untrusted-execution-challenge": {
+      tool_name: "shell.exec",
+      tool_group: "execution",
+      operation: "execute",
+      tool_args_summary: "echo hello",
+      trust_level: "untrusted"
+    },
+    "workspace-outside-write-block": {
+      tool_name: "filesystem.write",
+      tool_group: "filesystem",
+      operation: "write",
+      resource_scope: "workspace_outside",
+      resource_paths: ["/Users/liuzhuangm4/Desktop/demo.txt"]
+    },
+    "sensitive-directory-enumeration-challenge": {
+      tool_name: "filesystem.list",
+      tool_group: "filesystem",
+      operation: "list",
+      resource_scope: "workspace_outside",
+      resource_paths: ["/Users/liuzhuangm4/Downloads"]
+    },
+    "credential-path-access-challenge": {
+      tool_name: "filesystem.read",
+      tool_group: "filesystem",
+      operation: "read",
+      resource_scope: "workspace_outside",
+      resource_paths: ["/Users/liuzhuangm4/.ssh/id_rsa"]
+    },
+    "public-network-egress-challenge": {
+      tool_name: "network.http",
+      tool_group: "network",
+      operation: "request",
+      destination_type: "public",
+      dest_domain: "api.example.com"
+    },
+    "sensitive-public-egress-block": {
+      tool_name: "network.http",
+      tool_group: "network",
+      operation: "request",
+      destination_type: "public",
+      dest_domain: "api.example.com",
+      data_labels: ["secret"]
+    },
+    "sensitive-archive-challenge": {
+      tool_name: "archive.create",
+      tool_group: "archive",
+      operation: "archive",
+      data_labels: ["customer_data"]
+    },
+    "critical-control-plane-change-challenge": {
+      tool_name: "filesystem.write",
+      tool_group: "filesystem",
+      operation: "write",
+      resource_scope: "workspace_inside",
+      resource_paths: ["/tmp/workspace/.github/workflows/deploy.yml"]
+    },
+    "email-content-access-challenge": {
+      tool_name: "email.read",
+      tool_group: "email",
+      operation: "read"
+    },
+    "sms-content-access-challenge": {
+      tool_name: "sms.read",
+      tool_group: "sms",
+      operation: "read"
+    },
+    "sms-otp-block": {
+      tool_name: "sms.read",
+      tool_group: "sms",
+      operation: "read",
+      data_labels: ["otp"]
+    },
+    "album-sensitive-read-challenge": {
+      tool_name: "album.read",
+      tool_group: "album",
+      operation: "read",
+      tool_args_summary: "screenshot of internal console"
+    },
+    "browser-credential-block": {
+      tool_name: "browser.read",
+      tool_group: "browser",
+      operation: "read",
+      data_labels: ["browser_secret"]
+    },
+    "business-system-bulk-read-block": {
+      tool_name: "crm.export",
+      tool_group: "business",
+      operation: "export",
+      volume: { record_count: 100 }
+    },
+    "break-glass-exception-challenge": {
+      tool_name: "filesystem.read",
+      tool_group: "filesystem",
+      operation: "read",
+      tags: ["break_glass"]
+    }
+  };
+
+  assert.deepEqual(
+    Object.keys(cases).sort(),
+    config.policies.map((rule) => rule.rule_id).sort(),
+  );
+
+  for (const [ruleId, input] of Object.entries(cases)) {
+    await t.test(ruleId, async () => {
+      const plugin = createSafeClawPlugin({
+        config,
+        generate_trace_id: () => `trace-${ruleId}`
+      });
+      const rule = findRule(config, ruleId);
+      const result = await plugin.hooks.before_tool_call({
+        actor_id: "employee",
+        workspace: "payments",
+        scope: "default",
+        ...input
+      });
+
+      assert.equal(result.decision, rule.decision);
+      assert.deepEqual(result.reason_codes, rule.reason_codes);
+      if (rule.decision === "challenge") {
+        assert.ok(result.approval?.approval_id);
+        assert.deepEqual(result.approval?.request_context.rule_ids, [ruleId]);
+      } else {
+        assert.equal(result.approval, undefined);
+      }
+    });
+  }
+});
+
 test("plugin blocks shell calls by rule", async () => {
   const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-1" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
     scope: "default",
-    tool_name: "shell.exec"
+    tool_name: "shell.exec",
+    tool_group: "execution",
+    operation: "execute",
+    tool_args_summary: "rm -rf /tmp/demo"
   });
   assert.equal(result.decision, "block");
-  assert.deepEqual(result.reason_codes, ["SHELL_BLOCK"]);
+  assert.deepEqual(result.reason_codes, ["HIGH_RISK_COMMAND_BLOCK"]);
 });
 
 test("plugin creates challenge and approved replay allows execution", async () => {
@@ -158,17 +320,27 @@ test("plugin creates challenge and approved replay allows execution", async () =
     actor_id: "contractor",
     workspace: "payments",
     scope: "default",
-    tool_name: "network.http"
+    tool_name: "network.http",
+    tool_group: "network",
+    operation: "request",
+    destination_type: "public",
+    dest_domain: "api.example.com"
   });
   assert.equal(first.decision, "challenge");
   assert.ok(first.approval?.approval_id);
 
-  plugin.approvals.resolveApproval(first.approval!.approval_id, "secops", "approved");
+  plugin.approvals.resolveApproval(first.approval!.approval_id, "secops", "approved", {
+    approver_role: "secops"
+  });
   const replay = await plugin.hooks.before_tool_call({
     actor_id: "contractor",
     workspace: "payments",
     scope: "default",
     tool_name: "network.http",
+    tool_group: "network",
+    operation: "request",
+    destination_type: "public",
+    dest_domain: "api.example.com",
     approval_id: first.approval!.approval_id
   });
   assert.equal(replay.decision, "allow");
@@ -181,10 +353,14 @@ test("plugin challenges filesystem listing", async () => {
     actor_id: "employee",
     workspace: "payments",
     scope: "default",
-    tool_name: "filesystem.list"
+    tool_name: "filesystem.list",
+    tool_group: "filesystem",
+    operation: "list",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/Users/liuzhuangm4/Downloads"]
   });
   assert.equal(result.decision, "challenge");
-  assert.deepEqual(result.reason_codes, ["FILE_ENUMERATION_REQUIRES_APPROVAL"]);
+  assert.deepEqual(result.reason_codes, ["SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL"]);
 });
 
 test("persist strict blocks sensitive transcript writes", async () => {
@@ -250,7 +426,7 @@ test("plugin applies policy changes after config reload", async () => {
   const updatedSource = readFileSync("./config/policy.default.yaml", "utf8").replace(
     'dlp:\n',
     `  - rule_id: "dev-network-block"
-    group: "email"
+    group: "data_egress"
     enabled: true
     priority: 110
     decision: "block"
@@ -279,7 +455,7 @@ dlp:
 test("plugin defaults to allow when no rule matches", async () => {
   const config = structuredClone(createConfig());
   config.policies = config.policies.map((rule) =>
-    rule.rule_id === "shell-block" ? { ...rule, enabled: false } : rule
+    rule.rule_id === "high-risk-command-block" ? { ...rule, enabled: false } : rule
   );
 
   const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-default-allow" });
@@ -297,7 +473,7 @@ test("plugin defaults to allow when no rule matches", async () => {
 test("rule matching supports resource scope and path prefix", async () => {
   const config = structuredClone(createConfig());
   config.policies = config.policies.map((rule) =>
-    rule.rule_id === "shell-block" ? { ...rule, enabled: false } : rule
+    rule.rule_id === "high-risk-command-block" ? { ...rule, enabled: false } : rule
   );
   config.policies.push({
     rule_id: "workspace-outside-shell-block",
@@ -326,6 +502,51 @@ test("rule matching supports resource scope and path prefix", async () => {
   assert.equal(result.decision, "block");
   assert.equal(result.decision_source, "rule");
   assert.deepEqual(result.reason_codes, ["WORKSPACE_OUTSIDE_BLOCK"]);
+});
+
+test("approved replay enforces trace-bound single-use requirements", async () => {
+  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-break-glass" });
+  const first = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "shell.exec",
+    tool_group: "execution",
+    operation: "execute",
+    tags: ["break_glass"]
+  });
+  assert.equal(first.decision, "challenge");
+  assert.ok(first.approval?.approval_id);
+
+  plugin.approvals.resolveApproval(first.approval.approval_id, "secops", "approved", {
+    approver_role: "secops",
+    ticket_id: "INC-123"
+  });
+
+  const allowed = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "shell.exec",
+    tool_group: "execution",
+    operation: "execute",
+    tags: ["break_glass"],
+    approval_id: first.approval.approval_id
+  });
+  assert.equal(allowed.decision, "allow");
+
+  const replay = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "shell.exec",
+    tool_group: "execution",
+    operation: "execute",
+    tags: ["break_glass"],
+    approval_id: first.approval.approval_id
+  });
+  assert.equal(replay.decision, "block");
+  assert.deepEqual(replay.reason_codes, ["APPROVAL_ALREADY_USED"]);
 });
 
 test("admin auto-start only enables for persistent gateway runtime", () => {

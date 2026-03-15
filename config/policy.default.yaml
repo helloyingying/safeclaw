@@ -1,5 +1,5 @@
 version: "1.0"
-policy_version: "2026-03-13"
+policy_version: "2026-03-15"
 environment: "default"
 defaults:
   approval_ttl_seconds: 900
@@ -26,55 +26,423 @@ hooks:
     timeout_ms: 40
     fail_mode: "open"
 policies:
-  - rule_id: "shell-block"
-    group: "filesystem"
+  - rule_id: "high-risk-command-block"
+    group: "execution_control"
+    control_domain: "execution_control"
+    title: "高危命令模式默认拦截"
+    description: "阻断删除、权限递归修改、下载后执行、提权和停用系统审计等高危命令模式。"
+    severity: "critical"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/high-risk-command"
     enabled: true
-    priority: 100
+    priority: 320
     decision: "block"
     reason_codes:
-      - "SHELL_BLOCK"
+      - "HIGH_RISK_COMMAND_BLOCK"
     match:
       tool:
         - "shell.exec"
-        - "exec"
-  - rule_id: "contractor-network-challenge"
-    group: "email"
+      tool_args_regex:
+        - '(^|\W)rm\s+-rf(\W|$)'
+        - '(^|\W)chmod\s+-R(\W|$)'
+        - '(curl|wget)\s+\S+\s*(\||&&)\s*(sh|bash)'
+        - '(^|\W)(sudo|doas|pkexec)\b'
+        - '(launchctl\s+unload|systemctl\s+(stop|disable))'
+
+  - rule_id: "untrusted-execution-challenge"
+    group: "execution_control"
+    control_domain: "execution_control"
+    title: "未受信输入驱动执行需审批"
+    description: "当未受信内容直接驱动执行类操作时，要求一次性、绑定 trace 的审批。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/untrusted-execution"
     enabled: true
-    priority: 80
+    priority: 300
     decision: "challenge"
     reason_codes:
-      - "IDENTITY_REQUIRES_APPROVAL"
-    challenge:
+      - "UNTRUSTED_EXECUTION_REQUIRES_APPROVAL"
+    approval_requirements:
+      ticket_required: true
+      approver_roles:
+        - "secops"
+        - "security-lead"
+      single_use: true
+      trace_binding: "trace"
       ttl_seconds: 600
     match:
-      identity:
-        - "contractor"
-      tool:
-        - "network.http"
-  - rule_id: "filesystem-list-challenge"
-    group: "filesystem"
+      trust_level:
+        - "untrusted"
+      tool_group:
+        - "execution"
+
+  - rule_id: "workspace-outside-write-block"
+    group: "data_access"
+    control_domain: "data_access"
+    title: "工作区外或系统目录写入删除默认拦截"
+    description: "阻断对工作区外和系统目录的写入、删除或覆盖类操作。"
+    severity: "critical"
+    owner: "platform-security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/outside-write"
     enabled: true
-    priority: 75
+    priority: 280
+    decision: "block"
+    reason_codes:
+      - "OUTSIDE_WRITE_BLOCK"
+    match:
+      tool_group:
+        - "filesystem"
+      operation:
+        - "write"
+        - "delete"
+      resource_scope:
+        - "workspace_outside"
+        - "system"
+
+  - rule_id: "sensitive-directory-enumeration-challenge"
+    group: "data_access"
+    control_domain: "data_access"
+    title: "枚举敏感目录需审批"
+    description: "对凭据目录、配置目录和下载区等高风险目录的枚举与搜索默认进入审批。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/sensitive-enumeration"
+    enabled: true
+    priority: 250
     decision: "challenge"
     reason_codes:
-      - "FILE_ENUMERATION_REQUIRES_APPROVAL"
-    challenge:
+      - "SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL"
+    approval_requirements:
+      approver_roles:
+        - "secops"
       ttl_seconds: 600
     match:
       tool:
         - "filesystem.list"
-  - rule_id: "finance-write-warn"
-    group: "filesystem"
+      path_glob:
+        - "**/.ssh"
+        - "**/.ssh/**"
+        - "**/.kube"
+        - "**/.kube/**"
+        - "**/Downloads"
+        - "**/Downloads/**"
+
+  - rule_id: "credential-path-access-challenge"
+    group: "credential_protection"
+    control_domain: "credential_protection"
+    title: "敏感凭据路径访问需审批"
+    description: "读取 .env、SSH、Kube、包管理凭据和云访问凭据时默认要求审批。"
+    severity: "critical"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/credential-path"
     enabled: true
-    priority: 60
-    decision: "warn"
+    priority: 260
+    decision: "challenge"
     reason_codes:
-      - "FINANCE_WRITE_AUDIT"
+      - "CREDENTIAL_PATH_ACCESS_REQUIRES_APPROVAL"
+    approval_requirements:
+      ticket_required: true
+      approver_roles:
+        - "secops"
+      ttl_seconds: 600
     match:
-      scope:
-        - "finance"
-      tool:
-        - "filesystem.write"
+      tool_group:
+        - "filesystem"
+      operation:
+        - "read"
+        - "search"
+        - "list"
+      path_glob:
+        - "**/.env"
+        - "**/.npmrc"
+        - "**/.pypirc"
+        - "**/.ssh"
+        - "**/.ssh/**"
+        - "**/id_rsa"
+        - "**/kubeconfig"
+        - "**/.kube/config"
+        - "**/aws/credentials"
+
+  - rule_id: "public-network-egress-challenge"
+    group: "data_egress"
+    control_domain: "data_egress"
+    title: "访问公网接口需审批"
+    description: "访问公网、未知域、个人网盘或 paste 类站点时，至少要求显式审批。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/public-egress"
+    enabled: true
+    priority: 220
+    decision: "challenge"
+    reason_codes:
+      - "PUBLIC_EGRESS_REQUIRES_APPROVAL"
+    approval_requirements:
+      approver_roles:
+        - "secops"
+      ttl_seconds: 600
+    match:
+      tool_group:
+        - "network"
+      destination_type:
+        - "public"
+        - "personal_storage"
+        - "paste_service"
+
+  - rule_id: "sensitive-public-egress-block"
+    group: "data_egress"
+    control_domain: "data_egress"
+    title: "敏感数据向公网外发默认拦截"
+    description: "当请求命中客户、财务、PII、通信或密钥类数据标签时，禁止直接向公网外发。"
+    severity: "critical"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/sensitive-egress"
+    enabled: true
+    priority: 310
+    decision: "block"
+    reason_codes:
+      - "SENSITIVE_PUBLIC_EGRESS_BLOCK"
+    match:
+      tool_group:
+        - "network"
+      destination_type:
+        - "public"
+        - "personal_storage"
+        - "paste_service"
+      data_labels:
+        - "secret"
+        - "pii"
+        - "customer_data"
+        - "financial"
+        - "communications"
+
+  - rule_id: "sensitive-archive-challenge"
+    group: "data_egress"
+    control_domain: "data_egress"
+    title: "敏感内容归档导出需审批"
+    description: "对客户数据、财务资料、密钥或媒体资料进行归档、压缩或导出时要求审批。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/archive-export"
+    enabled: true
+    priority: 210
+    decision: "challenge"
+    reason_codes:
+      - "SENSITIVE_ARCHIVE_REQUIRES_APPROVAL"
+    approval_requirements:
+      approver_roles:
+        - "secops"
+      ttl_seconds: 600
+    match:
+      tool_group:
+        - "archive"
+      data_labels:
+        - "secret"
+        - "customer_data"
+        - "financial"
+        - "media"
+
+  - rule_id: "critical-control-plane-change-challenge"
+    group: "change_control"
+    control_domain: "change_control"
+    title: "关键控制面文件变更需审批"
+    description: "修改 CI/CD、部署、容器、Terraform、Kubernetes 或 IAM 相关文件时默认进入审批。"
+    severity: "critical"
+    owner: "platform-security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/control-plane-change"
+    enabled: true
+    priority: 240
+    decision: "challenge"
+    reason_codes:
+      - "CONTROL_PLANE_CHANGE_REQUIRES_APPROVAL"
+    approval_requirements:
+      ticket_required: true
+      approver_roles:
+        - "platform-security"
+      ttl_seconds: 900
+    match:
+      operation:
+        - "write"
+        - "delete"
+        - "modify"
+      path_glob:
+        - "**/.github/workflows/**"
+        - "**/Dockerfile"
+        - "**/*.tf"
+        - "**/k8s/**"
+        - "**/manifests/**"
+        - "**/deploy/**"
+        - "**/*secret*.yaml"
+        - "**/*iam*"
+
+  - rule_id: "email-content-access-challenge"
+    group: "data_access"
+    control_domain: "data_access"
+    title: "读取邮箱正文或附件需审批"
+    description: "邮箱正文、附件、搜索结果和批量导出默认纳入审批流。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/email-access"
+    enabled: true
+    priority: 180
+    decision: "challenge"
+    reason_codes:
+      - "EMAIL_CONTENT_ACCESS_REQUIRES_APPROVAL"
+    approval_requirements:
+      approver_roles:
+        - "secops"
+      ttl_seconds: 600
+    match:
+      tool_group:
+        - "email"
+      operation:
+        - "read"
+        - "search"
+        - "export"
+
+  - rule_id: "sms-content-access-challenge"
+    group: "data_access"
+    control_domain: "data_access"
+    title: "读取短信内容需审批"
+    description: "短信正文、会话历史、搜索结果和导出默认纳入审批流。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/sms-access"
+    enabled: true
+    priority: 185
+    decision: "challenge"
+    reason_codes:
+      - "SMS_CONTENT_ACCESS_REQUIRES_APPROVAL"
+    approval_requirements:
+      approver_roles:
+        - "secops"
+      ttl_seconds: 600
+    match:
+      tool_group:
+        - "sms"
+      operation:
+        - "read"
+        - "search"
+        - "export"
+        - "list"
+
+  - rule_id: "sms-otp-block"
+    group: "credential_protection"
+    control_domain: "credential_protection"
+    title: "读取短信验证码或登录通知默认拦截"
+    description: "命中 OTP、验证码或登录提醒等短信内容时直接拦截。"
+    severity: "critical"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/sms-otp"
+    enabled: true
+    priority: 305
+    decision: "block"
+    reason_codes:
+      - "SMS_OTP_ACCESS_BLOCK"
+    match:
+      tool_group:
+        - "sms"
+      data_labels:
+        - "otp"
+
+  - rule_id: "album-sensitive-read-challenge"
+    group: "data_access"
+    control_domain: "data_access"
+    title: "读取截图、扫描件或证件照片需审批"
+    description: "相册中的截图、录屏、扫描件、证件和 OCR 文本读取默认进入审批。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/album-sensitive-read"
+    enabled: true
+    priority: 175
+    decision: "challenge"
+    reason_codes:
+      - "ALBUM_SENSITIVE_READ_REQUIRES_APPROVAL"
+    approval_requirements:
+      approver_roles:
+        - "secops"
+      ttl_seconds: 600
+    match:
+      tool_group:
+        - "album"
+      tool_args_summary:
+        - "screenshot"
+        - "screen recording"
+        - "scan"
+        - "ocr"
+        - "id card"
+        - "passport"
+        - "截图"
+        - "录屏"
+        - "扫描"
+        - "证件"
+        - "发票"
+        - "合同"
+
+  - rule_id: "browser-credential-block"
+    group: "credential_protection"
+    control_domain: "credential_protection"
+    title: "读取浏览器 Cookie、密码或自动填充默认拦截"
+    description: "浏览器凭据、Cookie、自动填充和下载历史等高敏内容读取默认阻断。"
+    severity: "critical"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/browser-secret"
+    enabled: true
+    priority: 315
+    decision: "block"
+    reason_codes:
+      - "BROWSER_SECRET_ACCESS_BLOCK"
+    match:
+      tool_group:
+        - "browser"
+      data_labels:
+        - "browser_secret"
+
+  - rule_id: "business-system-bulk-read-block"
+    group: "data_access"
+    control_domain: "data_access"
+    title: "业务系统批量读取默认拦截"
+    description: "CRM、ERP、HR、财务、工单与客服系统的批量读取或导出默认拦截。"
+    severity: "critical"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/business-bulk-read"
+    enabled: true
+    priority: 290
+    decision: "block"
+    reason_codes:
+      - "BUSINESS_SYSTEM_BULK_READ_BLOCK"
+    match:
+      tool_group:
+        - "business"
+      operation:
+        - "read"
+        - "search"
+        - "export"
+      min_record_count: 50
+
+  - rule_id: "break-glass-exception-challenge"
+    group: "approval_exception"
+    control_domain: "approval_exception"
+    title: "Break-glass 例外放行需单次审批"
+    description: "显式请求 break-glass 或策略例外时，要求工单、审批人角色和单次 trace 绑定。"
+    severity: "critical"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/break-glass"
+    enabled: true
+    priority: 330
+    decision: "challenge"
+    reason_codes:
+      - "BREAK_GLASS_REQUIRES_APPROVAL"
+    approval_requirements:
+      ticket_required: true
+      approver_roles:
+        - "secops"
+        - "security-lead"
+      single_use: true
+      trace_binding: "trace"
+      ttl_seconds: 300
+    match:
+      tags:
+        - "break_glass"
 dlp:
   on_dlp_hit: "sanitize"
   patterns:
@@ -87,10 +455,37 @@ dlp:
       type: "secret"
       action: "mask"
       regex: "sk-[A-Za-z0-9]{10,}"
+    - name: "access-key"
+      type: "credential"
+      action: "mask"
+      regex: "AKIA[0-9A-Z]{16}"
     - name: "bearer-token"
       type: "token"
       action: "remove"
       regex: "Bearer\\s+[A-Za-z0-9._-]{12,}"
+    - name: "jwt"
+      type: "token"
+      action: "remove"
+      regex: "eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"
+    - name: "private-key"
+      type: "credential"
+      action: "remove"
+      regex: "-----BEGIN(?: RSA| EC| OPENSSH| DSA)? PRIVATE KEY-----"
+    - name: "cookie-session"
+      type: "credential"
+      action: "mask"
+      regex: "(session(id)?|cookie)=[A-Za-z0-9._%+-]{12,}"
+      flags: "ig"
+    - name: "connection-string"
+      type: "credential"
+      action: "remove"
+      regex: "(postgres(ql)?|mysql|mongodb|redis|amqp):\\/\\/[^\\s\"']+"
+      flags: "ig"
+    - name: "internal-url"
+      type: "credential"
+      action: "mask"
+      regex: "https?:\\/\\/[A-Za-z0-9.-]+\\.(internal|corp|local)(:[0-9]+)?[^\\s\"']*"
+      flags: "ig"
 event_sink:
   webhook_url: ""
   timeout_ms: 3000
