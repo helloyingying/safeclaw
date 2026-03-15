@@ -733,7 +733,11 @@ function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => {
+    const hash = window.location.hash.replace("#", "");
+    const valid = ["overview", "events", "rules", "accounts"];
+    return valid.includes(hash) ? hash : "overview";
+  });
   const [decisionPage, setDecisionPage] = useState(1);
   const [activeRuleKey, setActiveRuleKey] = useState("");
   const [sidePanelOffset, setSidePanelOffset] = useState(0);
@@ -1056,6 +1060,11 @@ function App() {
     };
   }, [activeTab, firstRuleKey, policyEntries.length]);
 
+  function switchTab(tabId) {
+    setActiveTab(tabId);
+    window.location.hash = tabId;
+  }
+
   function onDecisionChange(index, decision) {
     setPolicies((current) => {
       const next = clone(current);
@@ -1150,26 +1159,27 @@ function App() {
       <section className="workspace card">
         <div className="workspace-top">
           <div className="workspace-title">
-            <div className="workspace-kicker">SafeClaw Admin</div>
-            <div className="workspace-heading">
-              <h1>管理后台</h1>
-              <div className="tablist" role="tablist" aria-label="后台模块页签">
-                {TAB_ITEMS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    id={`tab-${tab.id}`}
-                    className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeTab === tab.id}
-                    aria-controls={`panel-${tab.id}`}
-                    onClick={() => setActiveTab(tab.id)}
-                  >
-                    <span className="tab-label">{tab.label}</span>
-                    <span className="tab-count">{tabCounts[tab.id]}</span>
-                  </button>
-                ))}
-              </div>
+            <div className="workspace-kicker">
+              <img src="/favicon.svg" alt="" className="workspace-favicon" aria-hidden="true" />
+              SafeClaw Admin
+            </div>
+            <h1>管理后台</h1>
+            <div className="tablist" role="tablist" aria-label="后台模块页签">
+              {TAB_ITEMS.map((tab) => (
+                <button
+                  key={tab.id}
+                  id={`tab-${tab.id}`}
+                  className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.id}
+                  aria-controls={`panel-${tab.id}`}
+                  onClick={() => switchTab(tab.id)}
+                >
+                  <span className="tab-label">{tab.label}</span>
+                  <span className="tab-count">{tabCounts[tab.id]}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>

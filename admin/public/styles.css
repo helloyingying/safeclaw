@@ -117,6 +117,13 @@ button.ghost {
   text-transform: uppercase;
 }
 
+.workspace-favicon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 5px;
+}
+
 .workspace {
   width: 100%;
   min-height: 100vh;
@@ -144,9 +151,9 @@ button.ghost {
 }
 
 .workspace-title h1 {
-  margin: 0;
-  font-size: clamp(32px, 4vw, 52px);
-  line-height: 1.02;
+  margin: 4px 0 10px;
+  font-size: clamp(22px, 3vw, 32px);
+  line-height: 1.1;
   letter-spacing: -0.03em;
 }
 
@@ -1339,7 +1346,7 @@ tbody tr:hover {
   }
 
   .workspace-title h1 {
-    font-size: 40px;
+    font-size: 26px;
   }
 
   .stats {
@@ -1369,7 +1376,7 @@ tbody tr:hover {
 
 @media (max-width: 560px) {
   .workspace-title h1 {
-    font-size: 30px;
+    font-size: 22px;
   }
 
   .distribution-row {
