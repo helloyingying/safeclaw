@@ -135,34 +135,105 @@ External Integrations (optional)
 - 决策路径超时保护（超时后走降级策略）
 - 所有 guard 模块支持独立开关与熔断
 
-## 7. 代码结构
+## 7. 代码结构（重构后）
+
+### 分层架构
+
 ```text
 safeclaw-plugin/
   src/
-    hooks/
+    domain/                          # 领域层（核心业务逻辑）
+      models/
+        resource_context.ts          # 领域模型
+      ports/                         # 接口定义（依赖倒置）
+        notification_port.ts
+        approval_repository.ts
+        openclaw_adapter.ts
+      services/                      # 领域服务
+        context_inference_service.ts # 上下文推断（350 行）
+        approval_service.ts          # 审批业务逻辑（200 行）
+        approval_subject_resolver.ts
+        formatting_service.ts
+    
+    application/                     # 应用层（编排业务逻辑）
+      commands/
+        approval_commands.ts         # 命令处理器
+    
+    infrastructure/                  # 基础设施层（外部依赖）
+      adapters/
+        notification_adapter.ts      # 7 个渠道适配器
+        openclaw_adapter_impl.ts     # OpenClaw API 封装
+      config/
+        plugin_config_parser.ts
+    
+    hooks/                           # Hook 处理器
       context_guard.ts
       policy_guard.ts
       result_guard.ts
       persist_guard.ts
       output_guard.ts
-    engine/
+    
+    engine/                          # 决策引擎
       rule_engine.ts
       decision_engine.ts
       approval_fsm.ts
       dlp_engine.ts
+    
+    approvals/                       # 审批存储
+      chat_approval_store.ts         # 实现 ApprovalRepository
+    
     events/
       schema.ts
       emitter.ts
+    
     config/
       loader.ts
       validator.ts
+      live_config.ts
       runtime_override.ts
       strategy_store.ts
+  
   config/
     policy.default.yaml
+  
   docs/
     schema.security_event.json
 ```
+
+### 架构优势
+
+**重构前问题**:
+- ❌ index.ts 单文件 2032 行（上帝对象）
+- ❌ 职责不清，难以维护
+- ❌ 紧耦合，难以测试
+- ❌ 代码复用性差
+
+**重构后改进**:
+- ✅ 清晰的分层架构（领域层、应用层、基础设施层）
+- ✅ 单一职责原则（每个类只做一件事）
+- ✅ 依赖倒置（通过接口解耦）
+- ✅ 易于测试（可独立测试每个组件）
+- ✅ 代码减少 35.7%（2032 → 1305 行）
+
+### 核心组件
+
+**ContextInferenceService** (350 行)
+- 路径推断和分类（系统/工作区内/工作区外）
+- 工具组和操作推断
+- URL 分类（公网/内网/个人存储）
+- 标签推断（资产标签/数据标签）
+
+**ApprovalService** (200 行)
+- 发送审批通知（支持重试）
+- 判断是否需要重发
+- 格式化审批信息
+
+**NotificationAdapter** (150 行)
+- 7 个消息渠道适配器（Telegram, Discord, Slack, Signal, iMessage, WhatsApp, Line）
+- 工厂模式创建适配器
+
+**ApprovalCommands** (180 行)
+- 处理 approve/reject/pending 命令
 
 ## 8. 开发顺序
 1. `before_tool_call + decision_engine + event_emitter`
