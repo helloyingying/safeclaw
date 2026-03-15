@@ -17,17 +17,20 @@ export class ApprovalFsm implements ApprovalService {
     reasonCodes: ReasonCode[] = [],
   ): ApprovalRecord {
     const requestedAt = this.#now();
+    const requestContext: ApprovalRecord["request_context"] = {
+      actor_id: context.actor_id,
+      scope: context.scope,
+      reason_codes: reasonCodes
+    };
+    if (context.tool_name !== undefined) {
+      requestContext.tool_name = context.tool_name;
+    }
     const record: ApprovalRecord = {
       approval_id: randomUUID(),
       status: "pending",
       requested_at: new Date(requestedAt).toISOString(),
       expires_at: new Date(requestedAt + ttlSeconds * 1000).toISOString(),
-      request_context: {
-        actor_id: context.actor_id,
-        scope: context.scope,
-        tool_name: context.tool_name,
-        reason_codes: reasonCodes
-      }
+      request_context: requestContext
     };
     this.#records.set(record.approval_id, record);
     return record;

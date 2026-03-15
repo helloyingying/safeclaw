@@ -56,10 +56,10 @@ function buildEvent(
     trace_id: traceId,
     hook,
     decision: result.decision,
-    decision_source: result.decision_source,
     reason_codes: result.reason_codes,
     latency_ms: latencyMs,
-    ts: nowIso(now)
+    ts: nowIso(now),
+    ...(result.decision_source !== undefined ? { decision_source: result.decision_source } : {})
   };
 }
 

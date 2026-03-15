@@ -31,8 +31,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export class StrategyStore {
   #dbPath: string;
   #db: DatabaseSync;
-  #legacyOverridePath?: string;
-  #logger?: StrategyStoreOptions["logger"];
+  #legacyOverridePath: string | undefined;
+  #logger: StrategyStoreOptions["logger"] | undefined;
 
   constructor(dbPath: string, options: StrategyStoreOptions = {}) {
     this.#dbPath = dbPath;

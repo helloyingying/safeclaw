@@ -3,18 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
-  OpenClawPluginApi,
-  PluginHookAgentContext,
-  PluginHookBeforeMessageWriteEvent,
-  PluginHookBeforePromptBuildEvent,
-  PluginHookBeforePromptBuildResult,
-  PluginHookBeforeToolCallEvent,
-  PluginHookBeforeToolCallResult,
-  PluginHookMessageSendingEvent,
-  PluginHookMessageSendingResult,
-  PluginHookToolContext,
-  PluginHookToolResultPersistEvent,
-  PluginHookToolResultPersistResult
+  OpenClawPluginApi
 } from "openclaw/plugin-sdk";
 
 import { LiveConfigResolver, type LiveConfigSnapshot } from "./src/config/live_config.ts";
@@ -66,12 +55,21 @@ type RuntimeDependencies = {
   overrideLoaded: boolean;
 };
 
+type SafeClawHookContext = {
+  agentId?: string;
+  sessionKey?: string;
+  sessionId?: string;
+  runId?: string;
+  workspaceDir?: string;
+  channelId?: string;
+};
+
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME_DIR = os.homedir();
 const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
 const SYSTEM_PATH_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/private/etc", "/System", "/Library"];
 
-function resolveScope(ctx: { workspaceDir?: string; channelId?: string }): string {
+function resolveScope(ctx: { workspaceDir?: string | undefined; channelId?: string | undefined }): string {
   if (ctx.workspaceDir) {
     return path.basename(ctx.workspaceDir);
   }
@@ -230,6 +228,7 @@ function createEventEmitter(config: SafeClawConfig): EventEmitter {
 }
 
 function applyPluginConfigOverrides(config: SafeClawConfig, pluginConfig: SafeClawPluginConfig): SafeClawConfig {
+  const webhookUrl = pluginConfig.webhookUrl ?? config.event_sink.webhook_url;
   return {
     ...config,
     policy_version: pluginConfig.policyVersion ?? config.policy_version,
@@ -241,7 +240,7 @@ function applyPluginConfigOverrides(config: SafeClawConfig, pluginConfig: SafeCl
     },
     event_sink: {
       ...config.event_sink,
-      webhook_url: pluginConfig.webhookUrl ?? config.event_sink.webhook_url
+      ...(webhookUrl !== undefined ? { webhook_url: webhookUrl } : {})
     }
   };
 }
@@ -271,7 +270,7 @@ function toStatusConfig(config: SafeClawConfig, overrideLoaded: boolean, resolve
 
 function buildDecisionContext(
   config: SafeClawConfig,
-  ctx: PluginHookToolContext | PluginHookAgentContext,
+  ctx: SafeClawHookContext,
   toolName?: string,
   tags: string[] = [],
   resourceScope: ResourceScope = "none",
@@ -284,10 +283,10 @@ function buildDecisionContext(
   return {
     actor_id: ctx.agentId ?? "unknown-agent",
     scope,
-    tool_name: toolName,
     tags: mergedTags,
     resource_scope: resourceScope,
     resource_paths: resourcePaths,
+    ...(toolName !== undefined ? { tool_name: toolName } : {}),
     security_context: {
       trace_id: ctx.runId ?? ctx.sessionId ?? ctx.sessionKey ?? `trace-${Date.now()}`,
       actor_id: ctx.agentId ?? "unknown-agent",
@@ -333,11 +332,11 @@ function createEvent(
     trace_id: traceId,
     hook,
     decision,
-    decision_source: decisionSource,
-    resource_scope: resourceScope,
     reason_codes: reasonCodes,
     latency_ms: 0,
-    ts: new Date().toISOString()
+    ts: new Date().toISOString(),
+    ...(decisionSource !== undefined ? { decision_source: decisionSource } : {}),
+    ...(resourceScope !== undefined ? { resource_scope: resourceScope } : {})
   };
 }
 
@@ -454,19 +453,20 @@ const plugin = {
     if (adminAutoStart) {
       const autoStartDecision = shouldAutoStartAdminServer(process.env);
       if (autoStartDecision.enabled) {
+        const adminServerOptions = {
+          configPath: resolved.configPath,
+          legacyOverridePath: resolved.legacyOverridePath,
+          statusPath,
+          dbPath,
+          unrefOnStart: true,
+          logger: {
+            info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
+            warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`)
+          },
+          ...(pluginConfig.adminPort !== undefined ? { port: pluginConfig.adminPort } : {})
+        };
         void adminBuildPromise.then(() =>
-          startAdminServer({
-            port: pluginConfig.adminPort,
-            configPath: resolved.configPath,
-            legacyOverridePath: resolved.legacyOverridePath,
-            statusPath,
-            dbPath,
-            unrefOnStart: true,
-            logger: {
-              info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
-              warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`)
-            }
-          }).catch((error) => {
+          startAdminServer(adminServerOptions).catch((error) => {
             api.logger.warn?.(`safeclaw: failed to auto-start admin dashboard (${String(error)})`);
           }),
         );
@@ -488,14 +488,15 @@ const plugin = {
 
     api.on(
       "before_prompt_build",
-      async (event: PluginHookBeforePromptBuildEvent, ctx: PluginHookAgentContext): Promise<PluginHookBeforePromptBuildResult> => {
+      async (_event, ctx) => {
+        const hookContext = ctx as SafeClawHookContext;
         const current = getRuntime();
-        const traceId = ctx.runId ?? ctx.sessionId ?? ctx.sessionKey ?? `trace-${Date.now()}`;
-        const scope = resolveScope({ workspaceDir: ctx.workspaceDir, channelId: ctx.channelId });
+        const traceId = hookContext.runId ?? hookContext.sessionId ?? hookContext.sessionKey ?? `trace-${Date.now()}`;
+        const scope = resolveScope({ workspaceDir: hookContext.workspaceDir, channelId: hookContext.channelId });
         const prependSystemContext = [
           "[SafeClaw Security Context]",
           `trace_id=${traceId}`,
-          `agent_id=${ctx.agentId ?? "unknown-agent"}`,
+          `agent_id=${hookContext.agentId ?? "unknown-agent"}`,
           `scope=${scope}`,
           `policy_version=${current.config.policy_version}`
         ].join("\n");
@@ -508,7 +509,7 @@ const plugin = {
           ts: new Date().toISOString(),
           hook: "before_prompt_build",
           trace_id: traceId,
-          actor: ctx.agentId ?? "unknown-agent",
+          actor: hookContext.agentId ?? "unknown-agent",
           scope,
           decision: "allow",
           reasons: ["SECURITY_CONTEXT_INJECTED"]
@@ -520,17 +521,15 @@ const plugin = {
 
     api.on(
       "before_tool_call",
-      async (
-        event: PluginHookBeforeToolCallEvent,
-        ctx: PluginHookToolContext,
-      ): Promise<PluginHookBeforeToolCallResult | void> => {
+      async (event, ctx) => {
+        const hookContext = ctx as SafeClawHookContext;
         const current = getRuntime();
         const normalizedToolName = normalizeToolName(event.toolName);
-        const rawArguments = (event as { arguments?: unknown }).arguments;
-        const resource = extractResourceContext(rawArguments, ctx.workspaceDir);
+        const rawArguments = event.params;
+        const resource = extractResourceContext(rawArguments, hookContext.workspaceDir);
         const decisionContext = buildDecisionContext(
           current.config,
-          ctx,
+          hookContext,
           normalizedToolName,
           [],
           resource.resourceScope,
@@ -646,7 +645,7 @@ const plugin = {
 
     api.on(
       "tool_result_persist",
-      (event: PluginHookToolResultPersistEvent): PluginHookToolResultPersistResult | void => {
+      (event) => {
         const current = getRuntime();
         const traceId = event.toolCallId ?? event.toolName ?? `trace-${Date.now()}`;
         const sanitized = sanitizeUnknown(current.dlpEngine, event.message);
@@ -656,14 +655,24 @@ const plugin = {
             createEvent(traceId, "tool_result_persist", "allow", ["PERSIST_OK"]),
             api.logger,
           );
-          statusStore.recordDecision({
-            ts: new Date().toISOString(),
-            hook: "tool_result_persist",
-            trace_id: traceId,
-            tool: event.toolName,
-            decision: "allow",
-            reasons: ["PERSIST_OK"]
-          });
+          if (event.toolName !== undefined) {
+            statusStore.recordDecision({
+              ts: new Date().toISOString(),
+              hook: "tool_result_persist",
+              trace_id: traceId,
+              tool: event.toolName,
+              decision: "allow",
+              reasons: ["PERSIST_OK"]
+            });
+          } else {
+            statusStore.recordDecision({
+              ts: new Date().toISOString(),
+              hook: "tool_result_persist",
+              trace_id: traceId,
+              decision: "allow",
+              reasons: ["PERSIST_OK"]
+            });
+          }
           return undefined;
         }
         emitEvent(
@@ -676,14 +685,24 @@ const plugin = {
           ),
           api.logger,
         );
-        statusStore.recordDecision({
-          ts: new Date().toISOString(),
-          hook: "tool_result_persist",
-          trace_id: traceId,
-          tool: event.toolName,
-          decision: current.config.defaults.persist_mode === "strict" ? "block" : "warn",
-          reasons: ["PERSIST_SANITIZED"]
-        });
+        if (event.toolName !== undefined) {
+          statusStore.recordDecision({
+            ts: new Date().toISOString(),
+            hook: "tool_result_persist",
+            trace_id: traceId,
+            tool: event.toolName,
+            decision: current.config.defaults.persist_mode === "strict" ? "block" : "warn",
+            reasons: ["PERSIST_SANITIZED"]
+          });
+        } else {
+          statusStore.recordDecision({
+            ts: new Date().toISOString(),
+            hook: "tool_result_persist",
+            trace_id: traceId,
+            decision: current.config.defaults.persist_mode === "strict" ? "block" : "warn",
+            reasons: ["PERSIST_SANITIZED"]
+          });
+        }
         api.logger.warn?.(
           `safeclaw: tool_result_persist trace_id=${traceId} tool=${event.toolName} decision=${current.config.defaults.persist_mode === "strict" ? "block" : "warn"} findings=${findingsToText(sanitized.findings)}`,
         );
@@ -694,7 +713,7 @@ const plugin = {
 
     api.on(
       "before_message_write",
-      (event: PluginHookBeforeMessageWriteEvent) => {
+      (event) => {
         const current = getRuntime();
         if (current.config.defaults.persist_mode !== "strict") {
           return undefined;
@@ -720,7 +739,7 @@ const plugin = {
 
     api.on(
       "message_sending",
-      async (event: PluginHookMessageSendingEvent, ctx): Promise<PluginHookMessageSendingResult | void> => {
+      async (event, ctx) => {
         const current = getRuntime();
         const traceId = ctx.conversationId ?? ctx.accountId ?? `trace-${Date.now()}`;
         const sanitized = sanitizeUnknown(current.dlpEngine, event.content);

@@ -28,7 +28,7 @@ export function runPolicyGuard(
   ruleEngine: RuleEngine,
   decisionEngine: DecisionEngine,
   approvals: ApprovalFsm,
-): GuardComputation<BeforeToolCallInput> {
+  ): GuardComputation<BeforeToolCallInput> {
   const securityContext = buildSecurityContext(input, policyVersion, traceId, nowIso);
   const context: DecisionContext = {
     actor_id: input.actor_id,
@@ -43,26 +43,28 @@ export function runPolicyGuard(
   if (input.approval_id) {
     const approval = approvals.getApprovalStatus(input.approval_id);
     if (approval?.status === "approved") {
-      return {
+      const result: GuardComputation<BeforeToolCallInput> = {
         mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
         decision: "allow",
         decision_source: "approval",
         reason_codes: ["APPROVAL_GRANTED"],
         sanitization_actions: [],
-        security_context: securityContext,
-        approval
+        security_context: securityContext
       };
+      result.approval = approval;
+      return result;
     }
     if (approval && approval.status !== "pending") {
-      return {
+      const result: GuardComputation<BeforeToolCallInput> = {
         mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
         decision: "block",
         decision_source: "approval",
         reason_codes: [`APPROVAL_${approval.status.toUpperCase()}`],
         sanitization_actions: [],
-        security_context: securityContext,
-        approval
+        security_context: securityContext
       };
+      result.approval = approval;
+      return result;
     }
   }
 
@@ -78,13 +80,16 @@ export function runPolicyGuard(
     );
   }
 
-  return {
+  const result: GuardComputation<BeforeToolCallInput> = {
     mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
     decision: outcome.decision,
     decision_source: outcome.decision_source,
     reason_codes: outcome.reason_codes,
     sanitization_actions: [],
-    security_context: securityContext,
-    approval
+    security_context: securityContext
   };
+  if (approval !== undefined) {
+    result.approval = approval;
+  }
+  return result;
 }

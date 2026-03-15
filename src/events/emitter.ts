@@ -28,7 +28,7 @@ type QueueItem = {
 };
 
 export class EventEmitter {
-  #sink?: EventSink;
+  #sink: EventSink | undefined;
   #maxBuffer: number;
   #retryLimit: number;
   #queue: QueueItem[] = [];

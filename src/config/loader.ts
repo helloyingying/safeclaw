@@ -120,7 +120,7 @@ function parseYaml(source: string): Record<string, unknown> {
 export class ConfigManager {
   #config: SafeClawConfig;
   #lastKnownGood: SafeClawConfig;
-  #path?: string;
+  #path: string | undefined;
 
   constructor(config: SafeClawConfig, path?: string) {
     const frozen = deepFreeze(deepClone(config));

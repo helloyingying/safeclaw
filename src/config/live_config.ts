@@ -44,9 +44,9 @@ export class LiveConfigResolver {
   #configPath: string;
   #configManager: ConfigManager;
   #strategyStore: StrategyStore;
-  #logger?: LiveConfigLogger;
-  #transform?: (config: SafeClawConfig) => SafeClawConfig;
-  #onReload?: (snapshot: LiveConfigSnapshot) => void;
+  #logger: LiveConfigLogger | undefined;
+  #transform: ((config: SafeClawConfig) => SafeClawConfig) | undefined;
+  #onReload: ((snapshot: LiveConfigSnapshot) => void) | undefined;
   #configMtimeMs: number | undefined;
   #overrideSig = "uninitialized";
   #snapshot: LiveConfigSnapshot;
@@ -63,8 +63,8 @@ export class LiveConfigResolver {
       overrideLoaded: false
     };
     this.#strategyStore = new StrategyStore(options.dbPath, {
-      legacyOverridePath: options.legacyOverridePath,
-      logger: options.logger
+      ...(options.legacyOverridePath !== undefined ? { legacyOverridePath: options.legacyOverridePath } : {}),
+      ...(options.logger !== undefined ? { logger: options.logger } : {})
     });
     this.#configMtimeMs = safeMtimeMs(this.#configPath);
     this.#snapshot = this.#buildSnapshot(true);
@@ -120,11 +120,14 @@ export class LiveConfigResolver {
       const effective = effectiveOverride ? applyRuntimeOverride(base, effectiveOverride) : base;
       const config = this.#transform ? this.#transform(effective) : effective;
       this.#overrideSig = effectiveSignature;
-      this.#snapshot = {
+      const snapshot: LiveConfigSnapshot = {
         config,
-        override: effectiveOverride,
         overrideLoaded: Boolean(effectiveOverride)
       };
+      if (effectiveOverride !== undefined) {
+        snapshot.override = effectiveOverride;
+      }
+      this.#snapshot = snapshot;
       const action = isInitialLoad ? "loaded" : "reloaded";
       this.#logger?.info?.(
         `safeclaw: ${action} policy_version=${config.policy_version} rules=${config.policies.length} strategy_loaded=${Boolean(effectiveOverride)}`,

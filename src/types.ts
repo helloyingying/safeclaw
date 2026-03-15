@@ -136,6 +136,7 @@ export interface SafeClawConfig {
 export interface HookResult<T = unknown> {
   mutated_payload: T;
   decision: Decision;
+  decision_source?: DecisionSource;
   reason_codes: ReasonCode[];
   sanitization_actions: SanitizationAction[];
   latency_ms: number;

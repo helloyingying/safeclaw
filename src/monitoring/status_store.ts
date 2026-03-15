@@ -487,7 +487,7 @@ export class RuntimeStatusStore {
           override_loaded?: boolean;
         };
         if (parsed && typeof parsed === "object") {
-          config = {
+          const nextConfig: RuntimeStatus["config"] = {
             environment: parsed.environment ?? fallback.config.environment,
             policy_version: parsed.policy_version ?? fallback.config.policy_version,
             policy_count: parsed.policy_count ?? fallback.config.policy_count,
@@ -495,9 +495,12 @@ export class RuntimeStatusStore {
             strategy_db_path:
               parsed.strategy_db_path ?? parsed.override_path ?? fallback.config.strategy_db_path,
             strategy_loaded:
-              parsed.strategy_loaded ?? parsed.override_loaded ?? fallback.config.strategy_loaded,
-            legacy_override_path: parsed.legacy_override_path
+              parsed.strategy_loaded ?? parsed.override_loaded ?? fallback.config.strategy_loaded
           };
+          if (parsed.legacy_override_path !== undefined) {
+            nextConfig.legacy_override_path = parsed.legacy_override_path;
+          }
+          config = nextConfig;
         }
       } catch {
         // Ignore malformed config payload and keep fallback values.
@@ -519,16 +522,26 @@ export class RuntimeStatusStore {
       .all() as HookRow[];
 
     for (const row of rows) {
-      hooks[row.hook] = {
+      const counter: HookCounter = {
         total: Number(row.total ?? 0),
         allow: Number(row.allow ?? 0),
         warn: Number(row.warn ?? 0),
         challenge: Number(row.challenge ?? 0),
-        block: Number(row.block ?? 0),
-        last_ts: optionalString(row.last_ts),
-        last_tool: optionalString(row.last_tool),
-        last_scope: optionalString(row.last_scope)
+        block: Number(row.block ?? 0)
       };
+      const lastTs = optionalString(row.last_ts);
+      const lastTool = optionalString(row.last_tool);
+      const lastScope = optionalString(row.last_scope);
+      if (lastTs !== undefined) {
+        counter.last_ts = lastTs;
+      }
+      if (lastTool !== undefined) {
+        counter.last_tool = lastTool;
+      }
+      if (lastScope !== undefined) {
+        counter.last_scope = lastScope;
+      }
+      hooks[row.hook] = counter;
     }
 
     const decisions = this.#db

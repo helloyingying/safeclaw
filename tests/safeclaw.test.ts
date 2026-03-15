@@ -32,6 +32,8 @@ test("decision engine uses matched rule decision", () => {
       scope: "default",
       tool_name: "network.http",
       tags: [],
+      resource_scope: "none",
+      resource_paths: [],
       security_context: {
         trace_id: "trace-1",
         actor_id: "contractor",
@@ -68,6 +70,8 @@ test("approval FSM expires pending approvals after TTL", () => {
       scope: "default",
       tool_name: "network.http",
       tags: [],
+      resource_scope: "none",
+      resource_paths: [],
       security_context: {
         trace_id: "trace-1",
         actor_id: "contractor",

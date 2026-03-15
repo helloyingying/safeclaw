@@ -58,6 +58,7 @@ export function validateConfig(raw: Record<string, unknown>): SafeClawConfig {
   if (!dlp || !Array.isArray(dlp.patterns) || !dlp.on_dlp_hit) {
     throw new Error("DLP config must define patterns and on_dlp_hit.");
   }
+  const webhookUrl = config.event_sink?.webhook_url;
 
   return {
     version: config.version,
@@ -74,10 +75,10 @@ export function validateConfig(raw: Record<string, unknown>): SafeClawConfig {
       patterns: dlp.patterns
     },
     event_sink: {
-      webhook_url: config.event_sink?.webhook_url,
       timeout_ms: config.event_sink?.timeout_ms ?? 3000,
       max_buffer: config.event_sink?.max_buffer ?? 100,
-      retry_limit: config.event_sink?.retry_limit ?? 3
+      retry_limit: config.event_sink?.retry_limit ?? 3,
+      ...(webhookUrl !== undefined ? { webhook_url: webhookUrl } : {})
     }
   };
 }
