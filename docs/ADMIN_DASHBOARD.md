@@ -16,6 +16,11 @@
   - rule technical IDs are hidden behind readable names when available.
   - dashboard no longer exposes per-rule enable switches; rule editing is action-first.
 - Unsaved-change protection: auto-refresh will not overwrite local edits.
+- Accounts panel admin mapping:
+  - setting an account policy with `is_admin=true` automatically enrolls that account as SafeClaw approval notify target + command approver at runtime.
+  - admin account selection is single-choice; at most one account can be admin at the same time.
+  - this mapping does not write back to `~/.openclaw/openclaw.json`.
+  - all channels can use command approvals; Telegram also shows quick action buttons in approval notifications.
 
 ## Strategy Configuration
 - The panel writes overrides to SQLite (`runtime/safeclaw.db`) via `PUT /api/strategy`.

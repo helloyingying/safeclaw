@@ -7,13 +7,13 @@ import { fileURLToPath } from "node:url";
 import type {
   OpenClawPluginApi
 } from "openclaw/plugin-sdk";
+import * as OpenClawCompat from "openclaw/plugin-sdk/compat";
 
 import { LiveConfigResolver, type LiveConfigSnapshot } from "./src/config/live_config.ts";
 import {
   ChatApprovalStore,
   type ApprovalChannel,
   type ChatApprovalApprover,
-  type ChatApprovalConfig,
   type ChatApprovalTarget,
   type StoredApprovalNotification,
   type StoredApprovalRecord,
@@ -31,6 +31,7 @@ import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
 import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
 import type {
+  AccountPolicyRecord,
   DecisionContext,
   DecisionSource,
   DlpFinding,
@@ -53,7 +54,6 @@ type SafeClawPluginConfig = {
   statusPath?: string;
   adminAutoStart?: boolean;
   adminPort?: number;
-  approvalBridge?: ChatApprovalConfig;
 };
 
 type ResolvedPluginRuntime = {
@@ -98,6 +98,12 @@ type ApprovalNotificationResult = {
 
 type ApprovalGrantMode = "temporary" | "longterm";
 
+type ResolvedApprovalBridge = {
+  enabled: boolean;
+  targets: ChatApprovalTarget[];
+  approvers: ChatApprovalApprover[];
+};
+
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME_DIR = os.homedir();
 const APPROVAL_APPROVE_COMMAND = "safeclaw-approve";
@@ -132,6 +138,21 @@ const PASTE_SERVICE_DOMAINS = [
   "hastebin.com",
   "transfer.sh",
 ];
+const CHANNEL_METHOD_SUFFIX_OVERRIDES: Record<string, string> = {
+  imessage: "IMessage",
+  whatsapp: "WhatsApp",
+  lark: "Feishu",
+};
+const FEISHU_DEFAULT_API_BASE = "https://open.feishu.cn";
+const LARK_DEFAULT_API_BASE = "https://open.larksuite.com";
+const FEISHU_HTTP_TIMEOUT_MS = 10_000;
+const CHANNEL_LOOKUP_ALIASES: Record<string, string[]> = {
+  feishu: ["lark"],
+  lark: ["feishu"],
+};
+const getChannelPluginCompat = (OpenClawCompat as Record<string, unknown>).getChannelPlugin as
+  | ((id: string) => unknown)
+  | undefined;
 
 function resolveScope(ctx: { workspaceDir?: string | undefined; channelId?: string | undefined }): string {
   if (ctx.workspaceDir) {
@@ -667,18 +688,8 @@ function trimText(value: string, maxLength: number): string {
 }
 
 function normalizeApprovalChannel(value: string | undefined): ApprovalChannel | undefined {
-  switch ((value ?? "").trim().toLowerCase()) {
-    case "discord":
-    case "imessage":
-    case "line":
-    case "signal":
-    case "slack":
-    case "telegram":
-    case "whatsapp":
-      return value!.trim().toLowerCase() as ApprovalChannel;
-    default:
-      return undefined;
-  }
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? (normalized as ApprovalChannel) : undefined;
 }
 
 function normalizeThreadId(threadId: string | number | undefined): number | undefined {
@@ -695,49 +706,123 @@ function resolveApprovalSubject(ctx: SafeClawHookContext): string {
   return ApprovalSubjectResolver.resolve(ctx);
 }
 
-function sanitizeApprovalConfig(config: ChatApprovalConfig | undefined): Required<ChatApprovalConfig> {
-  const targets = Array.isArray(config?.targets)
-    ? config.targets
-        .map((target) => {
-          const channel = normalizeApprovalChannel(target.channel);
-          const to = typeof target.to === "string" ? target.to.trim() : "";
-          if (!channel || !to) {
-            return undefined;
-          }
-          return {
-            channel,
-            to,
-            ...(typeof target.account_id === "string" && target.account_id.trim()
-              ? { account_id: target.account_id.trim() }
-              : {}),
-            ...(typeof target.thread_id === "string" || typeof target.thread_id === "number"
-              ? { thread_id: target.thread_id }
-              : {}),
-          } satisfies ChatApprovalTarget;
-        })
-        .filter((target): target is ChatApprovalTarget => Boolean(target))
-    : [];
-  const approvers = Array.isArray(config?.approvers)
-    ? config.approvers
-        .map((approver) => {
-          const channel = normalizeApprovalChannel(approver.channel);
-          const from = typeof approver.from === "string" ? approver.from.trim() : "";
-          if (!channel || !from) {
-            return undefined;
-          }
-          return {
-            channel,
-            from,
-            ...(typeof approver.account_id === "string" && approver.account_id.trim()
-              ? { account_id: approver.account_id.trim() }
-              : {}),
-          } satisfies ChatApprovalApprover;
-        })
-        .filter((approver): approver is ChatApprovalApprover => Boolean(approver))
-    : [];
+function splitApprovalSubject(value: string | undefined): { channel?: ApprovalChannel; identifier?: string } {
+  const subject = value?.trim();
+  if (!subject) {
+    return {};
+  }
+  const separator = subject.indexOf(":");
+  if (separator <= 0) {
+    return {};
+  }
+  const channel = normalizeApprovalChannel(subject.slice(0, separator));
+  if (!channel) {
+    return {};
+  }
+  const identifier = subject.slice(separator + 1).trim();
+  if (!identifier) {
+    return {};
+  }
+  return { channel, identifier };
+}
 
+function normalizeApprovalIdentity(value: string | undefined, channel: ApprovalChannel): string | undefined {
+  const candidate = value?.trim();
+  if (!candidate) {
+    return undefined;
+  }
+  const channelPrefix = `${channel}:`;
+  if (candidate.toLowerCase().startsWith(channelPrefix)) {
+    const unscoped = candidate.slice(channelPrefix.length).trim();
+    return unscoped || undefined;
+  }
+  return candidate;
+}
+
+function collectAdminApprovalIdentities(policy: AccountPolicyRecord, channel: ApprovalChannel): string[] {
+  const candidates = new Set<string>();
+  const subject = splitApprovalSubject(policy.subject);
+  const subjectIdentity = normalizeApprovalIdentity(subject.identifier, channel);
+  if (subjectIdentity) {
+    candidates.add(subjectIdentity);
+  } else {
+    const sessionIdentity = normalizeApprovalIdentity(policy.session_id, channel);
+    if (sessionIdentity) {
+      candidates.add(sessionIdentity);
+    }
+  }
+  return Array.from(candidates);
+}
+
+function deriveApprovalBridgeFromAdminPolicies(
+  accountPolicyEngine: AccountPolicyEngine,
+): Pick<ResolvedApprovalBridge, "targets" | "approvers"> {
+  const targets: ChatApprovalTarget[] = [];
+  const approvers: ChatApprovalApprover[] = [];
+  for (const policy of accountPolicyEngine.listPolicies()) {
+    if (!policy.is_admin) {
+      continue;
+    }
+    const subject = splitApprovalSubject(policy.subject);
+    const channel = normalizeApprovalChannel(policy.channel) ?? subject.channel;
+    if (!channel) {
+      continue;
+    }
+    const identities = collectAdminApprovalIdentities(policy, channel);
+    for (const identity of identities) {
+      targets.push({
+        channel,
+        to: identity,
+      });
+      approvers.push({
+        channel,
+        from: identity,
+      });
+    }
+  }
+  return { targets, approvers };
+}
+
+function dedupeApprovalTargets(targets: ChatApprovalTarget[]): ChatApprovalTarget[] {
+  const deduped: ChatApprovalTarget[] = [];
+  const seen = new Set<string>();
+  for (const target of targets) {
+    const key = [
+      target.channel,
+      target.to,
+      target.account_id ?? "",
+      target.thread_id !== undefined ? String(target.thread_id) : "",
+    ].join("|");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(target);
+  }
+  return deduped;
+}
+
+function dedupeApprovalApprovers(approvers: ChatApprovalApprover[]): ChatApprovalApprover[] {
+  const deduped: ChatApprovalApprover[] = [];
+  const seen = new Set<string>();
+  for (const approver of approvers) {
+    const key = [approver.channel, approver.from, approver.account_id ?? ""].join("|");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(approver);
+  }
+  return deduped;
+}
+
+function mergeApprovalBridgeConfig(
+  derived: Pick<ResolvedApprovalBridge, "targets" | "approvers">,
+): ResolvedApprovalBridge {
+  const targets = dedupeApprovalTargets(derived.targets);
+  const approvers = dedupeApprovalApprovers(derived.approvers);
   return {
-    enabled: config?.enabled === true,
+    enabled: approvers.length > 0,
     targets,
     approvers,
   };
@@ -955,6 +1040,351 @@ function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: Approval
   return new Date(Date.now() + resolveTemporaryGrantDurationMs(record)).toISOString();
 }
 
+type ChannelSendMessageFn = (
+  to: string,
+  text: string,
+  opts?: Record<string, unknown>,
+) => Promise<{ messageId?: string }>;
+
+function resolveChannelLookupCandidates(channel: string): string[] {
+  const normalized = channel.trim().toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+  const candidates = new Set<string>([normalized]);
+  for (const alias of CHANNEL_LOOKUP_ALIASES[normalized] ?? []) {
+    candidates.add(alias);
+  }
+  return Array.from(candidates);
+}
+
+function resolveChannelMethodSuffix(channel: string): string {
+  const normalized = channel.trim().toLowerCase();
+  const override = CHANNEL_METHOD_SUFFIX_OVERRIDES[normalized];
+  if (override) {
+    return override;
+  }
+  return normalized
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+}
+
+function buildChannelMethodCandidates(channel: string): string[] {
+  const suffix = resolveChannelMethodSuffix(channel);
+  return [
+    `sendMessage${suffix}`,
+    `pushMessage${suffix}`,
+    `postMessage${suffix}`,
+    `send${suffix}`,
+    `push${suffix}`,
+    "sendMessage",
+    "pushMessage",
+  ];
+}
+
+function resolveDynamicChannelSender(
+  api: OpenClawPluginApi,
+  channel: string,
+): ChannelSendMessageFn | undefined {
+  const runtimeChannels = api.runtime.channel as unknown as Record<string, unknown>;
+  for (const channelCandidate of resolveChannelLookupCandidates(channel)) {
+    const channelClient = runtimeChannels[channelCandidate];
+    if (!channelClient || typeof channelClient !== "object") {
+      continue;
+    }
+    const methodNames = Array.from(new Set<string>([
+      ...buildChannelMethodCandidates(channel),
+      ...buildChannelMethodCandidates(channelCandidate),
+    ]));
+    for (const methodName of methodNames) {
+      const candidate = (channelClient as Record<string, unknown>)[methodName];
+      if (typeof candidate === "function") {
+        return (to: string, text: string, opts?: Record<string, unknown>) =>
+          (candidate as (to: string, text: string, opts?: Record<string, unknown>) => Promise<{ messageId?: string }>)
+            .call(channelClient, to, text, opts);
+      }
+    }
+  }
+  return undefined;
+}
+
+type ChannelPluginSendTextFn = (ctx: {
+  cfg: unknown;
+  to: string;
+  text: string;
+  accountId?: string | null;
+  threadId?: string | number | null;
+}) => Promise<Record<string, unknown>>;
+
+function resolveChannelPluginSendText(channel: string): ChannelPluginSendTextFn | undefined {
+  if (typeof getChannelPluginCompat !== "function") {
+    return undefined;
+  }
+  for (const channelCandidate of resolveChannelLookupCandidates(channel)) {
+    const plugin = getChannelPluginCompat(channelCandidate) as {
+      outbound?: {
+        sendText?: ChannelPluginSendTextFn;
+      };
+    } | undefined;
+    const sendText = plugin?.outbound?.sendText;
+    if (typeof sendText === "function") {
+      return sendText;
+    }
+  }
+  return undefined;
+}
+
+type FeishuReceiveIdType = "chat_id" | "open_id" | "user_id";
+
+type FeishuRuntimeConfig = {
+  appId: string;
+  appSecret: string;
+  apiBase: string;
+};
+
+function feishuAsRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function feishuTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function resolveFeishuSecretValue(value: unknown): string | undefined {
+  const direct = feishuTrimmedString(value);
+  if (direct) {
+    return direct;
+  }
+  const record = feishuAsRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const source = feishuTrimmedString(record.source)?.toLowerCase();
+  const id = feishuTrimmedString(record.id);
+  if (source === "env" && id) {
+    const envValue = feishuTrimmedString(process.env[id]);
+    if (envValue) {
+      return envValue;
+    }
+  }
+  for (const key of ["value", "secret", "token", "text"]) {
+    const candidate = feishuTrimmedString(record[key]);
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function resolveFeishuApiBase(domain: unknown): string {
+  const domainValue = feishuTrimmedString(domain)?.replace(/\/+$/, "");
+  if (!domainValue || domainValue.toLowerCase() === "feishu") {
+    return FEISHU_DEFAULT_API_BASE;
+  }
+  if (domainValue.toLowerCase() === "lark") {
+    return LARK_DEFAULT_API_BASE;
+  }
+  if (/^https?:\/\//i.test(domainValue)) {
+    return domainValue;
+  }
+  return `https://${domainValue}`;
+}
+
+function resolveFeishuRuntimeConfig(
+  api: OpenClawPluginApi,
+  target: ChatApprovalTarget,
+): FeishuRuntimeConfig | undefined {
+  const configRoot = feishuAsRecord(api.config);
+  const channels = feishuAsRecord(configRoot?.channels);
+  const feishu = feishuAsRecord(channels?.feishu) ?? feishuAsRecord(channels?.lark);
+  if (!feishu) {
+    return undefined;
+  }
+  const accounts = feishuAsRecord(feishu.accounts);
+  const pickAccount = (accountId: string | undefined): Record<string, unknown> | undefined => {
+    if (!accounts || !accountId) {
+      return undefined;
+    }
+    return feishuAsRecord(accounts[accountId]);
+  };
+  const explicitAccount = pickAccount(feishuTrimmedString(target.account_id));
+  const defaultAccount = pickAccount(feishuTrimmedString(feishu.defaultAccount));
+  const firstAccount = accounts
+    ? feishuAsRecord(accounts[Object.keys(accounts).sort((left, right) => left.localeCompare(right))[0]])
+    : undefined;
+  const merged = {
+    ...feishu,
+    ...(explicitAccount ?? defaultAccount ?? firstAccount ?? {}),
+  };
+
+  const appId = resolveFeishuSecretValue(merged.appId);
+  const appSecret = resolveFeishuSecretValue(merged.appSecret);
+  if (!appId || !appSecret) {
+    return undefined;
+  }
+  return {
+    appId,
+    appSecret,
+    apiBase: resolveFeishuApiBase(merged.domain),
+  };
+}
+
+function resolveFeishuReceiveTarget(rawTarget: string): { receiveId: string; receiveIdType: FeishuReceiveIdType } | undefined {
+  const scoped = rawTarget.trim().replace(/^(feishu|lark):/i, "").trim();
+  if (!scoped) {
+    return undefined;
+  }
+  const lowered = scoped.toLowerCase();
+  const stripPrefix = (prefix: string): string => scoped.slice(prefix.length).trim();
+  if (lowered.startsWith("chat:")) {
+    const receiveId = stripPrefix("chat:");
+    return receiveId ? { receiveId, receiveIdType: "chat_id" } : undefined;
+  }
+  if (lowered.startsWith("group:")) {
+    const receiveId = stripPrefix("group:");
+    return receiveId ? { receiveId, receiveIdType: "chat_id" } : undefined;
+  }
+  if (lowered.startsWith("channel:")) {
+    const receiveId = stripPrefix("channel:");
+    return receiveId ? { receiveId, receiveIdType: "chat_id" } : undefined;
+  }
+  if (lowered.startsWith("open_id:")) {
+    const receiveId = stripPrefix("open_id:");
+    return receiveId ? { receiveId, receiveIdType: "open_id" } : undefined;
+  }
+  if (lowered.startsWith("user:")) {
+    const receiveId = stripPrefix("user:");
+    if (!receiveId) {
+      return undefined;
+    }
+    return {
+      receiveId,
+      receiveIdType: receiveId.startsWith("ou_") ? "open_id" : "user_id",
+    };
+  }
+  if (lowered.startsWith("dm:")) {
+    const receiveId = stripPrefix("dm:");
+    if (!receiveId) {
+      return undefined;
+    }
+    return {
+      receiveId,
+      receiveIdType: receiveId.startsWith("ou_") ? "open_id" : "user_id",
+    };
+  }
+  if (scoped.startsWith("oc_")) {
+    return {
+      receiveId: scoped,
+      receiveIdType: "chat_id",
+    };
+  }
+  if (scoped.startsWith("ou_")) {
+    return {
+      receiveId: scoped,
+      receiveIdType: "open_id",
+    };
+  }
+  return {
+    receiveId: scoped,
+    receiveIdType: "user_id",
+  };
+}
+
+type FeishuApiResponse = {
+  code?: number;
+  msg?: string;
+  message?: string;
+  tenant_access_token?: string;
+  data?: Record<string, unknown>;
+};
+
+async function parseFeishuJsonResponse(response: Response): Promise<FeishuApiResponse> {
+  const payload = await response.json() as unknown;
+  const record = feishuAsRecord(payload);
+  if (!record) {
+    throw new Error("feishu api returned non-object response");
+  }
+  return record as FeishuApiResponse;
+}
+
+function buildFeishuApiError(prefix: string, payload: FeishuApiResponse): Error {
+  const code = payload.code ?? "unknown";
+  const message = payload.msg ?? payload.message ?? "unknown";
+  return new Error(`${prefix}: code=${code} msg=${message}`);
+}
+
+async function sendFeishuApprovalNotificationDirect(
+  api: OpenClawPluginApi,
+  target: ChatApprovalTarget,
+  message: string,
+): Promise<{ messageId?: string }> {
+  const feishuConfig = resolveFeishuRuntimeConfig(api, target);
+  if (!feishuConfig) {
+    throw new Error("feishu credentials not configured for approval notification");
+  }
+  const receiveTarget = resolveFeishuReceiveTarget(target.to);
+  if (!receiveTarget) {
+    throw new Error(`invalid feishu approval target: ${target.to}`);
+  }
+
+  const authResponse = await fetch(`${feishuConfig.apiBase}/open-apis/auth/v3/tenant_access_token/internal`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      app_id: feishuConfig.appId,
+      app_secret: feishuConfig.appSecret,
+    }),
+    signal: AbortSignal.timeout(FEISHU_HTTP_TIMEOUT_MS),
+  });
+  const authPayload = await parseFeishuJsonResponse(authResponse);
+  if (!authResponse.ok) {
+    throw buildFeishuApiError(`feishu auth http_${authResponse.status}`, authPayload);
+  }
+  if (authPayload.code !== 0) {
+    throw buildFeishuApiError("feishu auth failed", authPayload);
+  }
+  const token = feishuTrimmedString(authPayload.tenant_access_token);
+  if (!token) {
+    throw new Error("feishu auth failed: missing tenant_access_token");
+  }
+
+  const sendResponse = await fetch(
+    `${feishuConfig.apiBase}/open-apis/im/v1/messages?receive_id_type=${receiveTarget.receiveIdType}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        receive_id: receiveTarget.receiveId,
+        msg_type: "text",
+        content: JSON.stringify({ text: message }),
+      }),
+      signal: AbortSignal.timeout(FEISHU_HTTP_TIMEOUT_MS),
+    },
+  );
+  const sendPayload = await parseFeishuJsonResponse(sendResponse);
+  if (!sendResponse.ok) {
+    throw buildFeishuApiError(`feishu send http_${sendResponse.status}`, sendPayload);
+  }
+  if (sendPayload.code !== 0) {
+    throw buildFeishuApiError("feishu send failed", sendPayload);
+  }
+  const messageId = feishuTrimmedString(sendPayload.data?.message_id);
+  return messageId ? { messageId } : {};
+}
+
 async function sendApprovalNotification(
   api: OpenClawPluginApi,
   target: ChatApprovalTarget,
@@ -1092,20 +1522,70 @@ async function sendApprovalNotification(
     return notification;
   }
 
-  const pushLine = api.runtime.channel.line.pushMessageLine as (
-    to: string,
-    text: string,
-    opts?: Record<string, unknown>,
-  ) => Promise<{ messageId?: string }>;
-  const result = await pushLine(target.to, message, {
-    cfg: api.config,
-    ...(target.account_id ? { accountId: target.account_id } : {}),
-  });
-  if (result?.messageId) {
-    notification.message_id = result.messageId;
+  if (target.channel === "line") {
+    const pushLine = api.runtime.channel.line.pushMessageLine as (
+      to: string,
+      text: string,
+      opts?: Record<string, unknown>,
+    ) => Promise<{ messageId?: string }>;
+    const result = await pushLine(target.to, message, {
+      cfg: api.config,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
   }
-  notification.sent_at = nowIsoString();
-  return notification;
+
+  const sendDynamic = resolveDynamicChannelSender(api, target.channel);
+  if (sendDynamic) {
+    const threadId = normalizeThreadId(target.thread_id);
+    const result = await sendDynamic(target.to, message, {
+      cfg: api.config,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+      ...(threadId !== undefined ? { messageThreadId: threadId } : {}),
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  const sendPluginText = resolveChannelPluginSendText(target.channel);
+  if (sendPluginText) {
+    const result = await sendPluginText({
+      cfg: api.config,
+      to: target.to,
+      text: message,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+      ...(target.thread_id !== undefined ? { threadId: target.thread_id } : {}),
+    });
+    const messageId = typeof result.messageId === "string" ? result.messageId : undefined;
+    if (messageId) {
+      notification.message_id = messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  if (target.channel === "feishu" || target.channel === "lark") {
+    const result = await sendFeishuApprovalNotificationDirect(api, target, message);
+    if (result.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  const runtimeChannels = Object.keys((api.runtime.channel as unknown as Record<string, unknown>) ?? {});
+  throw new Error(
+    `unsupported approval notification channel: ${target.channel} (runtime channels: ${
+      runtimeChannels.length > 0 ? runtimeChannels.join(", ") : "none"
+    })`,
+  );
 }
 
 async function notifyApprovalTargets(
@@ -1494,15 +1974,19 @@ const plugin = {
       api.logger.info?.("safeclaw: event sink disabled (webhook_url is empty), using logger-only observability");
     }
 
-    const approvalBridge = sanitizeApprovalConfig(pluginConfig.approvalBridge);
+    function resolveApprovalBridge(current: RuntimeDependencies = getRuntime()): ResolvedApprovalBridge {
+      return mergeApprovalBridgeConfig(deriveApprovalBridgeFromAdminPolicies(current.accountPolicyEngine));
+    }
     const approvalStore = new ChatApprovalStore(dbPath);
-    if (approvalBridge.enabled) {
+    const initialApprovalBridge = resolveApprovalBridge(runtime);
+    if (initialApprovalBridge.enabled) {
       api.logger.info?.(
-        `safeclaw: approval bridge enabled targets=${approvalBridge.targets.length} approvers=${approvalBridge.approvers.length}`,
+        `safeclaw: approval bridge enabled targets=${initialApprovalBridge.targets.length} approvers=${initialApprovalBridge.approvers.length}`,
       );
-      if (approvalBridge.approvers.length === 0) {
+      if (initialApprovalBridge.approvers.length === 0) {
         api.logger.warn?.("safeclaw: approval bridge is enabled but no approvers are configured");
       }
+      api.logger.info?.("safeclaw: approval bridge source=account_policies_admin");
     }
 
     api.registerCommand({
@@ -1511,6 +1995,7 @@ const plugin = {
       acceptsArgs: true,
       requireAuth: false,
       handler: async (ctx) => {
+        const approvalBridge = resolveApprovalBridge();
         const commandContext: SafeClawApprovalCommandContext = {
           channel: ctx.channel,
           ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
@@ -1557,6 +2042,7 @@ const plugin = {
       acceptsArgs: true,
       requireAuth: false,
       handler: async (ctx) => {
+        const approvalBridge = resolveApprovalBridge();
         const commandContext: SafeClawApprovalCommandContext = {
           channel: ctx.channel,
           ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
@@ -1598,6 +2084,7 @@ const plugin = {
       acceptsArgs: false,
       requireAuth: false,
       handler: async (ctx) => {
+        const approvalBridge = resolveApprovalBridge();
         const commandContext: SafeClawApprovalCommandContext = {
           channel: ctx.channel,
           ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
@@ -1655,6 +2142,7 @@ const plugin = {
       async (event, ctx) => {
         const hookContext = ctx as SafeClawHookContext;
         const current = getRuntime();
+        const approvalBridge = resolveApprovalBridge(current);
         const normalizedToolName = normalizeToolName(event.toolName);
         const rawArguments = event.params;
         const resource = extractResourceContext(rawArguments, hookContext.workspaceDir);
@@ -1766,7 +2254,6 @@ const plugin = {
           `source=${effectiveDecisionSource}`,
           `account_mode=${accountPolicy?.mode ?? "apply_rules"}`,
           `is_admin=${accountPolicy?.is_admin === true}`,
-          `admin_allow_all=${accountPolicy?.admin_allow_all === true}`,
           `rules=${rules}`,
           `reasons=${effectiveReasonCodes.join(",")}`,
           `args=${argsSummary}`

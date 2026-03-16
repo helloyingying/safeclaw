@@ -22,8 +22,7 @@ test("strategy store persists override in sqlite", () => {
         {
           subject: "telegram:chat-42",
           mode: "default_allow",
-          is_admin: false,
-          admin_allow_all: false
+          is_admin: false
         }
       ]
     });

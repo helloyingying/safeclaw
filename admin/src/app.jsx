@@ -58,6 +58,8 @@ const ACCOUNT_MODE_TEXT = {
   default_allow: "默认放行"
 };
 
+const QUICK_APPROVAL_ACTION_CHANNELS = new Set(["telegram"]);
+
 const SCOPE_TEXT = {
   default: "默认会话",
   workspace: "工作区会话"
@@ -276,6 +278,30 @@ function accountMetaLabel(account) {
   if (account?.chat_type) parts.push(account.chat_type);
   if (account?.agent_id) parts.push(`agent:${account.agent_id}`);
   return parts.join(" · ") || "OpenClaw chat session";
+}
+
+function normalizeChannel(value) {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : "";
+}
+
+function channelFromSubject(subject) {
+  if (typeof subject !== "string") {
+    return "";
+  }
+  const separator = subject.indexOf(":");
+  if (separator <= 0) {
+    return "";
+  }
+  return subject.slice(0, separator).trim().toLowerCase();
+}
+
+function resolveAccountChannel(account) {
+  return normalizeChannel(account?.channel) || channelFromSubject(account?.subject);
+}
+
+function supportsQuickApprovalActions(account) {
+  const channel = resolveAccountChannel(account);
+  return channel ? QUICK_APPROVAL_ACTION_CHANNELS.has(channel) : false;
 }
 
 function getJsonError(payload, fallback) {
@@ -769,9 +795,17 @@ function App() {
     () => policies.map((policy, index) => ({ key: policy?.rule_id || String(index), policy, index })),
     [policies]
   );
+  const eligibleSessions = useMemo(
+    () => availableSessions,
+    [availableSessions]
+  );
   const availableSessionOptions = useMemo(
-    () => availableSessions.filter((session) => !accountPolicies.some((account) => account.subject === session.subject)),
-    [accountPolicies, availableSessions]
+    () => eligibleSessions.filter((session) => !accountPolicies.some((account) => account.subject === session.subject)),
+    [accountPolicies, eligibleSessions]
+  );
+  const selectedAdminSubject = useMemo(
+    () => accountPolicies.find((account) => account.is_admin)?.subject || "",
+    [accountPolicies]
   );
   const firstRuleKey = policyEntries[0]?.key || "";
 
@@ -1100,7 +1134,6 @@ function App() {
         label: session.label,
         mode: "apply_rules",
         is_admin: false,
-        admin_allow_all: false,
         session_key: session.session_key,
         session_id: session.session_id,
         agent_id: session.agent_id,
@@ -1123,6 +1156,16 @@ function App() {
             }
           : account
       )
+    );
+  }
+
+  function setAdminAccount(subject) {
+    setAccountPolicies((current) =>
+      current.map((account) => ({
+        ...account,
+        is_admin: account.subject === subject,
+        updated_at: new Date().toISOString()
+      }))
     );
   }
 
@@ -1590,12 +1633,12 @@ function App() {
                 <div>
                   <h2>账号策略</h2>
                   <p className="accounts-intro">
-                    账号策略在规则引擎之后插入判断，不改动现有规则定义。可为指定 chat session 设置管理员直通，或改成默认放行。
+                    账号策略在规则引擎之后插入判断，不改动现有规则定义。管理员审批账号只能单选一个。Telegram 会展示快捷审批按钮，其他渠道走命令审批。
                   </p>
                 </div>
                 <div className="rule-meta">
                   <span className="meta-pill">已配置 {accountPolicies.length}</span>
-                  <span className="meta-pill">可选会话 {availableSessions.length}</span>
+                  <span className="meta-pill">可选会话 {eligibleSessions.length}</span>
                 </div>
               </div>
 
@@ -1622,7 +1665,7 @@ function App() {
                     添加账号
                   </button>
                 </div>
-                <div className="chart-subtitle">账号命中时优先走账号策略，再决定是否进入审批挑战。</div>
+                <div className="chart-subtitle">所有会话都可配置为管理员账号。Telegram 支持快捷按钮，其它渠道可直接回复审批命令。</div>
               </div>
 
               {accountPolicies.length === 0 ? (
@@ -1639,7 +1682,6 @@ function App() {
                             <span className={`tag ${account.mode === "default_allow" ? "warn" : "allow"}`}>
                               {accountModeLabel(account.mode)}
                             </span>
-                            {account.is_admin && account.admin_allow_all ? <span className="tag allow">所有规则放行</span> : null}
                           </div>
                           <div className="account-subject">{account.subject}</div>
                           <div className="account-meta">{accountMetaLabel(account)}</div>
@@ -1667,28 +1709,16 @@ function App() {
 
                         <label className="account-toggle">
                           <input
-                            type="checkbox"
-                            checked={account.is_admin === true}
-                            onChange={(event) =>
-                              updateAccountPolicy(account.subject, {
-                                is_admin: event.target.checked,
-                                ...(event.target.checked ? {} : { admin_allow_all: false })
-                              })
-                            }
+                            type="radio"
+                            name="admin-account"
+                            checked={selectedAdminSubject === account.subject}
+                            onChange={(event) => {
+                              if (event.target.checked) {
+                                setAdminAccount(account.subject);
+                              }
+                            }}
                           />
-                          <span>管理员账号</span>
-                        </label>
-
-                        <label className={`account-toggle ${account.is_admin === true ? "" : "disabled"}`}>
-                          <input
-                            type="checkbox"
-                            checked={account.is_admin === true && account.admin_allow_all === true}
-                            disabled={account.is_admin !== true}
-                            onChange={(event) =>
-                              updateAccountPolicy(account.subject, { admin_allow_all: event.target.checked })
-                            }
-                          />
-                          <span>管理员所有规则都放行</span>
+                          <span>{supportsQuickApprovalActions(account) ? "管理员账号（单选，支持快捷按钮）" : "管理员账号（单选，命令审批）"}</span>
                         </label>
                       </div>
                     </article>

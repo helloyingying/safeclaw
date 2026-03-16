@@ -357,8 +357,7 @@ test("gateway allows configured account in default allow mode without changing r
         {
           subject: "telegram:chat-42",
           mode: "default_allow",
-          is_admin: false,
-          admin_allow_all: false
+          is_admin: false
         }
       ]
     });
@@ -385,7 +384,7 @@ test("gateway allows configured account in default allow mode without changing r
   }
 });
 
-test("gateway allows admin account when admin all rules allow is enabled", async () => {
+test("gateway admin account no longer bypasses rules", async () => {
   const harness = await createBeforeToolCallHook();
   let writer: StrategyStore | undefined;
   try {
@@ -395,8 +394,7 @@ test("gateway allows admin account when admin all rules allow is enabled", async
         {
           subject: "telegram:chat-42",
           mode: "apply_rules",
-          is_admin: true,
-          admin_allow_all: true
+          is_admin: true
         }
       ]
     });
@@ -413,12 +411,8 @@ test("gateway allows admin account when admin all rules allow is enabled", async
       DEFAULT_GATEWAY_CTX,
     );
 
-    assert.equal(blocked, undefined);
-    const snapshot = JSON.parse(readFileSync(harness.statusPath, "utf8")) as {
-      recent_decisions: Array<{ decision_source?: string; reasons?: string[] }>;
-    };
-    assert.equal(snapshot.recent_decisions[0]?.decision_source, "account");
-    assert.deepEqual(snapshot.recent_decisions[0]?.reasons, ["ACCOUNT_ADMIN_ALLOW_ALL"]);
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /OUTSIDE_WRITE_BLOCK/);
   } finally {
     writer?.close();
     harness.cleanup();

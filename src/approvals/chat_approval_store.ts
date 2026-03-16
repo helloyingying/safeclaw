@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { ApprovalStatus, ResourceScope } from "../types.ts";
 
-export type ApprovalChannel = "discord" | "imessage" | "line" | "signal" | "slack" | "telegram" | "whatsapp";
+export type ApprovalChannel = string;
 
 export type ChatApprovalTarget = {
   channel: ApprovalChannel;

@@ -136,18 +136,8 @@ export class ApprovalCommands {
   }
 
   private normalizeApprovalChannel(value: string | undefined): string | undefined {
-    switch ((value ?? "").trim().toLowerCase()) {
-      case "discord":
-      case "imessage":
-      case "line":
-      case "signal":
-      case "slack":
-      case "telegram":
-      case "whatsapp":
-        return value!.trim().toLowerCase();
-      default:
-        return undefined;
-    }
+    const normalized = value?.trim().toLowerCase();
+    return normalized || undefined;
   }
 
   private parseApprovalId(args: string | undefined): string | undefined {

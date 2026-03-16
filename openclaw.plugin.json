@@ -54,65 +54,6 @@
         "minimum": 1,
         "maximum": 65535,
         "description": "Optional admin dashboard listen port. Defaults to SAFECLAW_ADMIN_PORT or 4780."
-      },
-      "approvalBridge": {
-        "type": "object",
-        "additionalProperties": false,
-        "description": "Optional chat-based approval bridge for generic SafeClaw challenge rules.",
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Enable chat approval bridge for challenge rules. Approved requests are replay-allowed for the same session and request shape until expiry."
-          },
-          "targets": {
-            "type": "array",
-            "description": "Admin chat destinations that receive approval prompts.",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["channel", "to"],
-              "properties": {
-                "channel": {
-                  "type": "string",
-                  "enum": ["telegram", "discord", "slack", "signal", "imessage", "whatsapp", "line"]
-                },
-                "to": {
-                  "type": "string"
-                },
-                "account_id": {
-                  "type": "string"
-                },
-                "thread_id": {
-                  "oneOf": [
-                    { "type": "string" },
-                    { "type": "number" }
-                  ]
-                }
-              }
-            }
-          },
-          "approvers": {
-            "type": "array",
-            "description": "Approved chat senders who may run /safeclaw-approve, /safeclaw-reject, and /safeclaw-pending.",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["channel", "from"],
-              "properties": {
-                "channel": {
-                  "type": "string",
-                  "enum": ["telegram", "discord", "slack", "signal", "imessage", "whatsapp", "line"]
-                },
-                "from": {
-                  "type": "string"
-                },
-                "account_id": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
       }
     }
   }

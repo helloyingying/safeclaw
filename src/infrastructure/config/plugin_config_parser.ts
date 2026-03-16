@@ -13,20 +13,6 @@ export interface SafeClawPluginConfig {
   statusPath?: string;
   adminAutoStart?: boolean;
   adminPort?: number;
-  approvalBridge?: {
-    enabled?: boolean;
-    targets?: Array<{
-      channel: string;
-      to: string;
-      account_id?: string;
-      thread_id?: string | number;
-    }>;
-    approvers?: Array<{
-      channel: string;
-      from: string;
-      account_id?: string;
-    }>;
-  };
 }
 
 export interface ResolvedPluginRuntime {
@@ -68,69 +54,5 @@ export class PluginConfigParser {
       legacyOverridePath,
       statusPath,
     };
-  }
-
-  static sanitizeApprovalConfig(config: SafeClawPluginConfig["approvalBridge"]) {
-    const targets = Array.isArray(config?.targets)
-      ? config.targets
-          .map((target) => {
-            const channel = this.normalizeApprovalChannel(target.channel);
-            const to = typeof target.to === "string" ? target.to.trim() : "";
-            if (!channel || !to) {
-              return undefined;
-            }
-            return {
-              channel,
-              to,
-              ...(typeof target.account_id === "string" && target.account_id.trim()
-                ? { account_id: target.account_id.trim() }
-                : {}),
-              ...(typeof target.thread_id === "string" || typeof target.thread_id === "number"
-                ? { thread_id: target.thread_id }
-                : {}),
-            };
-          })
-          .filter((target): target is NonNullable<typeof target> => Boolean(target))
-      : [];
-
-    const approvers = Array.isArray(config?.approvers)
-      ? config.approvers
-          .map((approver) => {
-            const channel = this.normalizeApprovalChannel(approver.channel);
-            const from = typeof approver.from === "string" ? approver.from.trim() : "";
-            if (!channel || !from) {
-              return undefined;
-            }
-            return {
-              channel,
-              from,
-              ...(typeof approver.account_id === "string" && approver.account_id.trim()
-                ? { account_id: approver.account_id.trim() }
-                : {}),
-            };
-          })
-          .filter((approver): approver is NonNullable<typeof approver> => Boolean(approver))
-      : [];
-
-    return {
-      enabled: config?.enabled === true,
-      targets,
-      approvers,
-    };
-  }
-
-  private static normalizeApprovalChannel(value: string | undefined): string | undefined {
-    switch ((value ?? "").trim().toLowerCase()) {
-      case "discord":
-      case "imessage":
-      case "line":
-      case "signal":
-      case "slack":
-      case "telegram":
-      case "whatsapp":
-        return value!.trim().toLowerCase();
-      default:
-        return undefined;
-    }
   }
 }

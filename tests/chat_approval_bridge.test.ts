@@ -7,6 +7,7 @@ import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import plugin from "../index.ts";
+import { StrategyStore } from "../src/config/strategy_store.ts";
 
 type RegisteredCommand = Parameters<OpenClawPluginApi["registerCommand"]>[0];
 type HookHandler = (...args: unknown[]) => unknown;
@@ -28,23 +29,19 @@ function createPluginApiHarness(paths: {
   const sentMessages: Array<{ to: string; text: string; opts?: Record<string, unknown> }> = [];
   let telegramFailuresRemaining = options.telegramFailuresBeforeSuccess ?? 0;
   let telegramSendAttempts = 0;
+  const pluginConfig = {
+    configPath: paths.configPath,
+    dbPath: paths.dbPath,
+    statusPath: paths.statusPath,
+    adminAutoStart: false,
+  };
 
   const api = {
     id: "safeclaw",
     name: "SafeClaw Security",
     source: "test",
     config: {},
-    pluginConfig: {
-      configPath: paths.configPath,
-      dbPath: paths.dbPath,
-      statusPath: paths.statusPath,
-      adminAutoStart: false,
-      approvalBridge: {
-        enabled: true,
-        targets: [{ channel: "telegram", to: "admin-chat" }],
-        approvers: [{ channel: "telegram", from: "secops-admin" }],
-      },
-    },
+    pluginConfig,
     runtime: {
       version: "test",
       config: {
@@ -223,6 +220,199 @@ function createPluginApiHarness(paths: {
   return { api, hooks, commands, sentMessages, getTelegramSendAttempts: () => telegramSendAttempts };
 }
 
+function seedAdminAccountPolicy(dbPath: string, subject = "telegram:secops-admin"): void {
+  const writer = new StrategyStore(dbPath);
+  try {
+    writer.writeOverride({
+      account_policies: [
+        {
+          subject,
+          mode: "apply_rules",
+          is_admin: true,
+        },
+      ],
+    });
+  } finally {
+    writer.close();
+  }
+}
+
+test("chat approval bridge auto-enables from admin account policies without plugin approval config", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-admin-sync-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "safeclaw.db");
+  const statusPath = path.join(tempDir, "safeclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    assert.ok(beforeToolCall);
+
+    const first = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-1",
+        sessionKey: "telegram:chat-42",
+        runId: "run-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "telegram",
+      },
+    );
+
+    assert.deepEqual(first?.block, true);
+    const approvalId = String(first?.blockReason).match(/approval_id=([a-f0-9-]+)/i)?.[1];
+    assert.ok(approvalId);
+    assert.equal(harness.sentMessages.length, 1);
+    assert.equal(harness.sentMessages[0].to, "secops-admin");
+
+    const pendingCommand = harness.commands.get("safeclaw-pending");
+    assert.ok(pendingCommand);
+    const pendingReply = await pendingCommand!.handler({
+      channel: "telegram",
+      senderId: "secops-admin",
+      from: "telegram:secops-admin",
+      isAuthorizedSender: true,
+      commandBody: "/safeclaw-pending",
+      config: harness.api.config,
+    });
+    assert.match(String(pendingReply.text), /filesystem\.list/);
+
+    const approveCommand = harness.commands.get("safeclaw-approve");
+    assert.ok(approveCommand);
+    const approveReply = await approveCommand!.handler({
+      channel: "telegram",
+      senderId: "secops-admin",
+      from: "telegram:secops-admin",
+      isAuthorizedSender: true,
+      args: approvalId,
+      commandBody: `/safeclaw-approve ${approvalId}`,
+      config: harness.api.config,
+    });
+    assert.match(String(approveReply.text), /临时授权/);
+
+    const approved = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "/tmp/workspace/Downloads/after-approve" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-2",
+        sessionKey: "telegram:chat-42",
+        runId: "run-2",
+        workspaceDir: "/tmp/workspace",
+        channelId: "telegram",
+      },
+    );
+
+    assert.equal(approved, undefined);
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("chat approval bridge supports command-only approvals on non-button channels", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-command-only-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "safeclaw.db");
+  const statusPath = path.join(tempDir, "safeclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath, "feishu:secops-admin");
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    assert.ok(beforeToolCall);
+
+    const blocked = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-feishu-1",
+        sessionKey: "feishu:chat-42",
+        runId: "run-feishu-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "feishu",
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.equal(harness.sentMessages.length, 0);
+    assert.match(String(blocked?.blockReason), /未配置或未成功发送授权通知/);
+    const approvalId = String(blocked?.blockReason).match(/approval_id=([a-f0-9-]+)/i)?.[1];
+    assert.ok(approvalId);
+
+    const pendingCommand = harness.commands.get("safeclaw-pending");
+    assert.ok(pendingCommand);
+    const pendingReply = await pendingCommand!.handler({
+      channel: "feishu",
+      senderId: "secops-admin",
+      from: "feishu:secops-admin",
+      isAuthorizedSender: true,
+      commandBody: "/safeclaw-pending",
+      config: harness.api.config,
+    });
+    assert.match(String(pendingReply.text), /filesystem\.list/);
+
+    const approveCommand = harness.commands.get("safeclaw-approve");
+    assert.ok(approveCommand);
+    const approveReply = await approveCommand!.handler({
+      channel: "feishu",
+      senderId: "secops-admin",
+      from: "feishu:secops-admin",
+      isAuthorizedSender: true,
+      args: approvalId,
+      commandBody: `/safeclaw-approve ${approvalId}`,
+      config: harness.api.config,
+    });
+    assert.match(String(approveReply.text), /临时授权/);
+
+    const approved = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "/tmp/workspace/Downloads/after-approve" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-feishu-2",
+        sessionKey: "feishu:chat-42",
+        runId: "run-feishu-2",
+        workspaceDir: "/tmp/workspace",
+        channelId: "feishu",
+      },
+    );
+
+    assert.equal(approved, undefined);
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("chat approval bridge reuses pending authorization and allows the same subject after approval", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-bridge-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
@@ -231,6 +421,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
 
   try {
     copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
     const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
     await plugin.register(harness.api);
 
@@ -347,6 +538,7 @@ test("chat approval bridge supports long-lived subject authorization", async () 
   try {
     Date.now = () => nowMs;
     copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
     const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
     await plugin.register(harness.api);
 
@@ -417,6 +609,7 @@ test("chat approval bridge retries transient telegram send failures", async () =
 
   try {
     copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
     const harness = createPluginApiHarness({ configPath, dbPath, statusPath }, { telegramFailuresBeforeSuccess: 1 });
     await plugin.register(harness.api);
 
@@ -457,6 +650,7 @@ test("chat approval bridge re-sends stale pending approvals after cooldown", asy
   try {
     Date.now = () => nowMs;
     copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
     const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
     await plugin.register(harness.api);
 

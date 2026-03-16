@@ -77,7 +77,9 @@ await service.sendNotifications(targets, record);
 
 ## 审批命令
 
-在配置了审批桥接后，管理员可以使用以下命令：
+在管理后台把账号设为管理员（`is_admin=true`）后，管理员可以使用以下命令：
+
+- Telegram 审批通知支持快捷按钮；其他渠道可直接回复下列命令完成审批。
 
 - `/safeclaw-approve <approval_id>` - 批准审批（临时授权）
 - `/safeclaw-approve <approval_id> long` - 批准审批（长期授权）

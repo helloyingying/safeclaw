@@ -49,7 +49,6 @@ export interface AccountPolicyRecord {
   subject: string;
   mode: AccountPolicyMode;
   is_admin: boolean;
-  admin_allow_all: boolean;
   label?: string;
   session_key?: string;
   session_id?: string;

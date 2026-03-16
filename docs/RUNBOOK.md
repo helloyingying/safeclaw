@@ -11,7 +11,12 @@
 
 ## Challenge Approvals
 - Monitor challenge decisions from `SecurityDecisionEvent`.
-- If `approvalBridge` is enabled, administrators can review pending requests in chat with `/safeclaw-pending`.
+- Approval routing source is dashboard account policies (`is_admin=true`).
+- Auto-derived admin mapping is channel-agnostic for command approvals.
+- Telegram approval notifications include quick action buttons; other channels use command replies.
+- Approval delivery first uses built-in `api.runtime.channel` senders. For Feishu/Lark, if runtime senders are unavailable, SafeClaw falls back to direct OpenAPI delivery with configured `channels.feishu` credentials.
+- If neither sender path is available for a channel, approvals can still be queried and handled from admin chat commands.
+- If approval routing is available, administrators can review pending requests in chat with `/safeclaw-pending`.
 - Add a temporary authorization with `/safeclaw-approve <approval_id>` and a long-lived authorization with `/safeclaw-approve <approval_id> long`.
 - Reject a request with `/safeclaw-reject <approval_id>`.
 - Approved requests grant the same subject access in the same `scope` until `expires_at`; they are not tied to one exact request replay anymore.

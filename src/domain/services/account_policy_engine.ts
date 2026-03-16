@@ -15,6 +15,26 @@ function normalizeMode(value: unknown): AccountPolicyMode {
   return value === "default_allow" ? "default_allow" : "apply_rules";
 }
 
+function enforceSingleAdmin(policies: AccountPolicyRecord[]): AccountPolicyRecord[] {
+  let selectedAdminSubject: string | undefined;
+  for (const policy of policies) {
+    if (policy.is_admin) {
+      selectedAdminSubject = policy.subject;
+    }
+  }
+  if (!selectedAdminSubject) {
+    return policies;
+  }
+  return policies.map((policy) =>
+    policy.is_admin && policy.subject !== selectedAdminSubject
+      ? {
+          ...policy,
+          is_admin: false,
+        }
+      : policy,
+  );
+}
+
 function normalizePolicyEntry(value: unknown): AccountPolicyRecord | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -29,7 +49,6 @@ function normalizePolicyEntry(value: unknown): AccountPolicyRecord | undefined {
     subject,
     mode: normalizeMode((value as { mode?: unknown }).mode),
     is_admin: (value as { is_admin?: unknown }).is_admin === true,
-    admin_allow_all: (value as { admin_allow_all?: unknown }).admin_allow_all === true,
   };
 
   const optionalFields = [
@@ -65,7 +84,7 @@ export function sanitizeAccountPolicies(input: unknown): AccountPolicyRecord[] {
     }
     deduped.set(normalized.subject, normalized);
   }
-  return Array.from(deduped.values());
+  return enforceSingleAdmin(Array.from(deduped.values()));
 }
 
 export function canonicalizeAccountPolicies(input: unknown): AccountPolicyRecord[] {
@@ -75,7 +94,6 @@ export function canonicalizeAccountPolicies(input: unknown): AccountPolicyRecord
         subject: policy.subject,
         mode: policy.mode,
         is_admin: policy.is_admin,
-        admin_allow_all: policy.admin_allow_all,
       };
 
       const optionalFields = [
@@ -115,18 +133,14 @@ export class AccountPolicyEngine {
     return this.#policiesBySubject.get(subject);
   }
 
+  listPolicies(): AccountPolicyRecord[] {
+    return Array.from(this.#policiesBySubject.values());
+  }
+
   evaluate(subject: string | undefined): AccountDecisionOverride | undefined {
     const policy = this.getPolicy(subject);
     if (!policy) {
       return undefined;
-    }
-    if (policy.is_admin && policy.admin_allow_all) {
-      return {
-        decision: "allow",
-        decision_source: "account",
-        reason_codes: ["ACCOUNT_ADMIN_ALLOW_ALL"],
-        policy
-      };
     }
     if (policy.mode === "default_allow") {
       return {
