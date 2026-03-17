@@ -20,7 +20,7 @@ test("admin console banner includes url and first-run auto-open hint", () => {
   });
 
   assert.equal(lines.length, 5);
-  assert.match(lines[1] ?? "", /SafeClaw admin dashboard is ready/);
+  assert.match(lines[1] ?? "", /SecurityClaw admin dashboard is ready/);
   assert.equal(lines[2], "URL: http://127.0.0.1:4780");
   assert.match(lines[3] ?? "", /Opened automatically/);
 });
@@ -34,7 +34,7 @@ test("gateway service commands get an admin entry banner", () => {
   });
 
   assert.equal(lines.length, 5);
-  assert.match(lines[1] ?? "", /SafeClaw admin dashboard entry/);
+  assert.match(lines[1] ?? "", /SecurityClaw admin dashboard entry/);
   assert.equal(lines[2], "URL: http://127.0.0.1:4780");
   assert.match(lines[3] ?? "", /background OpenClaw gateway service hosts this dashboard/i);
 });
@@ -59,7 +59,7 @@ test("only gateway start-style commands announce admin entry in cli", () => {
 });
 
 test("admin console announcement opens browser only once per state dir", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-admin-console-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-admin-console-"));
   const infoLogs: string[] = [];
   const warnLogs: string[] = [];
   let openAttempts = 0;
@@ -115,7 +115,7 @@ test("admin console announcement opens browser only once per state dir", () => {
 });
 
 test("admin console announcement retries auto-open until it succeeds", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-admin-console-retry-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-admin-console-retry-"));
   let openAttempts = 0;
 
   try {

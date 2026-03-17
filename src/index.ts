@@ -19,7 +19,7 @@ import type {
   HookResult,
   MessageSendingInput,
   PluginHooks,
-  SafeClawPluginOptions,
+  SecurityClawPluginOptions,
   SecurityDecisionEvent,
   ToolResultPersistInput
 } from "./types.ts";
@@ -124,7 +124,7 @@ async function executeGuard<TInput>(
   }
 }
 
-export function createSafeClawPlugin(options: SafeClawPluginOptions = {}): PluginResult {
+export function createSecurityClawPlugin(options: SecurityClawPluginOptions = {}): PluginResult {
   const now = options.now ?? Date.now;
   const configManager = options.config
     ? new ConfigManager(options.config)

@@ -1,15 +1,15 @@
-export type SafeClawLocale = "zh-CN" | "en";
+export type SecurityClawLocale = "zh-CN" | "en";
 
-export const DEFAULT_SAFECLAW_LOCALE: SafeClawLocale = "en";
+export const DEFAULT_SECURITYCLAW_LOCALE: SecurityClawLocale = "en";
 
 function normalizeLocaleTag(value: string): string {
   return value.trim().replace(/_/g, "-").toLowerCase();
 }
 
-export function resolveSafeClawLocale(
+export function resolveSecurityClawLocale(
   value: string | undefined,
-  fallback: SafeClawLocale = DEFAULT_SAFECLAW_LOCALE,
-): SafeClawLocale {
+  fallback: SecurityClawLocale = DEFAULT_SECURITYCLAW_LOCALE,
+): SecurityClawLocale {
   const normalized = value ? normalizeLocaleTag(value) : "";
   if (!normalized) {
     return fallback;
@@ -23,14 +23,14 @@ export function resolveSafeClawLocale(
   return fallback;
 }
 
-export function isChineseLocale(locale: SafeClawLocale): boolean {
+export function isChineseLocale(locale: SecurityClawLocale): boolean {
   return locale === "zh-CN";
 }
 
-export function localeForIntl(locale: SafeClawLocale): string {
+export function localeForIntl(locale: SecurityClawLocale): string {
   return isChineseLocale(locale) ? "zh-CN" : "en-US";
 }
 
-export function pickLocalized(locale: SafeClawLocale, zhText: string, enText: string): string {
+export function pickLocalized(locale: SecurityClawLocale, zhText: string, enText: string): string {
   return isChineseLocale(locale) ? zhText : enText;
 }

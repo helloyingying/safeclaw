@@ -8,7 +8,7 @@ import { LiveConfigResolver } from "../src/config/live_config.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 import { DecisionEngine } from "../src/engine/decision_engine.ts";
 import { RuleEngine } from "../src/engine/rule_engine.ts";
-import type { DecisionContext, PolicyRule, SafeClawConfig } from "../src/types.ts";
+import type { DecisionContext, PolicyRule, SecurityClawConfig } from "../src/types.ts";
 
 function createDecisionContext(policyVersion: string): DecisionContext {
   return {
@@ -36,16 +36,16 @@ function createDecisionContext(policyVersion: string): DecisionContext {
   };
 }
 
-function evaluateDecision(config: SafeClawConfig) {
+function evaluateDecision(config: SecurityClawConfig) {
   const context = createDecisionContext(config.policy_version);
   const matches = new RuleEngine(config.policies).match(context);
   return new DecisionEngine(config).evaluate(context, matches);
 }
 
 test("live config resolver applies sqlite strategy changes on next read", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-live-config-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-live-config-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
+  const dbPath = path.join(tempDir, "securityclaw.db");
   const blockRule: PolicyRule = {
     rule_id: "runtime-network-block",
     group: "network",
@@ -91,9 +91,9 @@ test("live config resolver applies sqlite strategy changes on next read", () => 
 });
 
 test("live config resolver applies sensitive path strategy overrides on next read", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-live-config-sensitive-paths-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-live-config-sensitive-paths-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
+  const dbPath = path.join(tempDir, "securityclaw.db");
   let resolver: LiveConfigResolver | undefined;
 
   try {

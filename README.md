@@ -1,12 +1,12 @@
-# SafeClaw Security Plugin
+# SecurityClaw Security Plugin
 
 [中文文档](./README.zh-CN.md)
 
-SafeClaw is a runtime security plugin for [OpenClaw](https://github.com/openclaw/openclaw). It enforces policy decisions on tool calls, supports approval workflows, sanitizes sensitive outputs, and exposes audit-ready decision telemetry.
+SecurityClaw is a runtime security plugin for [OpenClaw](https://github.com/openclaw/openclaw). It enforces policy decisions on tool calls, supports approval workflows, sanitizes sensitive outputs, and exposes audit-ready decision telemetry.
 
-## Why SafeClaw
+## Why SecurityClaw
 
-LLM agents can execute powerful tools. SafeClaw provides a policy guardrail layer so risky operations are either blocked, challenged for approval, or allowed with warning and traceability.
+LLM agents can execute powerful tools. SecurityClaw provides a policy guardrail layer so risky operations are either blocked, challenged for approval, or allowed with warning and traceability.
 
 ## Core Capabilities
 
@@ -21,7 +21,7 @@ LLM agents can execute powerful tools. SafeClaw provides a policy guardrail laye
 
 ## Architecture
 
-SafeClaw follows a layered architecture:
+SecurityClaw follows a layered architecture:
 
 - `domain`: policy, approval, context inference, formatting
 - `domain/services/sensitive_path_registry.ts`: built-in + runtime-overridden sensitive path mappings
@@ -40,13 +40,26 @@ See [Architecture](./docs/ARCHITECTURE.md) and [Technical Solution](./docs/TECHN
 npm install
 ```
 
-### 2. Run verification
+### 2. Install into OpenClaw
+
+```bash
+npm run openclaw:install
+```
+
+Alternative install paths for end users:
+
+```bash
+npx securityclaw install
+curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
+```
+
+### 3. Run verification
 
 ```bash
 npm test
 ```
 
-### 3. Start admin dashboard (standalone)
+### 4. Start admin dashboard (standalone)
 
 ```bash
 npm run admin
@@ -56,40 +69,23 @@ Default dashboard URL: `http://127.0.0.1:4780`
 
 ## OpenClaw Integration
 
-A minimal plugin entry in `~/.openclaw/openclaw.json`:
+Preferred local install:
 
-```json
-{
-  "plugins": {
-    "enabled": true,
-    "allow": ["safeclaw"],
-    "load": {
-      "paths": ["/absolute/path/to/safeclaw"]
-    },
-    "entries": {
-      "safeclaw": {
-        "enabled": true,
-        "config": {
-          "configPath": "./config/policy.default.yaml",
-          "dbPath": "./runtime/safeclaw.db",
-          "statusPath": "./runtime/safeclaw-status.json",
-          "adminAutoStart": true,
-          "adminPort": 4780
-        }
-      }
-    }
-  }
-}
+```bash
+npm run openclaw:install
 ```
+
+This creates a versioned plugin archive, installs it through `openclaw plugins install`, restarts the gateway, and verifies gateway health.
+See [OpenClaw Install Guide](./docs/OPENCLAW_INSTALL.md) for details.
 
 ## Approval Commands
 
 After setting one account policy with `is_admin=true`, the admin can run:
 
-- `/safeclaw-approve <approval_id>`
-- `/safeclaw-approve <approval_id> long`
-- `/safeclaw-reject <approval_id>`
-- `/safeclaw-pending`
+- `/securityclaw-approve <approval_id>`
+- `/securityclaw-approve <approval_id> long`
+- `/securityclaw-reject <approval_id>`
+- `/securityclaw-pending`
 
 ## Admin Dashboard
 
@@ -133,10 +129,6 @@ npm run test:unit
 npm test
 npm run admin:build
 ```
-
-## Project Status
-
-Current repository is configured as private (`"private": true` in `package.json`).
 
 ## License
 

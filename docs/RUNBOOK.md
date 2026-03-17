@@ -1,4 +1,4 @@
-# SafeClaw Runbook
+# SecurityClaw Runbook
 
 ## Verification Gate
 - Treat `npm test` as the required completion check for code changes.
@@ -14,19 +14,19 @@
 - Approval routing source is dashboard account policies (`is_admin=true`).
 - Auto-derived admin mapping is channel-agnostic for command approvals.
 - Telegram approval notifications include quick action buttons; other channels use command replies.
-- Approval delivery first uses built-in `api.runtime.channel` senders. For Feishu/Lark, if runtime senders are unavailable, SafeClaw falls back to direct OpenAPI delivery with configured `channels.feishu` credentials.
+- Approval delivery first uses built-in `api.runtime.channel` senders. For Feishu/Lark, if runtime senders are unavailable, SecurityClaw falls back to direct OpenAPI delivery with configured `channels.feishu` credentials.
 - If neither sender path is available for a channel, approvals can still be queried and handled from admin chat commands.
-- If approval routing is available, administrators can review pending requests in chat with `/safeclaw-pending`.
-- Add a temporary authorization with `/safeclaw-approve <approval_id>` and a long-lived authorization with `/safeclaw-approve <approval_id> long`.
-- Reject a request with `/safeclaw-reject <approval_id>`.
+- If approval routing is available, administrators can review pending requests in chat with `/securityclaw-pending`.
+- Add a temporary authorization with `/securityclaw-approve <approval_id>` and a long-lived authorization with `/securityclaw-approve <approval_id> long`.
+- Reject a request with `/securityclaw-reject <approval_id>`.
 - Approved requests grant the same subject access in the same `scope` until `expires_at`; they are not tied to one exact request replay anymore.
 - Expired or rejected approvals cause challenged calls to return `block` and require a fresh authorization request.
 
 ## 审批未触发排查
-- 先在 `~/.openclaw/logs/gateway.log` 中按时间窗口查 `safeclaw: before_tool_call`。如果没有该日志，说明本次没有发生工具调用。
+- 先在 `~/.openclaw/logs/gateway.log` 中按时间窗口查 `securityclaw: before_tool_call`。如果没有该日志，说明本次没有发生工具调用。
 - 再在会话 transcript（`~/.openclaw/agents/main/sessions/*.jsonl`）中确认是否存在 `toolCall` 事件。若只有 `final_answer` 文本，则本轮是“直接回答”路径。
-- SafeClaw 仅在工具调用路径执行策略；无工具调用时不会进入 `before_tool_call`，因此不会产生 `challenge` 审批。
-- 若需要强制高风险问题必须走工具链，需要在上层 agent/channel 策略增加“必须提供工具证据”的约束，不能只依赖 SafeClaw 的工具拦截钩子。
+- SecurityClaw 仅在工具调用路径执行策略；无工具调用时不会进入 `before_tool_call`，因此不会产生 `challenge` 审批。
+- 若需要强制高风险问题必须走工具链，需要在上层 agent/channel 策略增加“必须提供工具证据”的约束，不能只依赖 SecurityClaw 的工具拦截钩子。
 
 ## Event Delivery
 - If webhook delivery fails, inspect the host's telemetry around `plugin.events.getStats()`.

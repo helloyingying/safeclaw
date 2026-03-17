@@ -7,8 +7,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 
 test("strategy store persists override in sqlite", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-strategy-store-"));
-  const dbPath = path.join(tempDir, "safeclaw.db");
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-strategy-store-"));
+  const dbPath = path.join(tempDir, "securityclaw.db");
   let store: StrategyStore | undefined;
 
   try {
@@ -67,8 +67,8 @@ test("strategy store persists override in sqlite", () => {
 });
 
 test("strategy store migrates legacy override file once", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-strategy-legacy-"));
-  const dbPath = path.join(tempDir, "safeclaw.db");
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-strategy-legacy-"));
+  const dbPath = path.join(tempDir, "securityclaw.db");
   const legacyPath = path.join(tempDir, "policy.overrides.json");
   let store: StrategyStore | undefined;
 

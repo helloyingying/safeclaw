@@ -238,7 +238,7 @@ export interface EventSinkConfig {
   retry_limit: number;
 }
 
-export interface SafeClawConfig {
+export interface SecurityClawConfig {
   version: string;
   policy_version: string;
   environment: string;
@@ -380,8 +380,8 @@ export interface EventSink {
   send(event: SecurityDecisionEvent): Promise<void>;
 }
 
-export interface SafeClawPluginOptions {
-  config?: SafeClawConfig;
+export interface SecurityClawPluginOptions {
+  config?: SecurityClawConfig;
   config_path?: string;
   event_sink?: EventSink;
   now?: () => number;

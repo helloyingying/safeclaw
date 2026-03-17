@@ -1,0 +1,1034 @@
+{
+  "updated_at": "2026-03-17T08:57:11.207Z",
+  "started_at": "2026-03-17T08:57:11.207Z",
+  "config": {
+    "environment": "default",
+    "policy_version": "2026-03-17",
+    "policy_count": 17,
+    "config_path": "/Users/liuzhuangm4/develop/safeclaw/config/policy.default.yaml",
+    "strategy_db_path": "/Users/liuzhuangm4/develop/safeclaw/runtime/securityclaw.db",
+    "strategy_loaded": true,
+    "legacy_override_path": "/Users/liuzhuangm4/develop/safeclaw/config/policy.overrides.json"
+  },
+  "hooks": {
+    "before_prompt_build": {
+      "total": 83,
+      "allow": 83,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0,
+      "last_ts": "2026-03-17T08:41:30.240Z",
+      "last_scope": "workspace"
+    },
+    "before_tool_call": {
+      "total": 134,
+      "allow": 106,
+      "warn": 3,
+      "challenge": 20,
+      "block": 5,
+      "last_ts": "2026-03-17T08:41:36.860Z",
+      "last_tool": "shell.exec",
+      "last_scope": "default"
+    },
+    "after_tool_call": {
+      "total": 134,
+      "allow": 132,
+      "warn": 2,
+      "challenge": 0,
+      "block": 0,
+      "last_ts": "2026-03-17T08:41:37.825Z",
+      "last_tool": "exec",
+      "last_scope": "default"
+    },
+    "tool_result_persist": {
+      "total": 134,
+      "allow": 132,
+      "warn": 2,
+      "challenge": 0,
+      "block": 0,
+      "last_ts": "2026-03-17T08:41:37.921Z",
+      "last_tool": "exec"
+    },
+    "before_message_write": {
+      "total": 0,
+      "allow": 0,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0
+    },
+    "message_sending": {
+      "total": 1,
+      "allow": 1,
+      "warn": 0,
+      "challenge": 0,
+      "block": 0,
+      "last_ts": "2026-03-15T06:05:03.715Z"
+    }
+  },
+  "recent_decisions": [
+    {
+      "ts": "2026-03-17T08:41:37.921Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_0S0S8crHK0IUVWIwTj547xpn|fc_093ecc1ff8e0b1510169b913c05a448191b4c4c0759d84cb6e",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T08:41:37.825Z",
+      "hook": "after_tool_call",
+      "trace_id": "99261d10-f286-4f29-9cbf-b153a4cc86b6",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T08:41:36.860Z",
+      "hook": "before_tool_call",
+      "trace_id": "99261d10-f286-4f29-9cbf-b153a4cc86b6",
+      "decision": "allow",
+      "reasons": [
+        "ACCOUNT_DEFAULT_ALLOW"
+      ],
+      "actor": "telegram:1157955965",
+      "scope": "default",
+      "tool": "shell.exec",
+      "decision_source": "account",
+      "resource_scope": "workspace_outside",
+      "rules": "sms-content-access-challenge"
+    },
+    {
+      "ts": "2026-03-17T08:41:30.240Z",
+      "hook": "before_prompt_build",
+      "trace_id": "5c1ba0a4-ff30-4fa5-b9ff-18aece3d44ab",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T08:40:36.051Z",
+      "hook": "before_prompt_build",
+      "trace_id": "5c1ba0a4-ff30-4fa5-b9ff-18aece3d44ab",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T08:37:00.014Z",
+      "hook": "before_prompt_build",
+      "trace_id": "5c1ba0a4-ff30-4fa5-b9ff-18aece3d44ab",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T08:06:56.210Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_YHTfao0Wt8KQwPw4Zzjfer5e|fc_045b420a06de45f00169b90b9eede88191945ac8caada3045c",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T08:06:56.206Z",
+      "hook": "after_tool_call",
+      "trace_id": "3f9095ce-01b0-414e-b80f-a35e8b8db197",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T08:06:56.142Z",
+      "hook": "before_tool_call",
+      "trace_id": "3f9095ce-01b0-414e-b80f-a35e8b8db197",
+      "decision": "allow",
+      "reasons": [
+        "APPROVAL_GRANTED"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "approval",
+      "resource_scope": "workspace_outside",
+      "rules": "file_rule:file-rule-mmubfzyl-klapa7"
+    },
+    {
+      "ts": "2026-03-17T08:06:52.176Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T08:05:56.267Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_nVTn5UkxYRp8pFfIpO24SSRv|fc_045b420a06de45f00169b90b62ea9c81918351547fb732f052",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T08:05:56.264Z",
+      "hook": "after_tool_call",
+      "trace_id": "aa99358f-7b7a-4275-b4a0-aa043ff1372e",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T08:05:56.228Z",
+      "hook": "before_tool_call",
+      "trace_id": "aa99358f-7b7a-4275-b4a0-aa043ff1372e",
+      "decision": "challenge",
+      "reasons": [
+        "USER_FILE_RULE_CHALLENGE"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "file_rule",
+      "resource_scope": "workspace_outside",
+      "rules": "file_rule:file-rule-mmubfzyl-klapa7"
+    },
+    {
+      "ts": "2026-03-17T08:05:48.924Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T05:42:47.314Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_MkBjEgDJlsENFEdVHunaD9Wz|fc_045b420a06de45f00169b8e9d6e9f8819180a87a01be466b3d",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:42:47.312Z",
+      "hook": "after_tool_call",
+      "trace_id": "326f0e5b-3e57-46d1-a232-da2e094c48af",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:42:47.302Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_9zeLM2tPyHDmAIPy7nxeD7Hh|fc_045b420a06de45f00169b8e9d6e9e881918373859bf46f1877",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:42:47.299Z",
+      "hook": "after_tool_call",
+      "trace_id": "326f0e5b-3e57-46d1-a232-da2e094c48af",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:42:47.238Z",
+      "hook": "before_tool_call",
+      "trace_id": "326f0e5b-3e57-46d1-a232-da2e094c48af",
+      "decision": "allow",
+      "reasons": [
+        "APPROVAL_GRANTED"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "approval",
+      "resource_scope": "workspace_outside",
+      "rules": "sensitive-directory-enumeration-challenge"
+    },
+    {
+      "ts": "2026-03-17T05:42:47.231Z",
+      "hook": "before_tool_call",
+      "trace_id": "326f0e5b-3e57-46d1-a232-da2e094c48af",
+      "decision": "allow",
+      "reasons": [
+        "APPROVAL_GRANTED"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "approval",
+      "resource_scope": "workspace_outside",
+      "rules": "sensitive-directory-enumeration-challenge"
+    },
+    {
+      "ts": "2026-03-17T05:42:37.720Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T05:41:13.464Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_L6oAkejal4wvzGUOxkXsRqfG|fc_045b420a06de45f00169b8e9784fa88191ae281d72dafe7b3b",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:41:13.461Z",
+      "hook": "after_tool_call",
+      "trace_id": "9cbb6274-c7d4-42f6-bba0-584aba7491b4",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:41:13.450Z",
+      "hook": "before_tool_call",
+      "trace_id": "9cbb6274-c7d4-42f6-bba0-584aba7491b4",
+      "decision": "challenge",
+      "reasons": [
+        "SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "rule",
+      "resource_scope": "workspace_outside",
+      "rules": "sensitive-directory-enumeration-challenge"
+    },
+    {
+      "ts": "2026-03-17T05:41:07.596Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T05:40:50.338Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_tacqSxAXUodtmTow3mVLMnl3|fc_045b420a06de45f00169b8e9600a688191a6f6e7aec667d011",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:40:50.336Z",
+      "hook": "after_tool_call",
+      "trace_id": "80e6bb89-2880-4b4e-9639-59087681722d",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:40:50.299Z",
+      "hook": "before_tool_call",
+      "trace_id": "80e6bb89-2880-4b4e-9639-59087681722d",
+      "decision": "challenge",
+      "reasons": [
+        "SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "rule",
+      "resource_scope": "workspace_outside",
+      "rules": "sensitive-directory-enumeration-challenge"
+    },
+    {
+      "ts": "2026-03-17T05:40:41.713Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T05:29:31.552Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_vjNQB7MSw2DiQad4CpduL6Ev|fc_045b420a06de45f00169b8e6ba3a148191abbb5a8a2d5ccc79",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:29:31.550Z",
+      "hook": "after_tool_call",
+      "trace_id": "57b2a964-445c-4e9c-81e8-267d38a393e2",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:29:31.506Z",
+      "hook": "before_tool_call",
+      "trace_id": "57b2a964-445c-4e9c-81e8-267d38a393e2",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "default",
+      "resource_scope": "workspace_outside",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T05:29:27.889Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T05:17:58.252Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_rySw8x0wtzbR0YZsGeItYupj|fc_045b420a06de45f00169b8e405a86081919ee59447a6128f57",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:17:58.248Z",
+      "hook": "after_tool_call",
+      "trace_id": "d92fb848-5bcf-43d0-97b7-61bf0e92e497",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:17:58.197Z",
+      "hook": "before_tool_call",
+      "trace_id": "d92fb848-5bcf-43d0-97b7-61bf0e92e497",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "default",
+      "resource_scope": "workspace_outside",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T05:17:53.902Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T05:17:23.272Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_jAudLuJK6EX9bL41AgwZudJC|fc_045b420a06de45f00169b8e3ded67881918095fa406d0d1f43",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:17:23.270Z",
+      "hook": "after_tool_call",
+      "trace_id": "0ed6570c-089d-43f8-b47f-cfb1254e93fa",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:17:23.249Z",
+      "hook": "before_tool_call",
+      "trace_id": "0ed6570c-089d-43f8-b47f-cfb1254e93fa",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "default",
+      "resource_scope": "workspace_outside",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T05:17:14.634Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T05:16:59.755Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_9pfbygbzqdjF4yZN3VG0HoBs|fc_045b420a06de45f00169b8e3cb55208191a7480ed7c5cf19f8",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:16:59.753Z",
+      "hook": "after_tool_call",
+      "trace_id": "526fdd38-3ead-479f-bcc0-6bc753ef8a6e",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T05:16:59.709Z",
+      "hook": "before_tool_call",
+      "trace_id": "526fdd38-3ead-479f-bcc0-6bc753ef8a6e",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "default",
+      "resource_scope": "workspace_outside",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T05:16:51.094Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T04:08:39.146Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_Pn4dZiCkgFzvDl4TVW1yvFnW|fc_045b420a06de45f00169b8d3c6dc508191bdafeda2afafd0a1",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T04:08:39.143Z",
+      "hook": "after_tool_call",
+      "trace_id": "a1eaf28b-cc16-4e0e-9141-b3f0ee7ffc2f",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T04:08:39.127Z",
+      "hook": "before_tool_call",
+      "trace_id": "a1eaf28b-cc16-4e0e-9141-b3f0ee7ffc2f",
+      "decision": "block",
+      "reasons": [
+        "OUTSIDE_WRITE_BLOCK"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.write",
+      "decision_source": "rule",
+      "resource_scope": "workspace_outside",
+      "rules": "workspace-outside-write-block"
+    },
+    {
+      "ts": "2026-03-17T04:08:33.216Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T04:07:59.681Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_9zG9CXX4PtXOQKIaahh7sVom|fc_045b420a06de45f00169b8d39f1d88819187953be298762b18",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T04:07:59.677Z",
+      "hook": "after_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T04:07:59.655Z",
+      "hook": "before_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "default",
+      "resource_scope": "workspace_outside",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T04:07:51.377Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_jLYwJzIqy3ujQ4JFT7vZv3MC|fc_045b420a06de45f00169b8d396f7ac8191b31f585d12a08ef6",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T04:07:51.373Z",
+      "hook": "after_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-17T04:07:51.319Z",
+      "hook": "before_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "filesystem.search",
+      "decision_source": "default",
+      "resource_scope": "workspace_outside",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.197Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_74pgZ22jTjY9GwL7P0lB45db|fc_045b420a06de45f00169b8d38fd8808191a759e207fd5157ef",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.195Z",
+      "hook": "after_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.194Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_0CbodZIIzyWwjmQuWOYL6gbt|fc_045b420a06de45f00169b8d38fd87881918b714d72b2cc0cd7",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.193Z",
+      "hook": "after_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.191Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_rYK1CeXlwdtD6DhZG6T6bA0W|fc_045b420a06de45f00169b8d38fd8708191931e4f71a30b8966",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.191Z",
+      "hook": "after_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.188Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_eUdiKE2LJhkYm4v5dlyhagpi|fc_045b420a06de45f00169b8d38fd868819190dc162b7e16841a",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.187Z",
+      "hook": "after_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.185Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_rNg7iwvjlDhyxmI0WNW6D7up|fc_045b420a06de45f00169b8d38fd85881919cedd67fa054b9d4",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.184Z",
+      "hook": "after_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "read"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.162Z",
+      "hook": "before_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "read",
+      "decision_source": "default",
+      "resource_scope": "none",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.160Z",
+      "hook": "before_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "read",
+      "decision_source": "default",
+      "resource_scope": "none",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.158Z",
+      "hook": "before_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "read",
+      "decision_source": "default",
+      "resource_scope": "none",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.155Z",
+      "hook": "before_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "read",
+      "decision_source": "default",
+      "resource_scope": "none",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T04:07:44.152Z",
+      "hook": "before_tool_call",
+      "trace_id": "08576ee2-48d3-444b-88bd-7bbdfd4be77b",
+      "decision": "allow",
+      "reasons": [
+        "NO_MATCH_DEFAULT_ALLOW"
+      ],
+      "actor": "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      "scope": "default",
+      "tool": "read",
+      "decision_source": "default",
+      "resource_scope": "none",
+      "rules": "-"
+    },
+    {
+      "ts": "2026-03-17T04:07:37.583Z",
+      "hook": "before_prompt_build",
+      "trace_id": "dd9ac865-eb1c-4e8d-8da9-14ab4dbb9aaa",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-17T02:33:51.800Z",
+      "hook": "before_prompt_build",
+      "trace_id": "5c1ba0a4-ff30-4fa5-b9ff-18aece3d44ab",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-16T14:44:10.101Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_ojmS0FFNuDXkq5C4cBJQlkJY|fc_0d2e5ee5e632707f0169b8173835508191b6059927e201aad5",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-16T14:44:10.099Z",
+      "hook": "after_tool_call",
+      "trace_id": "9aa3a114-caec-434b-8e9a-2ca31efcda1e",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-16T14:44:10.059Z",
+      "hook": "before_tool_call",
+      "trace_id": "9aa3a114-caec-434b-8e9a-2ca31efcda1e",
+      "decision": "challenge",
+      "reasons": [
+        "SMS_CONTENT_ACCESS_REQUIRES_APPROVAL"
+      ],
+      "actor": "agent:main:main",
+      "scope": "default",
+      "tool": "shell.exec",
+      "decision_source": "rule",
+      "resource_scope": "workspace_outside",
+      "rules": "sms-content-access-challenge"
+    },
+    {
+      "ts": "2026-03-16T14:44:05.593Z",
+      "hook": "before_prompt_build",
+      "trace_id": "5d55a190-8c4a-49f1-863b-447e58f11354",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    },
+    {
+      "ts": "2026-03-16T14:33:23.354Z",
+      "hook": "tool_result_persist",
+      "trace_id": "call_fsr2KIxNwi6KZmXOBKkCVG02|fc_093ecc1ff8e0b1510169b814af61788191accf7729660778c6",
+      "decision": "allow",
+      "reasons": [
+        "PERSIST_OK"
+      ],
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-16T14:33:23.352Z",
+      "hook": "after_tool_call",
+      "trace_id": "2f28d38f-5646-49c0-94c6-6c6345793de5",
+      "decision": "allow",
+      "reasons": [
+        "RESULT_OK"
+      ],
+      "actor": "main",
+      "scope": "default",
+      "tool": "exec"
+    },
+    {
+      "ts": "2026-03-16T14:33:23.286Z",
+      "hook": "before_tool_call",
+      "trace_id": "2f28d38f-5646-49c0-94c6-6c6345793de5",
+      "decision": "challenge",
+      "reasons": [
+        "SMS_CONTENT_ACCESS_REQUIRES_APPROVAL"
+      ],
+      "actor": "telegram:1157955965",
+      "scope": "default",
+      "tool": "shell.exec",
+      "decision_source": "rule",
+      "resource_scope": "workspace_outside",
+      "rules": "sms-content-access-challenge"
+    },
+    {
+      "ts": "2026-03-16T14:33:15.618Z",
+      "hook": "before_prompt_build",
+      "trace_id": "5c1ba0a4-ff30-4fa5-b9ff-18aece3d44ab",
+      "decision": "allow",
+      "reasons": [
+        "SECURITY_CONTEXT_INJECTED"
+      ],
+      "actor": "main",
+      "scope": "workspace"
+    }
+  ]
+}

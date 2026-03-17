@@ -1,4 +1,4 @@
-# SafeClaw 文档索引
+# SecurityClaw 文档索引
 
 [English Index](./README.md)
 
@@ -12,6 +12,7 @@
 ## 安装与运维
 
 - [OpenClaw 安装指南](./OPENCLAW_INSTALL.md)
+- [发布指南](./PUBLISH.zh-CN.md)
 - [管理后台说明](./ADMIN_DASHBOARD.md)
 - [运行手册](./RUNBOOK.md)
 - [集成指南](./INTEGRATION_GUIDE.md)

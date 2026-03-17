@@ -7,8 +7,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { ChatApprovalStore, createApprovalRequestKey } from "../src/approvals/chat_approval_store.ts";
 
 test("chat approval store persists approvals and expires approved grants", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-store-"));
-  const dbPath = path.join(tempDir, "safeclaw.db");
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-store-"));
+  const dbPath = path.join(tempDir, "securityclaw.db");
   let now = Date.parse("2026-03-15T08:00:00.000Z");
   let store: ChatApprovalStore | undefined;
 

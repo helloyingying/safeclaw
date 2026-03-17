@@ -25,8 +25,8 @@ type AdminBuildOptions = {
   paths?: Partial<AdminBuildPaths>;
 };
 
-type GlobalWithSafeClawAdminBuild = typeof globalThis & {
-  __safeclawAdminBuildPromise?: Promise<AdminBuildResult>;
+type GlobalWithSecurityClawAdminBuild = typeof globalThis & {
+  __securityclawAdminBuildPromise?: Promise<AdminBuildResult>;
 };
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -39,7 +39,10 @@ function resolvePaths(overrides: Partial<AdminBuildPaths> = {}): AdminBuildPaths
   };
 }
 
-function newestMtimeMs(target: string): number {
+function newestMtimeMs(target: string): number | undefined {
+  if (!existsSync(target)) {
+    return undefined;
+  }
   const stat = statSync(target);
   if (!stat.isDirectory()) {
     return stat.mtimeMs;
@@ -48,7 +51,7 @@ function newestMtimeMs(target: string): number {
   let newest = 0;
   for (const entry of readdirSync(target, { withFileTypes: true })) {
     const candidate = newestMtimeMs(path.join(target, entry.name));
-    if (candidate > newest) {
+    if (candidate !== undefined && candidate > newest) {
       newest = candidate;
     }
   }
@@ -60,7 +63,11 @@ export function shouldBuildAdminAssets(options: Pick<AdminBuildOptions, "paths">
   if (!existsSync(paths.outfile)) {
     return true;
   }
-  return newestMtimeMs(paths.sourceDir) > statSync(paths.outfile).mtimeMs;
+  const sourceMtimeMs = newestMtimeMs(paths.sourceDir);
+  if (sourceMtimeMs === undefined) {
+    return false;
+  }
+  return sourceMtimeMs > statSync(paths.outfile).mtimeMs;
 }
 
 export async function ensureAdminAssetsBuilt(options: AdminBuildOptions = {}): Promise<AdminBuildResult> {
@@ -68,10 +75,13 @@ export async function ensureAdminAssetsBuilt(options: AdminBuildOptions = {}): P
   if (!options.force && !shouldBuildAdminAssets({ paths })) {
     return { state: "skipped", paths };
   }
+  if (!existsSync(paths.entryPoint)) {
+    throw new Error(`SecurityClaw admin entry point not found: ${paths.entryPoint}`);
+  }
 
-  const state = globalThis as GlobalWithSafeClawAdminBuild;
-  if (state.__safeclawAdminBuildPromise) {
-    return state.__safeclawAdminBuildPromise;
+  const state = globalThis as GlobalWithSecurityClawAdminBuild;
+  if (state.__securityclawAdminBuildPromise) {
+    return state.__securityclawAdminBuildPromise;
   }
 
   const logger = options.logger ?? {};
@@ -89,15 +99,15 @@ export async function ensureAdminAssetsBuilt(options: AdminBuildOptions = {}): P
       "process.env.NODE_ENV": "\"production\""
     }
   }).then(() => {
-    logger.info?.(`SafeClaw admin bundle rebuilt: ${paths.outfile}`);
+    logger.info?.(`SecurityClaw admin bundle rebuilt: ${paths.outfile}`);
     return { state: "built" as const, paths };
   }).catch((error) => {
-    logger.warn?.(`SafeClaw admin bundle build failed (${String(error)})`);
+    logger.warn?.(`SecurityClaw admin bundle build failed (${String(error)})`);
     throw error;
   }).finally(() => {
-    delete state.__safeclawAdminBuildPromise;
+    delete state.__securityclawAdminBuildPromise;
   });
 
-  state.__safeclawAdminBuildPromise = promise;
+  state.__securityclawAdminBuildPromise = promise;
   return promise;
 }

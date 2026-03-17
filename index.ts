@@ -40,8 +40,8 @@ import { defaultFileRuleReasonCode, matchFileRule } from "./src/domain/services/
 import { hydrateSensitivePathConfig } from "./src/domain/services/sensitive_path_registry.ts";
 import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
 import { inferSensitivityLabels } from "./src/domain/services/sensitivity_label_inference.ts";
-import type { SafeClawLocale } from "./src/i18n/locale.ts";
-import { localeForIntl, pickLocalized, resolveSafeClawLocale } from "./src/i18n/locale.ts";
+import type { SecurityClawLocale } from "./src/i18n/locale.ts";
+import { localeForIntl, pickLocalized, resolveSecurityClawLocale } from "./src/i18n/locale.ts";
 import type {
   AccountPolicyRecord,
   DecisionContext,
@@ -49,11 +49,11 @@ import type {
   DlpFinding,
   ResourceScope,
   RuleMatch,
-  SafeClawConfig,
+  SecurityClawConfig,
   SecurityDecisionEvent
 } from "./src/types.ts";
 
-type SafeClawPluginConfig = {
+type SecurityClawPluginConfig = {
   configPath?: string;
   overridePath?: string;
   dbPath?: string;
@@ -75,7 +75,7 @@ type ResolvedPluginRuntime = {
 };
 
 type RuntimeDependencies = {
-  config: SafeClawConfig;
+  config: SecurityClawConfig;
   ruleEngine: RuleEngine;
   decisionEngine: DecisionEngine;
   accountPolicyEngine: AccountPolicyEngine;
@@ -84,7 +84,7 @@ type RuntimeDependencies = {
   overrideLoaded: boolean;
 };
 
-type SafeClawHookContext = {
+type SecurityClawHookContext = {
   agentId?: string;
   sessionKey?: string;
   sessionId?: string;
@@ -93,7 +93,7 @@ type SafeClawHookContext = {
   channelId?: string;
 };
 
-type SafeClawApprovalCommandContext = {
+type SecurityClawApprovalCommandContext = {
   channel?: string;
   senderId?: string;
   from?: string;
@@ -118,9 +118,9 @@ type ResolvedApprovalBridge = {
 
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME_DIR = os.homedir();
-const APPROVAL_APPROVE_COMMAND = "safeclaw-approve";
-const APPROVAL_REJECT_COMMAND = "safeclaw-reject";
-const APPROVAL_PENDING_COMMAND = "safeclaw-pending";
+const APPROVAL_APPROVE_COMMAND = "securityclaw-approve";
+const APPROVAL_REJECT_COMMAND = "securityclaw-reject";
+const APPROVAL_PENDING_COMMAND = "securityclaw-pending";
 const APPROVAL_LONG_GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const APPROVAL_DISPLAY_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
@@ -165,12 +165,12 @@ const getChannelPluginCompat = (OpenClawCompat as Record<string, unknown>).getCh
   | ((id: string) => unknown)
   | undefined;
 
-function resolveRuntimeLocale(): SafeClawLocale {
+function resolveRuntimeLocale(): SecurityClawLocale {
   const systemLocale = Intl.DateTimeFormat().resolvedOptions().locale;
-  return resolveSafeClawLocale(systemLocale, "en");
+  return resolveSecurityClawLocale(systemLocale, "en");
 }
 
-let runtimeLocale: SafeClawLocale = resolveRuntimeLocale();
+let runtimeLocale: SecurityClawLocale = resolveRuntimeLocale();
 
 function text(zhText: string, enText: string): string {
   return pickLocalized(runtimeLocale, zhText, enText);
@@ -184,8 +184,8 @@ function resolvePluginStateDir(api: OpenClawPluginApi): string {
   }
 }
 
-function resolveAdminConsoleUrl(pluginConfig: SafeClawPluginConfig): string {
-  const port = pluginConfig.adminPort ?? Number(process.env.SAFECLAW_ADMIN_PORT ?? 4780);
+function resolveAdminConsoleUrl(pluginConfig: SecurityClawPluginConfig): string {
+  const port = pluginConfig.adminPort ?? Number(process.env.SECURITYCLAW_ADMIN_PORT ?? 4780);
   return `http://127.0.0.1:${port}`;
 }
 
@@ -611,7 +611,7 @@ function deriveToolContext(
 }
 
 function inferLabels(
-  config: SafeClawConfig,
+  config: SecurityClawConfig,
   toolGroup: string | undefined,
   resourcePaths: string[],
   toolArgsSummary: string | undefined,
@@ -687,7 +687,7 @@ function normalizeThreadId(threadId: string | number | undefined): number | unde
   return undefined;
 }
 
-function resolveApprovalSubject(ctx: SafeClawHookContext): string {
+function resolveApprovalSubject(ctx: SecurityClawHookContext): string {
   return ApprovalSubjectResolver.resolve(ctx);
 }
 
@@ -813,7 +813,7 @@ function mergeApprovalBridgeConfig(
   };
 }
 
-function matchesApprover(approvers: ChatApprovalApprover[], ctx: SafeClawApprovalCommandContext): boolean {
+function matchesApprover(approvers: ChatApprovalApprover[], ctx: SecurityClawApprovalCommandContext): boolean {
   const channel = normalizeApprovalChannel(ctx.channel);
   if (!channel) {
     return false;
@@ -880,7 +880,7 @@ function formatApprovalPrompt(record: StoredApprovalRecord): string {
   const summary = record.args_summary ? trimText(record.args_summary, 180) : undefined;
 
   return [
-    text("SafeClaw 审批请求", "SafeClaw Approval"),
+    text("SecurityClaw 审批请求", "SecurityClaw Approval"),
     `${text("对象", "Subject")}: ${record.actor_id}`,
     `${text("工具", "Tool")}: ${record.tool_name}`,
     `${text("范围", "Scope")}: ${record.scope}`,
@@ -1621,14 +1621,14 @@ async function notifyApprovalTargets(
         sent = true;
         delivered = true;
         api.logger.info?.(
-          `safeclaw: sent approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.message_id ? ` message_id=${notification.message_id}` : ""}`,
+          `securityclaw: sent approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.message_id ? ` message_id=${notification.message_id}` : ""}`,
         );
         break;
       } catch (error) {
         lastError = error;
         if (attempt < APPROVAL_NOTIFICATION_MAX_ATTEMPTS) {
           api.logger.warn?.(
-            `safeclaw: retrying approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt} (${String(error)})`,
+            `securityclaw: retrying approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt} (${String(error)})`,
           );
           await sleep(APPROVAL_NOTIFICATION_RETRY_DELAYS_MS[attempt - 1] ?? APPROVAL_NOTIFICATION_RETRY_DELAYS_MS.at(-1) ?? 250);
         }
@@ -1636,7 +1636,7 @@ async function notifyApprovalTargets(
     }
     if (!delivered) {
       api.logger.warn?.(
-        `safeclaw: failed to send approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} (${String(lastError)})`,
+        `securityclaw: failed to send approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} (${String(lastError)})`,
       );
     }
   }
@@ -1665,7 +1665,7 @@ function formatApprovalBlockReason(params: {
       "Admin notification failed. Share the request ID with an approver.",
     );
   const lines = [
-    text("SafeClaw 需要审批", "SafeClaw Approval Required"),
+    text("SecurityClaw 需要审批", "SecurityClaw Approval Required"),
     `${text("工具", "Tool")}: ${params.toolName}`,
     `${text("范围", "Scope")}: ${params.scope}`,
     `${text("资源", "Resource")}: ${formatResourceScopeDetail(params.resourceScope)}`,
@@ -1684,7 +1684,7 @@ function parseApprovalId(args: string | undefined): string | undefined {
 }
 
 function resolvePluginRuntime(api: OpenClawPluginApi): ResolvedPluginRuntime {
-  const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
+  const pluginConfig = (api.pluginConfig ?? {}) as SecurityClawPluginConfig;
   const configPath = pluginConfig.configPath
     ? path.isAbsolute(pluginConfig.configPath)
       ? pluginConfig.configPath
@@ -1694,7 +1694,7 @@ function resolvePluginRuntime(api: OpenClawPluginApi): ResolvedPluginRuntime {
     ? path.isAbsolute(pluginConfig.dbPath)
       ? pluginConfig.dbPath
       : path.resolve(PLUGIN_ROOT, pluginConfig.dbPath)
-    : path.resolve(PLUGIN_ROOT, "./runtime/safeclaw.db");
+    : path.resolve(PLUGIN_ROOT, "./runtime/securityclaw.db");
   const legacyOverridePath = pluginConfig.overridePath
     ? path.isAbsolute(pluginConfig.overridePath)
       ? pluginConfig.overridePath
@@ -1707,14 +1707,14 @@ function resolvePluginRuntime(api: OpenClawPluginApi): ResolvedPluginRuntime {
   };
 }
 
-function createEventEmitter(config: SafeClawConfig): EventEmitter {
+function createEventEmitter(config: SecurityClawConfig): EventEmitter {
   const sink = config.event_sink.webhook_url
     ? new HttpEventSink(config.event_sink.webhook_url, config.event_sink.timeout_ms)
     : undefined;
   return new EventEmitter(sink, config.event_sink.max_buffer, config.event_sink.retry_limit);
 }
 
-function applyPluginConfigOverrides(config: SafeClawConfig, pluginConfig: SafeClawPluginConfig): SafeClawConfig {
+function applyPluginConfigOverrides(config: SecurityClawConfig, pluginConfig: SecurityClawPluginConfig): SecurityClawConfig {
   const webhookUrl = pluginConfig.webhookUrl ?? config.event_sink.webhook_url;
   return {
     ...config,
@@ -1745,7 +1745,7 @@ function buildRuntime(snapshot: LiveConfigSnapshot): RuntimeDependencies {
   };
 }
 
-function toStatusConfig(config: SafeClawConfig, overrideLoaded: boolean, resolved: ResolvedPluginRuntime) {
+function toStatusConfig(config: SecurityClawConfig, overrideLoaded: boolean, resolved: ResolvedPluginRuntime) {
   return {
     environment: config.environment,
     policy_version: config.policy_version,
@@ -1758,8 +1758,8 @@ function toStatusConfig(config: SafeClawConfig, overrideLoaded: boolean, resolve
 }
 
 function buildDecisionContext(
-  config: SafeClawConfig,
-  ctx: SafeClawHookContext,
+  config: SecurityClawConfig,
+  ctx: SecurityClawHookContext,
   toolName?: string,
   tags: string[] = [],
   resourceScope: ResourceScope = "none",
@@ -1823,7 +1823,7 @@ function emitEvent(
   logger: OpenClawPluginApi["logger"],
 ): void {
   void emitter.emitSecurityEvent(event).catch((error) => {
-    logger.warn?.(`safeclaw: failed to emit event (${String(error)})`);
+    logger.warn?.(`securityclaw: failed to emit event (${String(error)})`);
   });
 }
 
@@ -1911,8 +1911,8 @@ function formatToolBlockReason(
   const reasons = reasonCodes.join(", ");
   const lines = [
     text(
-      decision === "challenge" ? "SafeClaw 需要审批" : "SafeClaw 已阻止此操作",
-      decision === "challenge" ? "SafeClaw Approval Required" : "SafeClaw Blocked",
+      decision === "challenge" ? "SecurityClaw 需要审批" : "SecurityClaw 已阻止此操作",
+      decision === "challenge" ? "SecurityClaw Approval Required" : "SecurityClaw Blocked",
     ),
     `${text("工具", "Tool")}: ${toolName}`,
     `${text("范围", "Scope")}: ${scope}`,
@@ -1930,12 +1930,12 @@ function formatToolBlockReason(
 }
 
 const plugin = {
-  id: "safeclaw",
-  name: "SafeClaw Security",
+  id: "securityclaw",
+  name: "SecurityClaw Security",
   description: "Runtime policy enforcement, transcript sanitization, and audit events for OpenClaw.",
   register(api: OpenClawPluginApi) {
     const resolved = resolvePluginRuntime(api);
-    const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
+    const pluginConfig = (api.pluginConfig ?? {}) as SecurityClawPluginConfig;
     const adminConsoleUrl = resolveAdminConsoleUrl(pluginConfig);
     const stateDir = resolvePluginStateDir(api);
     runtimeLocale = resolveRuntimeLocale();
@@ -1945,7 +1945,7 @@ const plugin = {
       ? path.isAbsolute(pluginConfig.statusPath)
         ? pluginConfig.statusPath
         : path.resolve(PLUGIN_ROOT, pluginConfig.statusPath)
-      : path.resolve(PLUGIN_ROOT, "./runtime/safeclaw-status.json");
+      : path.resolve(PLUGIN_ROOT, "./runtime/securityclaw-status.json");
     const dbPath = resolved.dbPath;
     const statusStore = new RuntimeStatusStore({ snapshotPath: statusPath, dbPath });
     const liveConfig = new LiveConfigResolver({
@@ -1956,11 +1956,11 @@ const plugin = {
         info: (message: string) => api.logger.info?.(message),
         warn: (message: string) => api.logger.warn?.(message)
       },
-      transform: (config: SafeClawConfig) => applyPluginConfigOverrides(config, pluginConfig),
+      transform: (config: SecurityClawConfig) => applyPluginConfigOverrides(config, pluginConfig),
       onReload: (snapshot: LiveConfigSnapshot) => {
         statusStore.updateConfig(toStatusConfig(snapshot.config, snapshot.overrideLoaded, resolved));
         api.logger.info?.(
-          `safeclaw: policy refresh env=${snapshot.config.environment} policy_version=${snapshot.config.policy_version} rules=${snapshot.config.policies.length}`,
+          `securityclaw: policy refresh env=${snapshot.config.environment} policy_version=${snapshot.config.policy_version} rules=${snapshot.config.policies.length}`,
         );
       }
     });
@@ -1976,10 +1976,10 @@ const plugin = {
     statusStore.markBoot(toStatusConfig(runtime.config, runtime.overrideLoaded, resolved));
     const adminBuildPromise = ensureAdminAssetsBuilt({
       logger: {
-        info: (message: string) => api.logger.info?.(`safeclaw: ${message}`)
+        info: (message: string) => api.logger.info?.(`securityclaw: ${message}`)
       }
     }).catch((error) => {
-      api.logger.warn?.(`safeclaw: failed to refresh admin bundle (${String(error)})`);
+      api.logger.warn?.(`securityclaw: failed to refresh admin bundle (${String(error)})`);
     });
     if (adminAutoStart) {
       const autoStartDecision = shouldAutoStartAdminServer(process.env);
@@ -1991,8 +1991,8 @@ const plugin = {
           dbPath,
           unrefOnStart: true,
           logger: {
-            info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
-            warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`)
+            info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
+            warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`)
           },
           ...(pluginConfig.adminPort !== undefined ? { port: pluginConfig.adminPort } : {})
         };
@@ -2002,8 +2002,8 @@ const plugin = {
             announceAdminConsole({
               locale: runtimeLocale,
               logger: {
-                info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
-                warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`),
+                info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
+                warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`),
               },
               stateDir,
               state: result.state,
@@ -2011,36 +2011,36 @@ const plugin = {
             });
           })
           .catch((error) => {
-            api.logger.warn?.(`safeclaw: failed to auto-start admin dashboard (${String(error)})`);
+            api.logger.warn?.(`securityclaw: failed to auto-start admin dashboard (${String(error)})`);
           });
 	      } else {
 	        if (shouldAnnounceAdminConsoleForArgv(process.argv)) {
 	          announceAdminConsole({
 	            locale: runtimeLocale,
 	            logger: {
-	              info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
-	              warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`),
+	              info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
+	              warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`),
 	            },
 	            stateDir,
 	            state: "service-command",
 	            url: adminConsoleUrl,
 	          });
-	          api.logger.info?.("safeclaw: admin dashboard is hosted by the background OpenClaw gateway service");
+	          api.logger.info?.("securityclaw: admin dashboard is hosted by the background OpenClaw gateway service");
 	        } else {
 	          api.logger.info?.(
-	            `safeclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,
+	            `securityclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,
 	          );
 	        }
 	      }
 	    } else {
-      api.logger.info?.("safeclaw: admin auto-start disabled by config");
+      api.logger.info?.("securityclaw: admin auto-start disabled by config");
     }
 
     api.logger.info?.(
-      `safeclaw: boot env=${runtime.config.environment} policy_version=${runtime.config.policy_version} dlp_mode=${runtime.config.dlp.on_dlp_hit} rules=${runtime.config.policies.length}`,
+      `securityclaw: boot env=${runtime.config.environment} policy_version=${runtime.config.policy_version} dlp_mode=${runtime.config.dlp.on_dlp_hit} rules=${runtime.config.policies.length}`,
     );
     if (!runtime.config.event_sink.webhook_url) {
-      api.logger.info?.("safeclaw: event sink disabled (webhook_url is empty), using logger-only observability");
+      api.logger.info?.("securityclaw: event sink disabled (webhook_url is empty), using logger-only observability");
     }
 
     function resolveApprovalBridge(current: RuntimeDependencies = getRuntime()): ResolvedApprovalBridge {
@@ -2050,22 +2050,22 @@ const plugin = {
     const initialApprovalBridge = resolveApprovalBridge(runtime);
     if (initialApprovalBridge.enabled) {
       api.logger.info?.(
-        `safeclaw: approval bridge enabled targets=${initialApprovalBridge.targets.length} approvers=${initialApprovalBridge.approvers.length}`,
+        `securityclaw: approval bridge enabled targets=${initialApprovalBridge.targets.length} approvers=${initialApprovalBridge.approvers.length}`,
       );
       if (initialApprovalBridge.approvers.length === 0) {
-        api.logger.warn?.("safeclaw: approval bridge is enabled but no approvers are configured");
+        api.logger.warn?.("securityclaw: approval bridge is enabled but no approvers are configured");
       }
-      api.logger.info?.("safeclaw: approval bridge source=account_policies_admin");
+      api.logger.info?.("securityclaw: approval bridge source=account_policies_admin");
     }
 
     api.registerCommand({
       name: APPROVAL_APPROVE_COMMAND,
-      description: "Approve a pending SafeClaw request in the current admin chat.",
+      description: "Approve a pending SecurityClaw request in the current admin chat.",
       acceptsArgs: true,
       requireAuth: false,
       handler: async (ctx) => {
         const approvalBridge = resolveApprovalBridge();
-        const commandContext: SafeClawApprovalCommandContext = {
+        const commandContext: SecurityClawApprovalCommandContext = {
           channel: ctx.channel,
           ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
           ...(ctx.from !== undefined ? { from: ctx.from } : {}),
@@ -2075,10 +2075,10 @@ const plugin = {
           isAuthorizedSender: ctx.isAuthorizedSender,
         };
         if (!approvalBridge.enabled) {
-          return { text: text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
+          return { text: text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
-          return { text: text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
+          return { text: text("你无权审批 SecurityClaw 请求。", "You are not allowed to approve SecurityClaw requests.") };
         }
         const approvalId = parseApprovalId(commandContext.args);
         if (!approvalId) {
@@ -2120,12 +2120,12 @@ const plugin = {
 
     api.registerCommand({
       name: APPROVAL_REJECT_COMMAND,
-      description: "Reject a pending SafeClaw request in the current admin chat.",
+      description: "Reject a pending SecurityClaw request in the current admin chat.",
       acceptsArgs: true,
       requireAuth: false,
       handler: async (ctx) => {
         const approvalBridge = resolveApprovalBridge();
-        const commandContext: SafeClawApprovalCommandContext = {
+        const commandContext: SecurityClawApprovalCommandContext = {
           channel: ctx.channel,
           ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
           ...(ctx.from !== undefined ? { from: ctx.from } : {}),
@@ -2135,10 +2135,10 @@ const plugin = {
           isAuthorizedSender: ctx.isAuthorizedSender,
         };
         if (!approvalBridge.enabled) {
-          return { text: text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
+          return { text: text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
-          return { text: text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
+          return { text: text("你无权审批 SecurityClaw 请求。", "You are not allowed to approve SecurityClaw requests.") };
         }
         const approvalId = parseApprovalId(commandContext.args);
         if (!approvalId) {
@@ -2172,12 +2172,12 @@ const plugin = {
 
     api.registerCommand({
       name: APPROVAL_PENDING_COMMAND,
-      description: "List recent pending SafeClaw approval requests.",
+      description: "List recent pending SecurityClaw approval requests.",
       acceptsArgs: false,
       requireAuth: false,
       handler: async (ctx) => {
         const approvalBridge = resolveApprovalBridge();
-        const commandContext: SafeClawApprovalCommandContext = {
+        const commandContext: SecurityClawApprovalCommandContext = {
           channel: ctx.channel,
           ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
           ...(ctx.from !== undefined ? { from: ctx.from } : {}),
@@ -2187,13 +2187,13 @@ const plugin = {
           isAuthorizedSender: ctx.isAuthorizedSender,
         };
         if (!approvalBridge.enabled) {
-          return { text: text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
+          return { text: text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
           return {
             text: text(
-              "你无权查看 SafeClaw 待审批请求。",
-              "You are not allowed to view pending SafeClaw approvals.",
+              "你无权查看 SecurityClaw 待审批请求。",
+              "You are not allowed to view pending SecurityClaw approvals.",
             ),
           };
         }
@@ -2204,12 +2204,12 @@ const plugin = {
     api.on(
       "before_prompt_build",
       async (_event, ctx) => {
-        const hookContext = ctx as SafeClawHookContext;
+        const hookContext = ctx as SecurityClawHookContext;
         const current = getRuntime();
         const traceId = hookContext.runId ?? hookContext.sessionId ?? hookContext.sessionKey ?? `trace-${Date.now()}`;
         const scope = resolveScope({ workspaceDir: hookContext.workspaceDir, channelId: hookContext.channelId });
         const prependSystemContext = [
-          "[SafeClaw Security Context]",
+          "[SecurityClaw Security Context]",
           `trace_id=${traceId}`,
           `agent_id=${hookContext.agentId ?? "unknown-agent"}`,
           `scope=${scope}`,
@@ -2237,7 +2237,7 @@ const plugin = {
     api.on(
       "before_tool_call",
       async (event, ctx) => {
-        const hookContext = ctx as SafeClawHookContext;
+        const hookContext = ctx as SecurityClawHookContext;
         const current = getRuntime();
         const approvalBridge = resolveApprovalBridge(current);
         const normalizedToolName = normalizeToolName(event.toolName);
@@ -2353,7 +2353,7 @@ const plugin = {
         }
 
 	        const decisionLog = [
-	          "safeclaw: before_tool_call",
+	          "securityclaw: before_tool_call",
 	          `trace_id=${traceId}`,
 	          `actor=${approvalSubject}`,
 	          `scope=${decisionContext.scope}`,
@@ -2452,7 +2452,7 @@ const plugin = {
         findings.length === 0 ? "allow" : current.config.dlp.on_dlp_hit === "block" ? "block" : "warn";
       if (findings.length > 0) {
         api.logger.warn?.(
-          `safeclaw: after_tool_call findings tool=${event.toolName} findings=${findingsToText(findings)}`,
+          `securityclaw: after_tool_call findings tool=${event.toolName} findings=${findingsToText(findings)}`,
         );
       }
       emitEvent(
@@ -2538,7 +2538,7 @@ const plugin = {
           });
         }
         api.logger.warn?.(
-          `safeclaw: tool_result_persist trace_id=${traceId} tool=${event.toolName} decision=${current.config.defaults.persist_mode === "strict" ? "block" : "warn"} findings=${findingsToText(sanitized.findings)}`,
+          `securityclaw: tool_result_persist trace_id=${traceId} tool=${event.toolName} decision=${current.config.defaults.persist_mode === "strict" ? "block" : "warn"} findings=${findingsToText(sanitized.findings)}`,
         );
         return { message: sanitized.value };
       },
@@ -2564,7 +2564,7 @@ const plugin = {
           reasons: ["PERSIST_BLOCKED_DLP"]
         });
         api.logger.warn?.(
-          `safeclaw: before_message_write blocked findings=${findingsToText(findings)}`,
+          `securityclaw: before_message_write blocked findings=${findingsToText(findings)}`,
         );
         return { block: true };
       },
@@ -2606,7 +2606,7 @@ const plugin = {
           reasons: ["MESSAGE_SANITIZED"]
         });
         api.logger.warn?.(
-          `safeclaw: message_sending trace_id=${traceId} decision=${decision} findings=${findingsToText(sanitized.findings)}`,
+          `securityclaw: message_sending trace_id=${traceId} decision=${decision} findings=${findingsToText(sanitized.findings)}`,
         );
         if (current.config.dlp.on_dlp_hit === "block") {
           return { cancel: true };
@@ -2626,7 +2626,7 @@ const plugin = {
       { priority: 100 },
     );
 
-    api.logger.info?.(`safeclaw: loaded policy_version=${runtime.config.policy_version}`);
+    api.logger.info?.(`securityclaw: loaded policy_version=${runtime.config.policy_version}`);
   }
 };
 

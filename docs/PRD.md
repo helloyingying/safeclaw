@@ -1,7 +1,7 @@
-# SafeClaw Security Plugin PRD v1.1（Plugin 开发者视角）
+# SecurityClaw Security Plugin PRD v1.1（Plugin 开发者视角）
 
 ## 1. 我们的真实目标
-我们不是 OpenClaw 平台研发方；我们要交付的是 **可安装的 SafeClaw Security Plugin**，在不改 OpenClaw 核心代码前提下，给使用方提供：
+我们不是 OpenClaw 平台研发方；我们要交付的是 **可安装的 SecurityClaw Security Plugin**，在不改 OpenClaw 核心代码前提下，给使用方提供：
 1. 运行时规则拦截（主路径）
 2. 输出脱敏与落盘前净化
 3. 审计事件与看板数据
@@ -103,7 +103,7 @@
 3. 语义检测过重会影响延迟，需要分级触发。
 
 ## 9. 交付物
-- `safeclaw` 可安装包
-- `safeclaw-admission-cli`（可选）
+- `securityclaw` 可安装包
+- `securityclaw-admission-cli`（可选）
 - 配置模板、策略模板、事件 schema 文档
 - 最小接入指南与运维 runbook

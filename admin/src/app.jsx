@@ -19,13 +19,13 @@ import {
   readAdminDashboardUrlState
 } from "../../src/admin/dashboard_url_state.ts";
 import { canonicalizeAccountPolicies } from "../../src/domain/services/account_policy_engine.ts";
-import { resolveSafeClawLocale } from "../../src/i18n/locale.ts";
+import { resolveSecurityClawLocale } from "../../src/i18n/locale.ts";
 
 const REFRESH_INTERVAL_MS = 15000;
 const DECISIONS_PER_PAGE = 12;
-const ADMIN_LOCALE_STORAGE_KEY = "safeclaw.admin.locale";
-const ADMIN_THEME_STORAGE_KEY = "safeclaw.admin.theme";
-const ADMIN_DEFAULT_LOCALE = resolveSafeClawLocale(
+const ADMIN_LOCALE_STORAGE_KEY = "securityclaw.admin.locale";
+const ADMIN_THEME_STORAGE_KEY = "securityclaw.admin.theme";
+const ADMIN_DEFAULT_LOCALE = resolveSecurityClawLocale(
   typeof navigator !== "undefined" ? navigator.language : undefined,
   "en"
 );
@@ -669,7 +669,7 @@ async function getJson(url) {
   const response = await fetch(url, {
     headers: {
       accept: "application/json",
-      "x-safeclaw-locale": activeLocale
+      "x-securityclaw-locale": activeLocale
     }
   });
   const payload = await response.json();
@@ -1053,7 +1053,7 @@ function buildRuleConversation(policy, index) {
     },
     {
       role: "system",
-      label: "SafeClaw",
+      label: "SecurityClaw",
       text: guide.example.result
     },
     {
@@ -1388,7 +1388,7 @@ function readInitialAdminLocale() {
   }
   const queryLocale = new URLSearchParams(window.location.search).get("locale");
   const storedLocale = window.localStorage.getItem(ADMIN_LOCALE_STORAGE_KEY) || undefined;
-  return resolveSafeClawLocale(queryLocale || storedLocale || navigator.language, ADMIN_DEFAULT_LOCALE);
+  return resolveSecurityClawLocale(queryLocale || storedLocale || navigator.language, ADMIN_DEFAULT_LOCALE);
 }
 
 function readInitialAdminThemePreference() {
@@ -1999,7 +1999,7 @@ function App() {
         headers: {
           "content-type": "application/json",
           accept: "application/json",
-          "x-safeclaw-locale": activeLocale
+          "x-securityclaw-locale": activeLocale
         },
         body: JSON.stringify({
           policies: normalizedPolicies,
@@ -2039,7 +2039,7 @@ function App() {
         headers: {
           "content-type": "application/json",
           accept: "application/json",
-          "x-safeclaw-locale": activeLocale
+          "x-securityclaw-locale": activeLocale
         },
         body: JSON.stringify({
           account_policies: normalizedAccounts
@@ -2075,7 +2075,7 @@ function App() {
         headers: {
           "content-type": "application/json",
           accept: "application/json",
-          "x-safeclaw-locale": activeLocale
+          "x-securityclaw-locale": activeLocale
         },
         body: JSON.stringify(skillPolicy)
       });
@@ -2110,7 +2110,7 @@ function App() {
         headers: {
           "content-type": "application/json",
           accept: "application/json",
-          "x-safeclaw-locale": activeLocale
+          "x-securityclaw-locale": activeLocale
         },
         body: JSON.stringify(body)
       });
@@ -2575,7 +2575,7 @@ function App() {
           <div className="workspace-title">
             <div className="workspace-kicker">
               <img src="/favicon.svg" alt="" className="workspace-favicon" aria-hidden="true" />
-              SafeClaw Admin
+              SecurityClaw Admin
             </div>
             <h1>{ui("管理后台", "Admin Dashboard")}</h1>
             <div className="tablist" role="tablist" aria-label={ui("后台模块页签", "Dashboard tabs")}>
@@ -2621,7 +2621,7 @@ function App() {
                   aria-label={item.label}
                   aria-pressed={locale === item.value}
                   title={item.label}
-                  onClick={() => setLocale(resolveSafeClawLocale(item.value, "en"))}
+                  onClick={() => setLocale(resolveSecurityClawLocale(item.value, "en"))}
                 >
                   {item.icon}
                 </button>

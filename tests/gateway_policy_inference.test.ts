@@ -31,8 +31,8 @@ function createPluginApiHarness(paths: {
 }) {
   const hooks = new Map<string, HookHandler>();
   const api = {
-    id: "safeclaw",
-    name: "SafeClaw Security",
+    id: "securityclaw",
+    name: "SecurityClaw Security",
     source: "test",
     config: {},
     pluginConfig: {
@@ -208,10 +208,10 @@ function createPluginApiHarness(paths: {
 }
 
 async function createBeforeToolCallHook() {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-gateway-inference-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-gateway-inference-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
-  const statusPath = path.join(tempDir, "safeclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
 
   copyFileSync("./config/policy.default.yaml", configPath);
   const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
@@ -490,7 +490,7 @@ test("gateway maps shell file writes to filesystem.write rules", async () => {
       {
         toolName: "exec",
         params: {
-          command: "echo secret > ~/Downloads/safeclaw-demo.txt",
+          command: "echo secret > ~/Downloads/securityclaw-demo.txt",
         },
       },
       DEFAULT_GATEWAY_CTX,
@@ -561,7 +561,7 @@ test("gateway admin account no longer bypasses rules", async () => {
       {
         toolName: "exec",
         params: {
-          command: "echo secret > ~/Downloads/safeclaw-demo.txt",
+          command: "echo secret > ~/Downloads/securityclaw-demo.txt",
         },
       },
       DEFAULT_GATEWAY_CTX,

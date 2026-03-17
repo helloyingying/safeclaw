@@ -41,8 +41,8 @@ function createPluginApiHarness(paths: {
   };
 
   const api = {
-    id: "safeclaw",
-    name: "SafeClaw Security",
+    id: "securityclaw",
+    name: "SecurityClaw Security",
     source: "test",
     config: {},
     pluginConfig,
@@ -242,10 +242,10 @@ function seedAdminAccountPolicy(dbPath: string, subject = "telegram:secops-admin
 }
 
 test("chat approval bridge auto-enables from admin account policies without plugin approval config", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-admin-sync-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-admin-sync-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
-  const statusPath = path.join(tempDir, "safeclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
 
   try {
     copyFileSync("./config/policy.default.yaml", configPath);
@@ -278,19 +278,19 @@ test("chat approval bridge auto-enables from admin account policies without plug
     assert.equal(harness.sentMessages.length, 1);
     assert.equal(harness.sentMessages[0].to, "secops-admin");
 
-    const pendingCommand = harness.commands.get("safeclaw-pending");
+    const pendingCommand = harness.commands.get("securityclaw-pending");
     assert.ok(pendingCommand);
     const pendingReply = await pendingCommand!.handler({
       channel: "telegram",
       senderId: "secops-admin",
       from: "telegram:secops-admin",
       isAuthorizedSender: true,
-      commandBody: "/safeclaw-pending",
+      commandBody: "/securityclaw-pending",
       config: harness.api.config,
     });
     assert.match(String(pendingReply.text), /filesystem\.list/);
 
-    const approveCommand = harness.commands.get("safeclaw-approve");
+    const approveCommand = harness.commands.get("securityclaw-approve");
     assert.ok(approveCommand);
     const approveReply = await approveCommand!.handler({
       channel: "telegram",
@@ -298,7 +298,7 @@ test("chat approval bridge auto-enables from admin account policies without plug
       from: "telegram:secops-admin",
       isAuthorizedSender: true,
       args: approvalId,
-      commandBody: `/safeclaw-approve ${approvalId}`,
+      commandBody: `/securityclaw-approve ${approvalId}`,
       config: harness.api.config,
     });
     assert.match(String(approveReply.text), /(Temporary grant|临时授权)/);
@@ -330,10 +330,10 @@ test("chat approval bridge auto-enables from admin account policies without plug
 });
 
 test("chat approval bridge supports command-only approvals on non-button channels", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-command-only-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-command-only-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
-  const statusPath = path.join(tempDir, "safeclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
 
   try {
     copyFileSync("./config/policy.default.yaml", configPath);
@@ -366,19 +366,19 @@ test("chat approval bridge supports command-only approvals on non-button channel
     const approvalId = extractApprovalId(blocked?.blockReason);
     assert.ok(approvalId);
 
-    const pendingCommand = harness.commands.get("safeclaw-pending");
+    const pendingCommand = harness.commands.get("securityclaw-pending");
     assert.ok(pendingCommand);
     const pendingReply = await pendingCommand!.handler({
       channel: "feishu",
       senderId: "secops-admin",
       from: "feishu:secops-admin",
       isAuthorizedSender: true,
-      commandBody: "/safeclaw-pending",
+      commandBody: "/securityclaw-pending",
       config: harness.api.config,
     });
     assert.match(String(pendingReply.text), /filesystem\.list/);
 
-    const approveCommand = harness.commands.get("safeclaw-approve");
+    const approveCommand = harness.commands.get("securityclaw-approve");
     assert.ok(approveCommand);
     const approveReply = await approveCommand!.handler({
       channel: "feishu",
@@ -386,7 +386,7 @@ test("chat approval bridge supports command-only approvals on non-button channel
       from: "feishu:secops-admin",
       isAuthorizedSender: true,
       args: approvalId,
-      commandBody: `/safeclaw-approve ${approvalId}`,
+      commandBody: `/securityclaw-approve ${approvalId}`,
       config: harness.api.config,
     });
     assert.match(String(approveReply.text), /(Temporary grant|临时授权)/);
@@ -418,10 +418,10 @@ test("chat approval bridge supports command-only approvals on non-button channel
 });
 
 test("chat approval bridge reuses pending authorization and allows the same subject after approval", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-bridge-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-bridge-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
-  const statusPath = path.join(tempDir, "safeclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
 
   try {
     copyFileSync("./config/policy.default.yaml", configPath);
@@ -451,10 +451,10 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     assert.match(String(first?.blockReason), /(Request ID|审批单): [a-f0-9-]+/);
     assert.match(String(first?.blockReason), /(Status|状态): /);
     assert.equal(harness.sentMessages.length, 1);
-    assert.match(harness.sentMessages[0].text, /(SafeClaw Approval|SafeClaw 审批请求)/);
+    assert.match(harness.sentMessages[0].text, /(SecurityClaw Approval|SecurityClaw 审批请求)/);
     assert.match(harness.sentMessages[0].text, /(Request expires|请求截止): .+\(.+\)/);
     assert.match(harness.sentMessages[0].text, /(Actions|操作)/);
-    assert.match(harness.sentMessages[0].text, /\/safeclaw-approve .* long/);
+    assert.match(harness.sentMessages[0].text, /\/securityclaw-approve .* long/);
     const buttons = harness.sentMessages[0].opts?.buttons as Array<Array<{ text: string }>> | undefined;
     assert.match(String(buttons?.[0]?.[0]?.text), /(Approve 10m|批准 10分钟)/);
     assert.match(String(buttons?.[0]?.[1]?.text), /(Approve 30d|批准 30天)/);
@@ -480,20 +480,20 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     const approvalId = extractApprovalId(first?.blockReason);
     assert.ok(approvalId);
 
-    const pendingCommand = harness.commands.get("safeclaw-pending");
+    const pendingCommand = harness.commands.get("securityclaw-pending");
     assert.ok(pendingCommand);
     const pendingReply = await pendingCommand!.handler({
       channel: "telegram",
       senderId: "secops-admin",
       from: "telegram:secops-admin",
       isAuthorizedSender: true,
-      commandBody: "/safeclaw-pending",
+      commandBody: "/securityclaw-pending",
       config: harness.api.config,
     });
     assert.match(String(pendingReply.text), /filesystem\.list/);
     assert.match(String(pendingReply.text), /\(.+\)/);
 
-    const approveCommand = harness.commands.get("safeclaw-approve");
+    const approveCommand = harness.commands.get("securityclaw-approve");
     assert.ok(approveCommand);
     const approveReply = await approveCommand!.handler({
       channel: "telegram",
@@ -501,7 +501,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
       from: "telegram:secops-admin",
       isAuthorizedSender: true,
       args: approvalId,
-      commandBody: `/safeclaw-approve ${approvalId}`,
+      commandBody: `/securityclaw-approve ${approvalId}`,
       config: harness.api.config,
     });
     assert.match(String(approveReply.text), /(Temporary grant|临时授权)/);
@@ -534,10 +534,10 @@ test("chat approval bridge reuses pending authorization and allows the same subj
 });
 
 test("chat approval bridge supports long-lived subject authorization", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-long-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-long-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
-  const statusPath = path.join(tempDir, "safeclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
   const originalNow = Date.now;
   let nowMs = Date.parse("2026-03-15T03:00:00.000Z");
 
@@ -570,7 +570,7 @@ test("chat approval bridge supports long-lived subject authorization", async () 
     const approvalId = extractApprovalId(blocked?.blockReason);
     assert.ok(approvalId);
 
-    const approveCommand = harness.commands.get("safeclaw-approve");
+    const approveCommand = harness.commands.get("securityclaw-approve");
     assert.ok(approveCommand);
     const approveReply = await approveCommand!.handler({
       channel: "telegram",
@@ -578,7 +578,7 @@ test("chat approval bridge supports long-lived subject authorization", async () 
       from: "telegram:secops-admin",
       isAuthorizedSender: true,
       args: `${approvalId} long`,
-      commandBody: `/safeclaw-approve ${approvalId} long`,
+      commandBody: `/securityclaw-approve ${approvalId} long`,
       config: harness.api.config,
     });
     assert.match(String(approveReply.text), /(Long-lived grant|长期授权)/);
@@ -608,10 +608,10 @@ test("chat approval bridge supports long-lived subject authorization", async () 
 });
 
 test("chat approval bridge retries transient telegram send failures", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-retry-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-retry-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
-  const statusPath = path.join(tempDir, "safeclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
 
   try {
     copyFileSync("./config/policy.default.yaml", configPath);
@@ -646,10 +646,10 @@ test("chat approval bridge retries transient telegram send failures", async () =
 });
 
 test("chat approval bridge re-sends stale pending approvals after cooldown", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-chat-approval-resend-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-resend-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
-  const dbPath = path.join(tempDir, "safeclaw.db");
-  const statusPath = path.join(tempDir, "safeclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
   const originalNow = Date.now;
   let nowMs = Date.parse("2026-03-15T03:00:00.000Z");
 

@@ -1,6 +1,6 @@
 {
-  "id": "safeclaw",
-  "name": "SafeClaw Security",
+  "id": "securityclaw",
+  "name": "SecurityClaw Security",
   "description": "Runtime policy enforcement, transcript sanitization, and audit events for OpenClaw.",
   "configSchema": {
     "type": "object",
@@ -8,7 +8,7 @@
     "properties": {
       "configPath": {
         "type": "string",
-        "description": "Path to the SafeClaw YAML policy file, relative to the plugin root or absolute."
+        "description": "Path to the SecurityClaw YAML policy file, relative to the plugin root or absolute."
       },
       "overridePath": {
         "type": "string",
@@ -39,21 +39,21 @@
       "decisionLogMaxLength": {
         "type": "number",
         "minimum": 64,
-        "description": "Max serialized argument length included in SafeClaw decision logs."
+        "description": "Max serialized argument length included in SecurityClaw decision logs."
       },
       "statusPath": {
         "type": "string",
-        "description": "Path to runtime status JSON written by SafeClaw for dashboard monitoring."
+        "description": "Path to runtime status JSON written by SecurityClaw for dashboard monitoring."
       },
       "adminAutoStart": {
         "type": "boolean",
-        "description": "Whether to auto-start SafeClaw admin dashboard when plugin is loaded (default true)."
+        "description": "Whether to auto-start SecurityClaw admin dashboard when plugin is loaded (default true)."
       },
       "adminPort": {
         "type": "number",
         "minimum": 1,
         "maximum": 65535,
-        "description": "Optional admin dashboard listen port. Defaults to SAFECLAW_ADMIN_PORT or 4780."
+        "description": "Optional admin dashboard listen port. Defaults to SECURITYCLAW_ADMIN_PORT or 4780."
       }
     }
   }

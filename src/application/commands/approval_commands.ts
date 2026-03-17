@@ -1,6 +1,6 @@
 import type { ApprovalRepository } from "../../domain/ports/approval_repository.ts";
 import type { ApprovalGrantMode, ApprovalService } from "../../domain/services/approval_service.ts";
-import type { SafeClawLocale } from "../../i18n/locale.ts";
+import type { SecurityClawLocale } from "../../i18n/locale.ts";
 import { pickLocalized } from "../../i18n/locale.ts";
 
 export interface ApprovalCommandContext {
@@ -20,11 +20,11 @@ export interface ApprovalCommandConfig {
     from: string;
     accountId?: string;
   }>;
-  locale?: SafeClawLocale;
+  locale?: SecurityClawLocale;
 }
 
 export class ApprovalCommands {
-  private locale: SafeClawLocale;
+  private locale: SecurityClawLocale;
 
   constructor(
     private repository: ApprovalRepository,
@@ -36,14 +36,14 @@ export class ApprovalCommands {
 
   async handleApprove(ctx: ApprovalCommandContext): Promise<{ text: string }> {
     if (!this.config.enabled) {
-      return { text: this.text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
+      return { text: this.text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
     }
     if (!ctx.isAuthorizedSender || !this.matchesApprover(ctx)) {
-      return { text: this.text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
+      return { text: this.text("你无权审批 SecurityClaw 请求。", "You are not allowed to approve SecurityClaw requests.") };
     }
     const approvalId = this.parseApprovalId(ctx.args);
     if (!approvalId) {
-      return { text: this.text("用法: /safeclaw-approve <approval_id> [long]", "Usage: /safeclaw-approve <approval_id> [long]") };
+      return { text: this.text("用法: /securityclaw-approve <approval_id> [long]", "Usage: /securityclaw-approve <approval_id> [long]") };
     }
     const existing = this.repository.getById(approvalId);
     if (!existing) {
@@ -75,14 +75,14 @@ export class ApprovalCommands {
 
   async handleReject(ctx: ApprovalCommandContext): Promise<{ text: string }> {
     if (!this.config.enabled) {
-      return { text: this.text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
+      return { text: this.text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
     }
     if (!ctx.isAuthorizedSender || !this.matchesApprover(ctx)) {
-      return { text: this.text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
+      return { text: this.text("你无权审批 SecurityClaw 请求。", "You are not allowed to approve SecurityClaw requests.") };
     }
     const approvalId = this.parseApprovalId(ctx.args);
     if (!approvalId) {
-      return { text: this.text("用法: /safeclaw-reject <approval_id>", "Usage: /safeclaw-reject <approval_id>") };
+      return { text: this.text("用法: /securityclaw-reject <approval_id>", "Usage: /securityclaw-reject <approval_id>") };
     }
     const existing = this.repository.getById(approvalId);
     if (!existing) {
@@ -111,10 +111,10 @@ export class ApprovalCommands {
 
   async handlePending(ctx: ApprovalCommandContext): Promise<{ text: string }> {
     if (!this.config.enabled) {
-      return { text: this.text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
+      return { text: this.text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
     }
     if (!ctx.isAuthorizedSender || !this.matchesApprover(ctx)) {
-      return { text: this.text("你无权查看 SafeClaw 待审批请求。", "You are not allowed to view pending SafeClaw approvals.") };
+      return { text: this.text("你无权查看 SecurityClaw 待审批请求。", "You are not allowed to view pending SecurityClaw approvals.") };
     }
     return { text: this.approvalService.formatPendingApprovals(this.repository.listPending(10)) };
   }

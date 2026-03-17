@@ -1,5 +1,5 @@
 import type { ResourceScope } from "../../types.ts";
-import type { SafeClawLocale } from "../../i18n/locale.ts";
+import type { SecurityClawLocale } from "../../i18n/locale.ts";
 import { pickLocalized } from "../../i18n/locale.ts";
 
 export class FormattingService {
@@ -27,15 +27,15 @@ export class FormattingService {
     resourceScope: ResourceScope,
     reasonCodes: string[],
     rules: string,
-    locale: SafeClawLocale = "en",
+    locale: SecurityClawLocale = "en",
   ): string {
     const reasons = reasonCodes.join(", ");
     const resourceLabel = FormattingService.formatResourceScopeLabel(resourceScope, locale);
     const lines = [
       pickLocalized(
         locale,
-        decision === "challenge" ? "SafeClaw 需要审批" : "SafeClaw 已阻止此操作",
-        decision === "challenge" ? "SafeClaw Approval Required" : "SafeClaw Blocked",
+        decision === "challenge" ? "SecurityClaw 需要审批" : "SecurityClaw 已阻止此操作",
+        decision === "challenge" ? "SecurityClaw Approval Required" : "SecurityClaw Blocked",
       ),
       `${pickLocalized(locale, "工具", "Tool")}: ${toolName}`,
       `${pickLocalized(locale, "范围", "Scope")}: ${scope}`,
@@ -57,7 +57,7 @@ export class FormattingService {
     return lines.join("\n");
   }
 
-  private static formatResourceScopeLabel(scope: ResourceScope, locale: SafeClawLocale): string {
+  private static formatResourceScopeLabel(scope: ResourceScope, locale: SecurityClawLocale): string {
     if (scope === "workspace_inside") {
       return pickLocalized(locale, "工作区内", "Inside workspace");
     }

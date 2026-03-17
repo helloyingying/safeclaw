@@ -1,21 +1,52 @@
 {
-  "name": "safeclaw",
+  "name": "securityclaw",
   "version": "0.1.0",
-  "description": "SafeClaw security plugin for OpenClaw-compatible hooks.",
+  "description": "SecurityClaw security plugin for OpenClaw-compatible hooks.",
   "type": "module",
-  "private": true,
+  "bin": {
+    "securityclaw": "bin/securityclaw.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/znary/securityclaw.git"
+  },
+  "homepage": "https://github.com/znary/securityclaw#readme",
+  "bugs": {
+    "url": "https://github.com/znary/securityclaw/issues"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
     ]
   },
+  "files": [
+    "CHANGELOG.md",
+    "README.md",
+    "README.zh-CN.md",
+    "admin/public",
+    "admin/server.ts",
+    "bin",
+    "config/policy.default.yaml",
+    "index.ts",
+    "install.sh",
+    "openclaw.plugin.json",
+    "src"
+  ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:unit": "node --test --experimental-strip-types",
     "test": "npm run typecheck && npm run test:unit",
     "check": "npm test",
     "admin": "node --experimental-strip-types ./admin/server.ts",
-    "admin:build": "node ./scripts/build-admin.mjs"
+    "admin:build": "node ./scripts/build-admin.mjs",
+    "prepack": "npm test && npm run admin:build",
+    "pack:plugin": "node ./scripts/pack-plugin.mjs",
+    "openclaw:install": "node ./scripts/install-openclaw-plugin.mjs",
+    "release:check": "node ./scripts/release-preflight.mjs",
+    "release:dry-run": "npm run release:check && npm publish --dry-run --access public"
   },
   "dependencies": {
     "esbuild": "^0.27.4",

@@ -6,7 +6,7 @@ import type {
   HookName,
   PolicyMatch,
   PolicyRule,
-  SafeClawConfig,
+  SecurityClawConfig,
   Severity,
 } from "../types.ts";
 import { normalizeFileRules } from "../domain/services/file_rule_registry.ts";
@@ -163,12 +163,12 @@ function sanitizePolicyRule(rule: PolicyRule): PolicyRule {
   };
 }
 
-export function validateConfig(raw: Record<string, unknown>): SafeClawConfig {
+export function validateConfig(raw: Record<string, unknown>): SecurityClawConfig {
   if (!raw || typeof raw !== "object") {
     throw new Error("Config must be an object.");
   }
 
-  const config = raw as Partial<SafeClawConfig>;
+  const config = raw as Partial<SecurityClawConfig>;
   if (!config.version || !config.policy_version || !config.environment) {
     throw new Error("Config must define version, policy_version, and environment.");
   }

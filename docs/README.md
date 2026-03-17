@@ -1,4 +1,4 @@
-# SafeClaw Documentation
+# SecurityClaw Documentation
 
 [中文索引](./README.zh-CN.md)
 
@@ -12,6 +12,7 @@
 ## Setup and Operations
 
 - [OpenClaw Install](./OPENCLAW_INSTALL.md)
+- [Publish Guide](./PUBLISH.md)
 - [Admin Dashboard](./ADMIN_DASHBOARD.md)
 - [Runbook](./RUNBOOK.md)
 - [Integration Guide](./INTEGRATION_GUIDE.md)

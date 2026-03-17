@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 
-import type { SafeClawConfig } from "../types.ts";
+import type { SecurityClawConfig } from "../types.ts";
 import { ConfigManager } from "./loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "./runtime_override.ts";
 import { StrategyStore } from "./strategy_store.ts";
@@ -15,12 +15,12 @@ type LiveConfigOptions = {
   dbPath: string;
   legacyOverridePath?: string;
   logger?: LiveConfigLogger;
-  transform?: (config: SafeClawConfig) => SafeClawConfig;
+  transform?: (config: SecurityClawConfig) => SecurityClawConfig;
   onReload?: (snapshot: LiveConfigSnapshot) => void;
 };
 
 export type LiveConfigSnapshot = {
-  config: SafeClawConfig;
+  config: SecurityClawConfig;
   override?: RuntimeOverride;
   overrideLoaded: boolean;
 };
@@ -45,7 +45,7 @@ export class LiveConfigResolver {
   #configManager: ConfigManager;
   #strategyStore: StrategyStore;
   #logger: LiveConfigLogger | undefined;
-  #transform: ((config: SafeClawConfig) => SafeClawConfig) | undefined;
+  #transform: ((config: SecurityClawConfig) => SecurityClawConfig) | undefined;
   #onReload: ((snapshot: LiveConfigSnapshot) => void) | undefined;
   #configMtimeMs: number | undefined;
   #overrideSig = "uninitialized";
@@ -82,7 +82,7 @@ export class LiveConfigResolver {
     try {
       override = this.#strategyStore.readOverride();
     } catch (error) {
-      this.#logger?.warn?.(`safeclaw: failed to read runtime strategy override (${String(error)})`);
+      this.#logger?.warn?.(`securityclaw: failed to read runtime strategy override (${String(error)})`);
       return this.#snapshot;
     }
 
@@ -110,7 +110,7 @@ export class LiveConfigResolver {
       try {
         effectiveOverride = this.#strategyStore.readOverride();
       } catch (error) {
-        this.#logger?.warn?.(`safeclaw: failed to read runtime strategy override (${String(error)})`);
+        this.#logger?.warn?.(`securityclaw: failed to read runtime strategy override (${String(error)})`);
         return this.#snapshot;
       }
     }
@@ -130,14 +130,14 @@ export class LiveConfigResolver {
       this.#snapshot = snapshot;
       const action = isInitialLoad ? "loaded" : "reloaded";
       this.#logger?.info?.(
-        `safeclaw: ${action} policy_version=${config.policy_version} rules=${config.policies.length} strategy_loaded=${Boolean(effectiveOverride)}`,
+        `securityclaw: ${action} policy_version=${config.policy_version} rules=${config.policies.length} strategy_loaded=${Boolean(effectiveOverride)}`,
       );
       if (!isInitialLoad) {
         this.#onReload?.(this.#snapshot);
       }
       return this.#snapshot;
     } catch (error) {
-      this.#logger?.warn?.(`safeclaw: failed to apply runtime strategy (${String(error)})`);
+      this.#logger?.warn?.(`securityclaw: failed to apply runtime strategy (${String(error)})`);
       return this.#snapshot;
     }
   }

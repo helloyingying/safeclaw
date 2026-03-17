@@ -33,7 +33,7 @@ function hasSupervisorHints(env: NodeJS.ProcessEnv): boolean {
 }
 
 export function shouldAutoStartAdminServer(env: NodeJS.ProcessEnv = process.env): AutoStartDecision {
-  if (isTruthy(env.SAFECLAW_ADMIN_AUTOSTART_FORCE)) {
+  if (isTruthy(env.SECURITYCLAW_ADMIN_AUTOSTART_FORCE)) {
     return { enabled: true, reason: "forced" };
   }
 

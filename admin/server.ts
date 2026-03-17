@@ -22,17 +22,17 @@ import {
   listRemovedBuiltinSensitivePathRules,
   normalizeSensitivePathStrategyOverride,
 } from "../src/domain/services/sensitive_path_registry.ts";
-import type { SafeClawLocale } from "../src/i18n/locale.ts";
-import { pickLocalized, resolveSafeClawLocale } from "../src/i18n/locale.ts";
+import type { SecurityClawLocale } from "../src/i18n/locale.ts";
+import { pickLocalized, resolveSecurityClawLocale } from "../src/i18n/locale.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.resolve(ROOT, "admin/public");
-const DEFAULT_PORT = Number(process.env.SAFECLAW_ADMIN_PORT ?? 4780);
-const DEFAULT_CONFIG_PATH = process.env.SAFECLAW_CONFIG_PATH ?? path.resolve(ROOT, "config/policy.default.yaml");
-const DEFAULT_STATUS_PATH = process.env.SAFECLAW_STATUS_PATH ?? path.resolve(ROOT, "runtime/safeclaw-status.json");
-const DEFAULT_DB_PATH = process.env.SAFECLAW_DB_PATH ?? path.resolve(ROOT, "runtime/safeclaw.db");
+const DEFAULT_PORT = Number(process.env.SECURITYCLAW_ADMIN_PORT ?? 4780);
+const DEFAULT_CONFIG_PATH = process.env.SECURITYCLAW_CONFIG_PATH ?? path.resolve(ROOT, "config/policy.default.yaml");
+const DEFAULT_STATUS_PATH = process.env.SECURITYCLAW_STATUS_PATH ?? path.resolve(ROOT, "runtime/securityclaw-status.json");
+const DEFAULT_DB_PATH = process.env.SECURITYCLAW_DB_PATH ?? path.resolve(ROOT, "runtime/securityclaw.db");
 const DEFAULT_LEGACY_OVERRIDE_PATH =
-  process.env.SAFECLAW_LEGACY_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
+  process.env.SECURITYCLAW_LEGACY_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
 const DEFAULT_OPENCLAW_HOME = process.env.OPENCLAW_HOME ?? path.join(os.homedir(), ".openclaw");
 
 type AdminLogger = {
@@ -67,8 +67,8 @@ type AdminServerStartResult = {
   runtime: AdminRuntime;
 };
 
-type GlobalWithSafeClawAdmin = typeof globalThis & {
-  __safeclawAdminStartPromise?: Promise<AdminServerStartResult>;
+type GlobalWithSecurityClawAdmin = typeof globalThis & {
+  __securityclawAdminStartPromise?: Promise<AdminServerStartResult>;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -128,7 +128,7 @@ const EMPTY_DECISION_COUNTS: DecisionHistoryCounts = {
   block: 0,
 };
 
-const ADMIN_DEFAULT_LOCALE = resolveSafeClawLocale(process.env.SAFECLAW_LOCALE, "en");
+const ADMIN_DEFAULT_LOCALE = resolveSecurityClawLocale(process.env.SECURITYCLAW_LOCALE, "en");
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -140,7 +140,7 @@ function sendText(res: http.ServerResponse, status: number, body: string, conten
   res.end(body);
 }
 
-function localize(locale: SafeClawLocale, zhText: string, enText: string): string {
+function localize(locale: SecurityClawLocale, zhText: string, enText: string): string {
   return pickLocalized(locale, zhText, enText);
 }
 
@@ -151,10 +151,10 @@ function readHeaderLocale(value: string | string[] | undefined): string | undefi
   return value;
 }
 
-function resolveRequestLocale(req: http.IncomingMessage, url: URL): SafeClawLocale {
-  const headerLocale = readHeaderLocale(req.headers["x-safeclaw-locale"]);
+function resolveRequestLocale(req: http.IncomingMessage, url: URL): SecurityClawLocale {
+  const headerLocale = readHeaderLocale(req.headers["x-securityclaw-locale"]);
   const queryLocale = url.searchParams.get("locale") ?? url.searchParams.get("lang") ?? undefined;
-  return resolveSafeClawLocale(headerLocale ?? queryLocale, ADMIN_DEFAULT_LOCALE);
+  return resolveSecurityClawLocale(headerLocale ?? queryLocale, ADMIN_DEFAULT_LOCALE);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<JsonRecord> {
@@ -891,7 +891,7 @@ function readProcessCommand(pid: number): string {
 }
 
 function looksLikeOpenClawProcess(command: string): boolean {
-  return /(openclaw|safeclaw|admin\/server|gateway)/i.test(command);
+  return /(openclaw|securityclaw|admin\/server|gateway)/i.test(command);
 }
 
 function reclaimAdminPort(port: number, logger: AdminLogger): void {
@@ -904,24 +904,24 @@ function reclaimAdminPort(port: number, logger: AdminLogger): void {
     const command = readProcessCommand(pid);
     if (!looksLikeOpenClawProcess(command)) {
       logger.warn?.(
-        `SafeClaw admin: port ${port} is in use by pid=${pid}, but command is not OpenClaw/SafeClaw; skip terminate.`,
+        `SecurityClaw admin: port ${port} is in use by pid=${pid}, but command is not OpenClaw/SecurityClaw; skip terminate.`,
       );
       continue;
     }
 
     try {
       process.kill(pid, "SIGKILL");
-      logger.warn?.(`SafeClaw admin: killed stale admin process pid=${pid} on port ${port}.`);
+      logger.warn?.(`SecurityClaw admin: killed stale admin process pid=${pid} on port ${port}.`);
     } catch (error) {
-      logger.warn?.(`SafeClaw admin: failed to kill pid=${pid} on port ${port} (${String(error)}).`);
+      logger.warn?.(`SecurityClaw admin: failed to kill pid=${pid} on port ${port} (${String(error)}).`);
     }
   }
 }
 
 export function startAdminServer(options: AdminServerOptions = {}): Promise<AdminServerStartResult> {
-  const state = globalThis as GlobalWithSafeClawAdmin;
-  if (state.__safeclawAdminStartPromise) {
-    return state.__safeclawAdminStartPromise;
+  const state = globalThis as GlobalWithSecurityClawAdmin;
+  if (state.__securityclawAdminStartPromise) {
+    return state.__securityclawAdminStartPromise;
   }
 
   const runtime = resolveRuntime(options);
@@ -933,7 +933,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
   const strategyStore = new StrategyStore(runtime.dbPath, {
     legacyOverridePath: runtime.legacyOverridePath,
     logger: {
-      warn: (message: string) => logger.warn?.(`SafeClaw strategy store: ${message}`)
+      warn: (message: string) => logger.warn?.(`SecurityClaw strategy store: ${message}`)
     }
   });
   const skillStore = new SkillInterceptionStore(runtime.dbPath, {
@@ -987,14 +987,14 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
         closeStrategyStore();
         closeSkillStore();
         logger.warn?.(
-          `SafeClaw admin already running on http://127.0.0.1:${runtime.port} (port in use); reusing existing server.`,
+          `SecurityClaw admin already running on http://127.0.0.1:${runtime.port} (port in use); reusing existing server.`,
         );
         resolve({ state: "already-running", runtime });
         return;
       }
       closeStrategyStore();
       closeSkillStore();
-      logger.error?.(`SafeClaw admin failed to start: ${String(error)}`);
+      logger.error?.(`SecurityClaw admin failed to start: ${String(error)}`);
       reject(error);
     });
 
@@ -1003,7 +1003,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
       if (unrefOnStart) {
         server.unref();
       }
-      logger.info?.(`SafeClaw admin listening on http://127.0.0.1:${runtime.port}`);
+      logger.info?.(`SecurityClaw admin listening on http://127.0.0.1:${runtime.port}`);
       logger.info?.(`Using config: ${runtime.configPath}`);
       logger.info?.(`Using strategy db: ${runtime.dbPath}`);
       logger.info?.(`Using legacy override import path: ${runtime.legacyOverridePath}`);
@@ -1012,27 +1012,27 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     });
 
     server.on("close", () => {
-      const current = globalThis as GlobalWithSafeClawAdmin;
-      if (current.__safeclawAdminStartPromise && resolved) {
-        delete current.__safeclawAdminStartPromise;
+      const current = globalThis as GlobalWithSecurityClawAdmin;
+      if (current.__securityclawAdminStartPromise && resolved) {
+        delete current.__securityclawAdminStartPromise;
       }
       closeStrategyStore();
       closeSkillStore();
     });
   });
 
-  state.__safeclawAdminStartPromise = startPromise.catch((error) => {
-    delete state.__safeclawAdminStartPromise;
+  state.__securityclawAdminStartPromise = startPromise.catch((error) => {
+    delete state.__securityclawAdminStartPromise;
     throw error;
   });
-  return state.__safeclawAdminStartPromise;
+  return state.__securityclawAdminStartPromise;
 }
 
 const thisFile = fileURLToPath(import.meta.url);
 const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : undefined;
 if (entryFile && entryFile === thisFile) {
   void startAdminServer().catch((error) => {
-    console.error(`SafeClaw admin startup failed: ${String(error)}`);
+    console.error(`SecurityClaw admin startup failed: ${String(error)}`);
     process.exitCode = 1;
   });
 }

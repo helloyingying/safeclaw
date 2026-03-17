@@ -1,18 +1,18 @@
-# SafeClaw Admin Dashboard
+# SecurityClaw Admin Dashboard
 
 ## Start
-- Default behavior: when `safeclaw` is loaded inside a persistent OpenClaw gateway service/runtime, dashboard auto-starts at `http://127.0.0.1:4780`.
+- Default behavior: when `securityclaw` is loaded inside a persistent OpenClaw gateway service/runtime, dashboard auto-starts at `http://127.0.0.1:4780`.
 - Plugin load now automatically checks admin frontend assets and rebuilds `admin/public/app.js` when `admin/src` is newer or bundle is missing.
 - Optional manual mode: run `npm run admin` when you want standalone startup or local debugging.
 - Short-lived CLI commands such as `openclaw gateway restart` do not keep the dashboard process alive.
-- You can set `plugins.entries.safeclaw.config.adminAutoStart=false` to disable auto-start.
+- You can set `plugins.entries.securityclaw.config.adminAutoStart=false` to disable auto-start.
 
 ## Current UI Behavior
 - Locale switch:
   - default language follows the host system locale.
   - supports `EN` and `中文` in the dashboard header.
   - preference is persisted in browser local storage.
-  - API save calls include `x-safeclaw-locale` so backend status messages follow UI language.
+  - API save calls include `x-securityclaw-locale` so backend status messages follow UI language.
 - Theme switch:
   - supports `system`, `light`, and `dark` in the dashboard header.
   - preference is persisted in browser local storage.
@@ -38,7 +38,7 @@
   - dashboard no longer exposes per-rule enable switches; rule editing is action-first.
 - Unsaved-change protection: auto-refresh will not overwrite local edits.
 - Accounts panel admin mapping:
-  - setting an account policy with `is_admin=true` automatically enrolls that account as SafeClaw approval notify target + command approver at runtime.
+  - setting an account policy with `is_admin=true` automatically enrolls that account as SecurityClaw approval notify target + command approver at runtime.
   - admin account selection is single-choice; at most one account can be admin at the same time.
   - this mapping does not write back to `~/.openclaw/openclaw.json`.
   - all channels can use command approvals; Telegram also shows quick action buttons in approval notifications.
@@ -50,7 +50,7 @@
   - policy section edits score thresholds, risk-by-severity matrix, and default handling for unscanned or changed-without-version-update skills.
 
 ## Strategy Configuration
-- The panel writes overrides to SQLite (`runtime/safeclaw.db`) via `PUT /api/strategy`.
+- The panel writes overrides to SQLite (`runtime/securityclaw.db`) via `PUT /api/strategy`.
 - Editable fields from UI:
   - full `policies` array, mainly `decision` per rule.
   - `sensitivity.custom_path_rules`
@@ -76,17 +76,17 @@
   - disabling a built-in mapping removes that path-to-label inference without rewriting policy definitions.
 
 ## Runtime Status
-- Data source: `runtime/safeclaw-status.json` via `GET /api/status`.
+- Data source: `runtime/securityclaw-status.json` via `GET /api/status`.
 - Shows totals and recent decisions with simplified labels.
 - Skill interception status uses SQLite-backed APIs (`/api/skills/status`, `/api/skills`, `/api/skills/:skillId`, `/api/skills/policy`).
 
 ## Notes
-- Override updates are validated against SafeClaw config schema before saving.
+- Override updates are validated against SecurityClaw config schema before saving.
 - If your OpenClaw runtime does not hot-reload plugin config files, restart `openclaw-gateway` after saving strategy updates.
 
 ## Environment Variables
-- `SAFECLAW_ADMIN_PORT` (default `4780`)
-- `SAFECLAW_CONFIG_PATH` (default `config/policy.default.yaml`)
-- `SAFECLAW_DB_PATH` (default `runtime/safeclaw.db`)
-- `SAFECLAW_LEGACY_OVERRIDE_PATH` (default `config/policy.overrides.json`, read-once migration input)
-- `SAFECLAW_STATUS_PATH` (default `runtime/safeclaw-status.json`)
+- `SECURITYCLAW_ADMIN_PORT` (default `4780`)
+- `SECURITYCLAW_CONFIG_PATH` (default `config/policy.default.yaml`)
+- `SECURITYCLAW_DB_PATH` (default `runtime/securityclaw.db`)
+- `SECURITYCLAW_LEGACY_OVERRIDE_PATH` (default `config/policy.overrides.json`, read-once migration input)
+- `SECURITYCLAW_STATUS_PATH` (default `runtime/securityclaw-status.json`)

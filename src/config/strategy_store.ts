@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import type { SafeClawConfig } from "../types.ts";
+import type { SecurityClawConfig } from "../types.ts";
 import { applyRuntimeOverride, readRuntimeOverride, type RuntimeOverride } from "./runtime_override.ts";
 
 type StrategyStoreOptions = {
@@ -83,8 +83,8 @@ export class StrategyStore {
       .run(JSON.stringify(payload), payload.updated_at ?? now);
   }
 
-  readEffective(base: SafeClawConfig): {
-    effective: SafeClawConfig;
+  readEffective(base: SecurityClawConfig): {
+    effective: SecurityClawConfig;
     override?: RuntimeOverride;
   } {
     const override = this.readOverride();

@@ -1,15 +1,15 @@
-# SafeClaw Integration Guide
+# SecurityClaw Integration Guide
 
 ## Install Shape
 - Provide the plugin package to an OpenClaw-compatible host.
-- Load a local YAML file such as [config/policy.default.yaml](/Users/liuzhuangm4/develop/safeclaw/config/policy.default.yaml).
+- Load a local YAML file such as `config/policy.default.yaml`.
 - Wire the returned `hooks` object into the host's five public hook points.
 
 ## Minimal Usage
 ```ts
-import { createSafeClawPlugin } from "../src/index.ts";
+import { createSecurityClawPlugin } from "../src/index.ts";
 
-const plugin = createSafeClawPlugin({
+const plugin = createSecurityClawPlugin({
   config_path: "./config/policy.default.yaml"
 });
 

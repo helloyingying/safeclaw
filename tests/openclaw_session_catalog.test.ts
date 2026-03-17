@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { listOpenClawChatSessions } from "../src/admin/openclaw_session_catalog.ts";
 
 test("session catalog reads openclaw sessions and resolves stable subjects", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-session-catalog-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-session-catalog-"));
   const sessionsDir = path.join(tempDir, "agents", "main", "sessions");
 
   try {

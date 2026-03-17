@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { SafeClawConfig } from "../types.ts";
+import type { SecurityClawConfig } from "../types.ts";
 import { hydrateSensitivePathConfig } from "../domain/services/sensitive_path_registry.ts";
 import { deepClone, deepFreeze, parseScalar, stripInlineComment } from "../utils.ts";
 import { validateConfig } from "./validator.ts";
@@ -119,11 +119,11 @@ function parseYaml(source: string): Record<string, unknown> {
 }
 
 export class ConfigManager {
-  #config: SafeClawConfig;
-  #lastKnownGood: SafeClawConfig;
+  #config: SecurityClawConfig;
+  #lastKnownGood: SecurityClawConfig;
   #path: string | undefined;
 
-  constructor(config: SafeClawConfig, path?: string) {
+  constructor(config: SecurityClawConfig, path?: string) {
     const frozen = deepFreeze(deepClone(config));
     this.#config = frozen;
     this.#lastKnownGood = frozen;
@@ -138,15 +138,15 @@ export class ConfigManager {
     return new ConfigManager(config, resolved);
   }
 
-  getConfig(): SafeClawConfig {
+  getConfig(): SecurityClawConfig {
     return this.#config;
   }
 
-  getLastKnownGood(): SafeClawConfig {
+  getLastKnownGood(): SecurityClawConfig {
     return this.#lastKnownGood;
   }
 
-  reload(nextSource?: string): SafeClawConfig {
+  reload(nextSource?: string): SecurityClawConfig {
     try {
       const raw = nextSource ? parseYaml(nextSource) : parseYaml(readFileSync(this.#path!, "utf8"));
       const validated = deepFreeze(deepClone(hydrateConfig(validateConfig(raw))));
@@ -160,7 +160,7 @@ export class ConfigManager {
   }
 }
 
-function hydrateConfig(config: SafeClawConfig): SafeClawConfig {
+function hydrateConfig(config: SecurityClawConfig): SecurityClawConfig {
   return {
     ...config,
     sensitivity: hydrateSensitivePathConfig(config.sensitivity)

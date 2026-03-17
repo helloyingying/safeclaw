@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { ApprovalRepository, StoredApprovalRecord, StoredApprovalNotification } from "../ports/approval_repository.ts";
 import type { NotificationPort, NotificationTarget } from "../ports/notification_port.ts";
 import type { OpenClawLogger } from "../ports/openclaw_adapter.ts";
-import type { SafeClawLocale } from "../../i18n/locale.ts";
+import type { SecurityClawLocale } from "../../i18n/locale.ts";
 import { localeForIntl, pickLocalized } from "../../i18n/locale.ts";
 
 const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
@@ -25,7 +25,7 @@ export class ApprovalService {
     private repository: ApprovalRepository,
     private notificationAdapters: Map<string, NotificationPort>,
     private logger: OpenClawLogger,
-    private locale: SafeClawLocale = "en",
+    private locale: SecurityClawLocale = "en",
   ) {}
 
   async sendNotifications(
@@ -43,7 +43,7 @@ export class ApprovalService {
     for (const target of targets) {
       const adapter = this.notificationAdapters.get(target.channel);
       if (!adapter) {
-        this.logger.warn?.(`safeclaw: no adapter for channel ${target.channel}`);
+        this.logger.warn?.(`securityclaw: no adapter for channel ${target.channel}`);
         continue;
       }
 
@@ -57,19 +57,19 @@ export class ApprovalService {
               [
                 {
                   text: this.formatApprovalButtonLabel(record, "temporary"),
-                  callback_data: `/safeclaw-approve ${record.approval_id}`,
+                  callback_data: `/securityclaw-approve ${record.approval_id}`,
                   style: "success",
                 },
                 {
                   text: this.formatApprovalButtonLabel(record, "longterm"),
-                  callback_data: `/safeclaw-approve ${record.approval_id} long`,
+                  callback_data: `/securityclaw-approve ${record.approval_id} long`,
                   style: "primary",
                 },
               ],
               [
                 {
                   text: this.text("拒绝", "Reject"),
-                  callback_data: `/safeclaw-reject ${record.approval_id}`,
+                  callback_data: `/securityclaw-reject ${record.approval_id}`,
                   style: "danger",
                 },
               ],
@@ -82,14 +82,14 @@ export class ApprovalService {
           delivered = true;
 
           this.logger.info?.(
-            `safeclaw: sent approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.messageId ? ` message_id=${notification.messageId}` : ""}`,
+            `securityclaw: sent approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.messageId ? ` message_id=${notification.messageId}` : ""}`,
           );
           break;
         } catch (error) {
           lastError = error;
           if (attempt < APPROVAL_NOTIFICATION_MAX_ATTEMPTS) {
             this.logger.warn?.(
-              `safeclaw: retrying approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt} (${String(error)})`,
+              `securityclaw: retrying approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt} (${String(error)})`,
             );
             await sleep(APPROVAL_NOTIFICATION_RETRY_DELAYS_MS[attempt - 1] ?? APPROVAL_NOTIFICATION_RETRY_DELAYS_MS.at(-1) ?? 250);
           }
@@ -98,7 +98,7 @@ export class ApprovalService {
 
       if (!delivered) {
         this.logger.warn?.(
-          `safeclaw: failed to send approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} (${String(lastError)})`,
+          `securityclaw: failed to send approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} (${String(lastError)})`,
         );
       }
     }
@@ -166,7 +166,7 @@ export class ApprovalService {
         "Admin notification failed. Share the request ID with an approver.",
       );
     const lines = [
-      this.text("SafeClaw 需要审批", "SafeClaw Approval Required"),
+      this.text("SecurityClaw 需要审批", "SecurityClaw Approval Required"),
       `${this.text("工具", "Tool")}: ${params.toolName}`,
       `${this.text("范围", "Scope")}: ${params.scope}`,
       `${this.text("资源", "Resource")}: ${this.formatResourceScopeDetail(params.resourceScope)}`,
@@ -202,7 +202,7 @@ export class ApprovalService {
     const summary = record.args_summary ? this.trimText(record.args_summary, 180) : undefined;
 
     return [
-      this.text("SafeClaw 审批请求", "SafeClaw Approval"),
+      this.text("SecurityClaw 审批请求", "SecurityClaw Approval"),
       `${this.text("对象", "Subject")}: ${record.actor_id}`,
       `${this.text("工具", "Tool")}: ${record.tool_name}`,
       `${this.text("范围", "Scope")}: ${record.scope}`,
@@ -215,9 +215,9 @@ export class ApprovalService {
       ...(rules ? [`${this.text("规则", "Policy")}: ${rules}`] : []),
       "",
       this.text("操作", "Actions"),
-      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "temporary")}: /safeclaw-approve ${record.approval_id}`,
-      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "longterm")}: /safeclaw-approve ${record.approval_id} long`,
-      `- ${this.text("拒绝", "Reject")}: /safeclaw-reject ${record.approval_id}`,
+      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "temporary")}: /securityclaw-approve ${record.approval_id}`,
+      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "longterm")}: /securityclaw-approve ${record.approval_id} long`,
+      `- ${this.text("拒绝", "Reject")}: /securityclaw-reject ${record.approval_id}`,
     ].join("\n");
   }
 

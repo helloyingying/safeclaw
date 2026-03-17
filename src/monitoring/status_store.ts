@@ -180,18 +180,18 @@ export class RuntimeStatusStore {
       typeof statusPathOrOptions === "string"
         ? ({
             snapshotPath: statusPathOrOptions,
-            dbPath: path.resolve(path.dirname(statusPathOrOptions), "safeclaw.db"),
+            dbPath: path.resolve(path.dirname(statusPathOrOptions), "securityclaw.db"),
             maxRecent
           } satisfies RuntimeStatusStoreOptions)
         : {
             snapshotPath: statusPathOrOptions.snapshotPath,
             dbPath:
               statusPathOrOptions.dbPath ??
-              path.resolve(path.dirname(statusPathOrOptions.snapshotPath), "safeclaw.db"),
+              path.resolve(path.dirname(statusPathOrOptions.snapshotPath), "securityclaw.db"),
             maxRecent: statusPathOrOptions.maxRecent ?? 80
           };
     this.#snapshotPath = options.snapshotPath;
-    this.#dbPath = options.dbPath ?? path.resolve(path.dirname(options.snapshotPath), "safeclaw.db");
+    this.#dbPath = options.dbPath ?? path.resolve(path.dirname(options.snapshotPath), "securityclaw.db");
     this.#maxRecent = options.maxRecent ?? 80;
     mkdirSync(path.dirname(this.#snapshotPath), { recursive: true });
     mkdirSync(path.dirname(this.#dbPath), { recursive: true });

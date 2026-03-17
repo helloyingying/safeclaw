@@ -33,7 +33,7 @@ policies:
     description: "阻断删除、权限递归修改、下载后执行、提权和停用系统审计等高危命令模式。"
     severity: "critical"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/high-risk-command"
+    playbook_url: "https://docs.securityclaw.local/playbooks/high-risk-command"
     enabled: true
     priority: 320
     decision: "block"
@@ -56,7 +56,7 @@ policies:
     description: "当未受信内容直接驱动执行类操作时，要求一次性、绑定 trace 的审批。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/untrusted-execution"
+    playbook_url: "https://docs.securityclaw.local/playbooks/untrusted-execution"
     enabled: true
     priority: 300
     decision: "challenge"
@@ -83,7 +83,7 @@ policies:
     description: "阻断对工作区外和系统目录的写入、删除或覆盖类操作。"
     severity: "critical"
     owner: "platform-security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/outside-write"
+    playbook_url: "https://docs.securityclaw.local/playbooks/outside-write"
     enabled: true
     priority: 280
     decision: "block"
@@ -106,7 +106,7 @@ policies:
     description: "对凭据目录、个人内容目录、下载暂存区、浏览器资料目录和通信存储等高风险目录的枚举与搜索默认进入审批。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/sensitive-enumeration"
+    playbook_url: "https://docs.securityclaw.local/playbooks/sensitive-enumeration"
     enabled: true
     priority: 250
     decision: "challenge"
@@ -137,7 +137,7 @@ policies:
     description: "读取凭据目录、环境变量文件、密钥材料和云访问凭据时默认要求审批。"
     severity: "critical"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/credential-path"
+    playbook_url: "https://docs.securityclaw.local/playbooks/credential-path"
     enabled: true
     priority: 260
     decision: "challenge"
@@ -165,7 +165,7 @@ policies:
     description: "直接访问本地消息数据库、邮件存储和聊天历史目录时默认进入审批。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/communication-store"
+    playbook_url: "https://docs.securityclaw.local/playbooks/communication-store"
     enabled: true
     priority: 255
     decision: "challenge"
@@ -192,7 +192,7 @@ policies:
     description: "访问公网、未知域、个人网盘或 paste 类站点时，至少要求显式审批。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/public-egress"
+    playbook_url: "https://docs.securityclaw.local/playbooks/public-egress"
     enabled: true
     priority: 220
     decision: "challenge"
@@ -217,7 +217,7 @@ policies:
     description: "当请求命中客户、财务、PII、通信或密钥类数据标签时，禁止直接向公网外发。"
     severity: "critical"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/sensitive-egress"
+    playbook_url: "https://docs.securityclaw.local/playbooks/sensitive-egress"
     enabled: true
     priority: 310
     decision: "block"
@@ -244,7 +244,7 @@ policies:
     description: "对客户数据、财务资料、密钥或媒体资料进行归档、压缩或导出时要求审批。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/archive-export"
+    playbook_url: "https://docs.securityclaw.local/playbooks/archive-export"
     enabled: true
     priority: 210
     decision: "challenge"
@@ -270,7 +270,7 @@ policies:
     description: "修改 CI/CD、部署、容器、Terraform、Kubernetes 或 IAM 相关文件时默认进入审批。"
     severity: "critical"
     owner: "platform-security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/control-plane-change"
+    playbook_url: "https://docs.securityclaw.local/playbooks/control-plane-change"
     enabled: true
     priority: 240
     decision: "challenge"
@@ -303,7 +303,7 @@ policies:
     description: "邮箱正文、附件、搜索结果和批量导出默认纳入审批流。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/email-access"
+    playbook_url: "https://docs.securityclaw.local/playbooks/email-access"
     enabled: true
     priority: 180
     decision: "challenge"
@@ -328,7 +328,7 @@ policies:
     description: "短信正文、会话历史、搜索结果和导出默认纳入审批流。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/sms-access"
+    playbook_url: "https://docs.securityclaw.local/playbooks/sms-access"
     enabled: true
     priority: 185
     decision: "challenge"
@@ -354,7 +354,7 @@ policies:
     description: "命中 OTP、验证码或登录提醒等短信内容时直接拦截。"
     severity: "critical"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/sms-otp"
+    playbook_url: "https://docs.securityclaw.local/playbooks/sms-otp"
     enabled: true
     priority: 305
     decision: "block"
@@ -373,7 +373,7 @@ policies:
     description: "相册中的截图、录屏、扫描件、证件和 OCR 文本读取默认进入审批。"
     severity: "high"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/album-sensitive-read"
+    playbook_url: "https://docs.securityclaw.local/playbooks/album-sensitive-read"
     enabled: true
     priority: 175
     decision: "challenge"
@@ -407,7 +407,7 @@ policies:
     description: "浏览器凭据、Cookie、自动填充、历史与下载数据库等高敏内容读取默认阻断。"
     severity: "critical"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/browser-secret"
+    playbook_url: "https://docs.securityclaw.local/playbooks/browser-secret"
     enabled: true
     priority: 315
     decision: "block"
@@ -431,7 +431,7 @@ policies:
     description: "CRM、ERP、HR、财务、工单与客服系统的批量读取或导出默认拦截。"
     severity: "critical"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/business-bulk-read"
+    playbook_url: "https://docs.securityclaw.local/playbooks/business-bulk-read"
     enabled: true
     priority: 290
     decision: "block"
@@ -453,7 +453,7 @@ policies:
     description: "显式请求 break-glass 或策略例外时，要求工单、审批人角色和单次 trace 绑定。"
     severity: "critical"
     owner: "security"
-    playbook_url: "https://docs.safeclaw.local/playbooks/break-glass"
+    playbook_url: "https://docs.securityclaw.local/playbooks/break-glass"
     enabled: true
     priority: 330
     decision: "challenge"

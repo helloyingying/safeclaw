@@ -1,4 +1,4 @@
-# SafeClaw Security Plugin 技术方案 v1.1
+# SecurityClaw Security Plugin 技术方案 v1.1
 
 ## 1. 方案定位
 本方案实现的是 **Plugin**，不是 OpenClaw 核心平台改造。
@@ -15,7 +15,7 @@ OpenClaw Runtime Hooks
    ├─ tool_result_persist  -> PersistGuard
    └─ message_sending      -> OutputGuard
 
-SafeClaw Plugin Core
+SecurityClaw Plugin Core
    ├─ Rule Engine
    ├─ Decision Engine (rule/default/approval)
    ├─ Approval State Machine
@@ -149,7 +149,7 @@ External Integrations (optional)
 ### 分层架构
 
 ```text
-safeclaw-plugin/
+securityclaw-plugin/
   src/
     domain/                          # 领域层（核心业务逻辑）
       models/

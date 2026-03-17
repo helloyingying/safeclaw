@@ -26,9 +26,9 @@ function readSnapshot(snapshotPath: string): Snapshot {
 }
 
 test("status store persists counters and decisions in sqlite across restart", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-status-store-"));
-  const snapshotPath = path.join(tempDir, "safeclaw-status.json");
-  const dbPath = path.join(tempDir, "safeclaw.db");
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-status-store-"));
+  const snapshotPath = path.join(tempDir, "securityclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
   let firstStore: RuntimeStatusStore | undefined;
   let secondStore: RuntimeStatusStore | undefined;
 
@@ -104,9 +104,9 @@ test("status store persists counters and decisions in sqlite across restart", ()
 });
 
 test("status store bootstraps sqlite from legacy status json once", () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-status-bootstrap-"));
-  const snapshotPath = path.join(tempDir, "safeclaw-status.json");
-  const dbPath = path.join(tempDir, "safeclaw.db");
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-status-bootstrap-"));
+  const snapshotPath = path.join(tempDir, "securityclaw-status.json");
+  const dbPath = path.join(tempDir, "securityclaw.db");
   const legacySnapshot = {
     updated_at: "2026-03-14T14:10:00.000Z",
     started_at: "2026-03-14T14:00:00.000Z",

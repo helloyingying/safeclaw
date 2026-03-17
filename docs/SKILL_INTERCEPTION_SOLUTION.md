@@ -1,4 +1,4 @@
-# SafeClaw Skill 拦截方案（零安装门槛）
+# SecurityClaw Skill 拦截方案（零安装门槛）
 
 ## 1. 背景与目标
 

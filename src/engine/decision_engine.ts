@@ -1,9 +1,9 @@
-import type { DecisionContext, DecisionOutcome, RuleMatch, SafeClawConfig } from "../types.ts";
+import type { DecisionContext, DecisionOutcome, RuleMatch, SecurityClawConfig } from "../types.ts";
 
 export class DecisionEngine {
-  readonly config: SafeClawConfig;
+  readonly config: SecurityClawConfig;
 
-  constructor(config: SafeClawConfig) {
+  constructor(config: SecurityClawConfig) {
     this.config = config;
   }
 

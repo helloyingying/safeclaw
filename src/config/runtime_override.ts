@@ -11,7 +11,7 @@ import type {
   DlpConfig,
   FileRule,
   PolicyRule,
-  SafeClawConfig,
+  SecurityClawConfig,
   SensitivePathStrategyOverride,
 } from "../types.ts";
 import { validateConfig } from "./validator.ts";
@@ -20,7 +20,7 @@ export type RuntimeOverride = {
   updated_at?: string | undefined;
   environment?: string | undefined;
   policy_version?: string | undefined;
-  defaults?: Partial<SafeClawConfig["defaults"]> | undefined;
+  defaults?: Partial<SecurityClawConfig["defaults"]> | undefined;
   policies?: PolicyRule[] | undefined;
   account_policies?: AccountPolicyRecord[] | undefined;
   sensitivity?: SensitivePathStrategyOverride | undefined;
@@ -43,9 +43,9 @@ export function readRuntimeOverride(overridePath: string): RuntimeOverride | und
   return raw as RuntimeOverride;
 }
 
-export function applyRuntimeOverride(base: SafeClawConfig, override: RuntimeOverride): SafeClawConfig {
+export function applyRuntimeOverride(base: SecurityClawConfig, override: RuntimeOverride): SecurityClawConfig {
   const baseSensitivity = hydrateSensitivePathConfig(base.sensitivity);
-  const merged: SafeClawConfig = {
+  const merged: SecurityClawConfig = {
     ...base,
     environment: override.environment ?? base.environment,
     policy_version: override.policy_version ?? base.policy_version,

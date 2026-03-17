@@ -8,16 +8,16 @@ import { ApprovalFsm } from "../src/engine/approval_fsm.ts";
 import { DecisionEngine } from "../src/engine/decision_engine.ts";
 import { DlpEngine } from "../src/engine/dlp_engine.ts";
 import { EventEmitter } from "../src/events/emitter.ts";
-import { createSafeClawPlugin } from "../src/index.ts";
+import { createSecurityClawPlugin } from "../src/index.ts";
 import type {
   BeforeToolCallInput,
   DecisionContext,
   EventSink,
-  SafeClawConfig,
+  SecurityClawConfig,
   SecurityDecisionEvent,
 } from "../src/types.ts";
 
-function createConfig(): SafeClawConfig {
+function createConfig(): SecurityClawConfig {
   return ConfigManager.fromFile("./config/policy.default.yaml").getConfig();
 }
 
@@ -55,7 +55,7 @@ function createDecisionContext(
   };
 }
 
-function findRule(config: SafeClawConfig, ruleId: string) {
+function findRule(config: SecurityClawConfig, ruleId: string) {
   const rule = config.policies.find((item) => item.rule_id === ruleId);
   assert.ok(rule, `missing rule ${ruleId}`);
   return rule;
@@ -301,7 +301,7 @@ test("default policy matrix covers every configured rule", async (t) => {
 
   for (const [ruleId, input] of Object.entries(cases)) {
     await t.test(ruleId, async () => {
-      const plugin = createSafeClawPlugin({
+      const plugin = createSecurityClawPlugin({
         config,
         generate_trace_id: () => `trace-${ruleId}`
       });
@@ -326,7 +326,7 @@ test("default policy matrix covers every configured rule", async (t) => {
 });
 
 test("plugin blocks shell calls by rule", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-1" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-1" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -341,7 +341,7 @@ test("plugin blocks shell calls by rule", async () => {
 });
 
 test("plugin creates challenge and approved replay allows execution", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-2" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-2" });
   const first = await plugin.hooks.before_tool_call({
     actor_id: "contractor",
     workspace: "payments",
@@ -374,7 +374,7 @@ test("plugin creates challenge and approved replay allows execution", async () =
 });
 
 test("plugin challenges filesystem listing", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-list" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-list" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -390,7 +390,7 @@ test("plugin challenges filesystem listing", async () => {
 });
 
 test("plugin challenges filesystem search in sensitive directories", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-search" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-search" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -411,7 +411,7 @@ test("plugin allows search when built-in sensitive path mapping is removed", asy
   config.sensitivity.path_rules = config.sensitivity.path_rules.filter(
     (rule) => rule.id !== "download-staging-downloads-directory",
   );
-  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-search-removed-sensitive-path" });
+  const plugin = createSecurityClawPlugin({ config, generate_trace_id: () => "trace-search-removed-sensitive-path" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -439,7 +439,7 @@ test("plugin uses custom sensitive path mappings for credential approval", async
       source: "custom"
     }
   ];
-  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-search-custom-sensitive-path" });
+  const plugin = createSecurityClawPlugin({ config, generate_trace_id: () => "trace-search-custom-sensitive-path" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -455,7 +455,7 @@ test("plugin uses custom sensitive path mappings for credential approval", async
 });
 
 test("plugin challenges filesystem search in personal content directories", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-personal-search" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-personal-search" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -472,7 +472,7 @@ test("plugin challenges filesystem search in personal content directories", asyn
 });
 
 test("plugin challenges filesystem reads from communication stores", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-comm" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-comm" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -497,7 +497,7 @@ test("plugin file rules with allow bypass downstream filesystem blocks", async (
       reason_codes: ["USER_FILE_RULE_ALLOW"]
     }
   ];
-  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-file-rule-allow" });
+  const plugin = createSecurityClawPlugin({ config, generate_trace_id: () => "trace-file-rule-allow" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -514,7 +514,7 @@ test("plugin file rules with allow bypass downstream filesystem blocks", async (
 });
 
 test("plugin blocks filesystem reads of browser secret stores", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-browser" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-browser" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -530,7 +530,7 @@ test("plugin blocks filesystem reads of browser secret stores", async () => {
 });
 
 test("persist strict blocks sensitive transcript writes", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-3" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-3" });
   const result = await plugin.hooks.tool_result_persist({
     actor_id: "employee",
     workspace: "payments",
@@ -546,7 +546,7 @@ test("persist strict blocks sensitive transcript writes", async () => {
 });
 
 test("message sending sanitizes DLP hits and restricted terms", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-4" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-4" });
   const result = await plugin.hooks.message_sending({
     actor_id: "employee",
     workspace: "payments",
@@ -564,7 +564,7 @@ test("message sending sanitizes DLP hits and restricted terms", async () => {
 
 test("hook timeout respects fail-open behavior", async () => {
   const config = structuredClone(createConfig());
-  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-5" });
+  const plugin = createSecurityClawPlugin({ config, generate_trace_id: () => "trace-5" });
   const result = await plugin.hooks.message_sending({
     actor_id: "employee",
     workspace: "payments",
@@ -579,7 +579,7 @@ test("hook timeout respects fail-open behavior", async () => {
 });
 
 test("plugin applies policy changes after config reload", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-reload" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-reload" });
   const initial = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -624,7 +624,7 @@ test("plugin defaults to allow when no rule matches", async () => {
     rule.rule_id === "high-risk-command-block" ? { ...rule, enabled: false } : rule
   );
 
-  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-default-allow" });
+  const plugin = createSecurityClawPlugin({ config, generate_trace_id: () => "trace-default-allow" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -656,7 +656,7 @@ test("rule matching supports resource scope and path prefix", async () => {
     }
   });
 
-  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-path-rule" });
+  const plugin = createSecurityClawPlugin({ config, generate_trace_id: () => "trace-path-rule" });
   const result = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -671,7 +671,7 @@ test("rule matching supports resource scope and path prefix", async () => {
 });
 
 test("approved replay enforces trace-bound single-use requirements", async () => {
-  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-break-glass" });
+  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-break-glass" });
   const first = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -743,7 +743,7 @@ test("admin auto-start only enables for persistent gateway runtime", () => {
   assert.deepEqual(
     shouldAutoStartAdminServer({
       OPENCLAW_SERVICE_KIND: "gateway",
-      SAFECLAW_ADMIN_AUTOSTART_FORCE: "1"
+      SECURITYCLAW_ADMIN_AUTOSTART_FORCE: "1"
     }),
     { enabled: true, reason: "forced" },
   );

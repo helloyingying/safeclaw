@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import type { SafeClawLocale } from "../i18n/locale.ts";
+import type { SecurityClawLocale } from "../i18n/locale.ts";
 import { pickLocalized } from "../i18n/locale.ts";
 
 export type AdminConsoleState = "started" | "already-running" | "service-command";
@@ -21,7 +21,7 @@ export type BrowserOpenResult = {
 export type BrowserOpener = (url: string) => BrowserOpenResult;
 
 export type AnnounceAdminConsoleOptions = {
-  locale: SafeClawLocale;
+  locale: SecurityClawLocale;
   logger: AdminConsoleLogger;
   url: string;
   state: AdminConsoleState;
@@ -47,16 +47,16 @@ function emitWarn(logger: AdminConsoleLogger, message: string): void {
   logger.warn?.(message);
 }
 
-function localize(locale: SafeClawLocale, zhText: string, enText: string): string {
+function localize(locale: SecurityClawLocale, zhText: string, enText: string): string {
   return pickLocalized(locale, zhText, enText);
 }
 
 export function resolveAdminConsoleMarkerPath(stateDir: string): string {
-  return path.join(stateDir, "plugins", "safeclaw", MARKER_FILE_NAME);
+  return path.join(stateDir, "plugins", "securityclaw", MARKER_FILE_NAME);
 }
 
 export function buildAdminConsoleBanner(params: {
-  locale: SafeClawLocale;
+  locale: SecurityClawLocale;
   url: string;
   state: AdminConsoleState;
   openedAutomatically: boolean;
@@ -64,10 +64,10 @@ export function buildAdminConsoleBanner(params: {
   const { locale, url, state, openedAutomatically } = params;
   const title =
     state === "already-running"
-      ? localize(locale, "SafeClaw 管理后台已在运行", "SafeClaw admin dashboard is already running")
+      ? localize(locale, "SecurityClaw 管理后台已在运行", "SecurityClaw admin dashboard is already running")
       : state === "service-command"
-        ? localize(locale, "SafeClaw 管理后台入口", "SafeClaw admin dashboard entry")
-        : localize(locale, "SafeClaw 管理后台已启动", "SafeClaw admin dashboard is ready");
+        ? localize(locale, "SecurityClaw 管理后台入口", "SecurityClaw admin dashboard entry")
+        : localize(locale, "SecurityClaw 管理后台已启动", "SecurityClaw admin dashboard is ready");
   const openHint = openedAutomatically
     ? localize(
         locale,
@@ -178,7 +178,7 @@ export function announceAdminConsole(options: AnnounceAdminConsoleOptions): Anno
       }
     } else {
       const via = result.command ? ` via ${result.command}` : "";
-      emitWarn(logger, `safeclaw: failed to auto-open admin dashboard${via} (${result.error ?? "unknown error"})`);
+      emitWarn(logger, `securityclaw: failed to auto-open admin dashboard${via} (${result.error ?? "unknown error"})`);
     }
   }
 

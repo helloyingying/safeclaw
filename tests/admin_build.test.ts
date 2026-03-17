@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync }
 import { ensureAdminAssetsBuilt, shouldBuildAdminAssets } from "../src/admin/build.ts";
 
 test("admin build helper rebuilds stale bundle and skips fresh output", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-admin-build-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-admin-build-"));
   const sourceDir = path.join(tempDir, "admin/src");
   const publicDir = path.join(tempDir, "admin/public");
   const entryPoint = path.join(sourceDir, "app.jsx");
@@ -16,7 +16,7 @@ test("admin build helper rebuilds stale bundle and skips fresh output", async ()
   try {
     mkdirSync(sourceDir, { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(entryPoint, 'console.log("safeclaw admin");\n', "utf8");
+    writeFileSync(entryPoint, 'console.log("securityclaw admin");\n', "utf8");
 
     assert.equal(shouldBuildAdminAssets({ paths: { sourceDir, entryPoint, outfile } }), true);
 
@@ -41,6 +41,23 @@ test("admin build helper rebuilds stale bundle and skips fresh output", async ()
     utimesSync(entryPoint, newTime, newTime);
     utimesSync(outfile, oldTime, oldTime);
     assert.equal(shouldBuildAdminAssets({ paths: { sourceDir, entryPoint, outfile } }), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin build helper skips rebuild when packaged bundle exists without source tree", () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-admin-build-packaged-"));
+  const sourceDir = path.join(tempDir, "admin/src");
+  const publicDir = path.join(tempDir, "admin/public");
+  const entryPoint = path.join(sourceDir, "app.jsx");
+  const outfile = path.join(publicDir, "app.js");
+
+  try {
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(outfile, 'console.log("prebuilt");\n', "utf8");
+
+    assert.equal(shouldBuildAdminAssets({ paths: { sourceDir, entryPoint, outfile } }), false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

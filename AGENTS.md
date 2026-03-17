@@ -1,4 +1,4 @@
-# SafeClaw Agent Notes
+# SecurityClaw Agent Notes
 
 ## Completion Gate
 - Treat type and syntax validation as a required completion goal.
