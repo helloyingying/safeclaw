@@ -20,10 +20,14 @@ import { resolveSafeClawLocale } from "../../src/i18n/locale.ts";
 const REFRESH_INTERVAL_MS = 15000;
 const DECISIONS_PER_PAGE = 12;
 const ADMIN_LOCALE_STORAGE_KEY = "safeclaw.admin.locale";
+const ADMIN_THEME_STORAGE_KEY = "safeclaw.admin.theme";
 const ADMIN_DEFAULT_LOCALE = resolveSafeClawLocale(
   typeof navigator !== "undefined" ? navigator.language : undefined,
   "en"
 );
+const ADMIN_DEFAULT_THEME_PREFERENCE = "system";
+const DARK_COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
+const ADMIN_THEME_OPTIONS = new Set(["system", "light", "dark"]);
 let activeLocale = ADMIN_DEFAULT_LOCALE;
 
 function ui(zhText, enText) {
@@ -35,6 +39,64 @@ function readLocalized(map, key, fallback = "-") {
   const record = map[key];
   if (!record) return key || fallback;
   return record[activeLocale] || record.en || record["zh-CN"] || key || fallback;
+}
+
+function normalizeAdminThemePreference(value) {
+  return ADMIN_THEME_OPTIONS.has(value) ? value : ADMIN_DEFAULT_THEME_PREFERENCE;
+}
+
+function readSystemTheme() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+  return window.matchMedia(DARK_COLOR_SCHEME_QUERY).matches ? "dark" : "light";
+}
+
+function resolveAdminTheme(preference, systemTheme = readSystemTheme()) {
+  const normalized = normalizeAdminThemePreference(preference);
+  return normalized === "system" ? systemTheme : normalized;
+}
+
+function ToolbarIconSystem() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3.5" y="5" width="17" height="11" rx="2.5" />
+      <path d="M9 19h6" />
+      <path d="M12 16v3" />
+    </svg>
+  );
+}
+
+function ToolbarIconSun() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.5v2.5" />
+      <path d="M12 19v2.5" />
+      <path d="M4.5 12H2" />
+      <path d="M22 12h-2.5" />
+      <path d="M5.8 5.8 4 4" />
+      <path d="M20 20l-1.8-1.8" />
+      <path d="M18.2 5.8 20 4" />
+      <path d="M4 20l1.8-1.8" />
+    </svg>
+  );
+}
+
+function ToolbarIconMoon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M17 14.5A6.5 6.5 0 0 1 9.5 7a7.5 7.5 0 1 0 7.5 7.5Z" />
+    </svg>
+  );
+}
+
+function ToolbarMonogram({ text }) {
+  return (
+    <span className="toolbar-monogram" aria-hidden="true">
+      {text}
+    </span>
+  );
 }
 
 const TAB_ITEMS = [
@@ -67,7 +129,27 @@ const DECISION_TEXT = {
   block: { "zh-CN": "拦截", en: "Block" }
 };
 const DECISION_OPTIONS = ["allow", "warn", "challenge", "block"];
-const CHART_COLORS = ["#1e4f94", "#2d66ab", "#3f7fc2", "#5f97d1", "#7badde", "#9dc3e8", "#c2dcf2", "#dbeaf8"];
+const CHART_PALETTES = {
+  light: ["#1e4f94", "#2d66ab", "#3f7fc2", "#5f97d1", "#7badde", "#9dc3e8", "#c2dcf2", "#dbeaf8"],
+  dark: ["#38bdf8", "#60a5fa", "#34d399", "#f59e0b", "#a78bfa", "#2dd4bf", "#fb7185", "#facc15"]
+};
+
+const CHART_THEME = {
+  light: {
+    grid: "#e7eef8",
+    axis: "#c8d8eb",
+    tick: "#5f748b",
+    total: "#1e40af",
+    risk: "#c03a4b"
+  },
+  dark: {
+    grid: "rgba(148, 163, 184, 0.18)",
+    axis: "rgba(148, 163, 184, 0.4)",
+    tick: "#9fb2c7",
+    total: "#60a5fa",
+    risk: "#fb7185"
+  }
+};
 
 const DECISION_SOURCE_TEXT = {
   rule: { "zh-CN": "规则命中", en: "Rule match" },
@@ -831,10 +913,11 @@ function buildDistribution(items, getLabel, options = {}) {
   return sorted;
 }
 
-function withChartColors(items) {
+function withChartColors(items, theme = "light") {
+  const palette = CHART_PALETTES[theme] || CHART_PALETTES.light;
   return items.map((item, index) => ({
     ...item,
-    color: item.color || CHART_COLORS[index % CHART_COLORS.length]
+    color: item.color || palette[index % palette.length]
   }));
 }
 
@@ -931,7 +1014,8 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
-function DistributionChart({ title, subtitle, items, total, emptyText }) {
+function DistributionChart({ title, subtitle, items, total, emptyText, theme }) {
+  const chartTheme = CHART_THEME[theme] || CHART_THEME.light;
   const data = items.map((item) => ({
     name: item.label,
     value: item.count,
@@ -952,19 +1036,19 @@ function DistributionChart({ title, subtitle, items, total, emptyText }) {
         <div className="chart-surface">
           <ResponsiveContainer width="100%" height={height}>
             <BarChart data={data} margin={{ top: 4, right: 8, left: 6, bottom: 34 }}>
-              <CartesianGrid stroke="#e7eef8" strokeDasharray="3 3" vertical={false} />
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
               <YAxis
                 allowDecimals={false}
-                tick={{ fill: "#5f748b", fontSize: 12 }}
-                axisLine={{ stroke: "#c8d8eb" }}
+                tick={{ fill: chartTheme.tick, fontSize: 12 }}
+                axisLine={{ stroke: chartTheme.axis }}
                 tickLine={false}
               />
               <XAxis
                 dataKey="name"
-                tick={{ fill: "#5f748b", fontSize: 12 }}
+                tick={{ fill: chartTheme.tick, fontSize: 12 }}
                 tickFormatter={(value) => trimLabel(value, 8)}
                 interval={0}
-                axisLine={{ stroke: "#c8d8eb" }}
+                axisLine={{ stroke: chartTheme.axis }}
                 tickLine={false}
               />
               <Tooltip content={<ChartTooltip />} />
@@ -990,9 +1074,21 @@ function readInitialAdminLocale() {
   return resolveSafeClawLocale(queryLocale || storedLocale || navigator.language, ADMIN_DEFAULT_LOCALE);
 }
 
+function readInitialAdminThemePreference() {
+  if (typeof window === "undefined") {
+    return ADMIN_DEFAULT_THEME_PREFERENCE;
+  }
+  const queryTheme = new URLSearchParams(window.location.search).get("theme");
+  const storedTheme = window.localStorage.getItem(ADMIN_THEME_STORAGE_KEY) || undefined;
+  return normalizeAdminThemePreference(queryTheme || storedTheme);
+}
+
 function App() {
   const [locale, setLocale] = useState(readInitialAdminLocale);
   activeLocale = locale;
+  const [themePreference, setThemePreference] = useState(readInitialAdminThemePreference);
+  const [systemTheme, setSystemTheme] = useState(readSystemTheme);
+  const theme = useMemo(() => resolveAdminTheme(themePreference, systemTheme), [themePreference, systemTheme]);
   const [statusPayload, setStatusPayload] = useState(null);
   const [policies, setPolicies] = useState([]);
   const [publishedPolicies, setPublishedPolicies] = useState([]);
@@ -1063,6 +1159,33 @@ function App() {
       window.localStorage.setItem(ADMIN_LOCALE_STORAGE_KEY, locale);
     }
   }, [locale]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia(DARK_COLOR_SCHEME_QUERY);
+    const handleChange = (event) => {
+      setSystemTheme(event.matches ? "dark" : "light");
+    };
+    setSystemTheme(mediaQuery.matches ? "dark" : "light");
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    }
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ADMIN_THEME_STORAGE_KEY, themePreference);
+    }
+  }, [theme, themePreference]);
 
   const loadData = useCallback(async (options = {}) => {
     const {
@@ -1151,9 +1274,10 @@ function App() {
         analyticsSamples,
         (item) => `${normalizeLabel(item.actor, ui("匿名会话", "Anonymous Session"))} · ${scopeLabel(item.scope)}`,
         { limit: 6, fallbackLabel: ui("未标记", "Unlabeled") }
-      )
+      ),
+      theme
     ),
-    [analyticsSamples]
+    [analyticsSamples, theme]
   );
   const decisionSourceDistribution = useMemo(
     () => withChartColors(
@@ -1161,9 +1285,10 @@ function App() {
         analyticsSamples,
         (item) => (item.decision_source ? decisionSourceLabel(item.decision_source) : ui("未标记", "Unlabeled")),
         { limit: 5, fallbackLabel: ui("未标记", "Unlabeled") }
-      )
+      ),
+      theme
     ),
-    [analyticsSamples]
+    [analyticsSamples, theme]
   );
   const strategySource = useMemo(() => {
     const riskSamples = analyticsSamples.filter((item) => item.decision !== "allow");
@@ -1185,8 +1310,8 @@ function App() {
     if (rest > 0) {
       top.push({ label: ui("其他", "Others"), count: rest });
     }
-    return withChartColors(top);
-  }, [policyTitleById, strategySource]);
+    return withChartColors(top, theme);
+  }, [policyTitleById, strategySource, theme]);
   const strategyHitTotal = strategyHitDistribution.reduce((sum, item) => sum + item.count, 0);
   const toolDistribution = useMemo(
     () => withChartColors(
@@ -1194,10 +1319,12 @@ function App() {
         analyticsSamples,
         (item) => normalizeLabel(item.tool, ui("未知工具", "Unknown Tool")),
         { limit: 6, fallbackLabel: ui("未知工具", "Unknown Tool") }
-      )
+      ),
+      theme
     ),
-    [analyticsSamples]
+    [analyticsSamples, theme]
   );
+  const chartTheme = CHART_THEME[theme] || CHART_THEME.light;
   const trendSeries = useMemo(() => buildTrendSeries(analyticsSamples), [analyticsSamples]);
   const trendTotals = useMemo(() => trendSeries.buckets.map((bucket) => bucket.total), [trendSeries]);
   const trendRisks = useMemo(() => trendSeries.buckets.map((bucket) => bucket.risk), [trendSeries]);
@@ -1455,6 +1582,35 @@ function App() {
     ? buildRuleConversation(activeRuleEntry.policy, activeRuleEntry.index)
     : [];
   const isRuleSideVisible = Boolean(activeRuleEntry && activeRuleGuide);
+  const themeControls = [
+    {
+      value: "system",
+      label: ui("跟随系统外观", "Follow system appearance"),
+      icon: <ToolbarIconSystem />
+    },
+    {
+      value: "light",
+      label: ui("切换到浅色模式", "Switch to light mode"),
+      icon: <ToolbarIconSun />
+    },
+    {
+      value: "dark",
+      label: ui("切换到暗色模式", "Switch to dark mode"),
+      icon: <ToolbarIconMoon />
+    }
+  ];
+  const localeControls = [
+    {
+      value: "zh-CN",
+      label: ui("切换到简体中文", "Switch to Simplified Chinese"),
+      icon: <ToolbarMonogram text="文" />
+    },
+    {
+      value: "en",
+      label: ui("切换到英文", "Switch to English"),
+      icon: <ToolbarMonogram text="A" />
+    }
+  ];
 
   return (
     <div className="app">
@@ -1484,19 +1640,37 @@ function App() {
               ))}
             </div>
           </div>
-          <div className="locale-switch">
-            <label className="locale-label" htmlFor="safeclaw-admin-locale">
-              {ui("语言", "Language")}
-            </label>
-            <select
-              id="safeclaw-admin-locale"
-              className="locale-select"
-              value={locale}
-              onChange={(event) => setLocale(resolveSafeClawLocale(event.target.value, "en"))}
-            >
-              <option value="en">English</option>
-              <option value="zh-CN">简体中文</option>
-            </select>
+          <div className="toolbar-controls">
+            <div className="control-group" role="group" aria-label={ui("外观设置", "Appearance settings")}>
+              {themeControls.map((item) => (
+                <button
+                  key={item.value}
+                  className={`toolbar-icon-button ${themePreference === item.value ? "active" : ""}`}
+                  type="button"
+                  aria-label={item.label}
+                  aria-pressed={themePreference === item.value}
+                  title={item.label}
+                  onClick={() => setThemePreference(item.value)}
+                >
+                  {item.icon}
+                </button>
+              ))}
+            </div>
+            <div className="control-group" role="group" aria-label={ui("语言设置", "Language settings")}>
+              {localeControls.map((item) => (
+                <button
+                  key={item.value}
+                  className={`toolbar-icon-button toolbar-icon-button-text ${locale === item.value ? "active" : ""}`}
+                  type="button"
+                  aria-label={item.label}
+                  aria-pressed={locale === item.value}
+                  title={item.label}
+                  onClick={() => setLocale(resolveSafeClawLocale(item.value, "en"))}
+                >
+                  {item.icon}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -1573,6 +1747,7 @@ function App() {
                 items={messageSourceDistribution}
                 total={analyticsSamples.length}
                 emptyText={ui("暂无消息来源数据", "No source data yet")}
+                theme={theme}
               />
 
               <DistributionChart
@@ -1581,6 +1756,7 @@ function App() {
                 items={decisionSourceDistribution}
                 total={analyticsSamples.length}
                 emptyText={ui("暂无决策来源数据", "No decision source data yet")}
+                theme={theme}
               />
 
               <DistributionChart
@@ -1589,6 +1765,7 @@ function App() {
                 items={strategyHitDistribution}
                 total={strategyHitTotal}
                 emptyText={ui("暂无策略命中记录", "No policy hit records")}
+                theme={theme}
               />
 
               <DistributionChart
@@ -1597,6 +1774,7 @@ function App() {
                 items={toolDistribution}
                 total={analyticsSamples.length}
                 emptyText={ui("暂无工具调用记录", "No tool call records")}
+                theme={theme}
               />
 
               <article className="panel-card chart-card trend-card">
@@ -1607,18 +1785,18 @@ function App() {
                 <div className="chart-surface">
                   <ResponsiveContainer width="100%" height={260}>
                     <LineChart data={trendData} margin={{ top: 12, right: 24, left: 4, bottom: 0 }}>
-                      <CartesianGrid stroke="#e4ecf6" strokeDasharray="3 3" />
+                      <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
                       <XAxis
                         dataKey="time"
-                        tick={{ fill: "#5f748b", fontSize: 12 }}
+                        tick={{ fill: chartTheme.tick, fontSize: 12 }}
                         tickFormatter={(value, index) => (index % trendTickStep === 0 ? value : "")}
-                        axisLine={{ stroke: "#c8d8eb" }}
+                        axisLine={{ stroke: chartTheme.axis }}
                         tickLine={false}
                       />
                       <YAxis
                         allowDecimals={false}
-                        tick={{ fill: "#5f748b", fontSize: 12 }}
-                        axisLine={{ stroke: "#c8d8eb" }}
+                        tick={{ fill: chartTheme.tick, fontSize: 12 }}
+                        axisLine={{ stroke: chartTheme.axis }}
                         tickLine={false}
                       />
                       <Tooltip content={<ChartTooltip />} />
@@ -1627,7 +1805,7 @@ function App() {
                         type="monotone"
                         dataKey="total"
                         name={ui("总请求", "Total Requests")}
-                        stroke="#1e40af"
+                        stroke={chartTheme.total}
                         strokeWidth={2.5}
                         dot={{ r: 2 }}
                         activeDot={{ r: 4 }}
@@ -1636,7 +1814,7 @@ function App() {
                         type="monotone"
                         dataKey="risk"
                         name={ui("风险请求", "Risk Requests")}
-                        stroke="#c03a4b"
+                        stroke={chartTheme.risk}
                         strokeWidth={2.5}
                         dot={{ r: 2 }}
                         activeDot={{ r: 4 }}

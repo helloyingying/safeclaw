@@ -26,6 +26,7 @@ import { EventEmitter, HttpEventSink } from "./src/events/emitter.ts";
 import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
 import { ensureAdminAssetsBuilt } from "./src/admin/build.ts";
+import { announceAdminConsole } from "./src/admin/console_notice.ts";
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
@@ -165,6 +166,14 @@ let runtimeLocale: SafeClawLocale = resolveRuntimeLocale();
 
 function text(zhText: string, enText: string): string {
   return pickLocalized(runtimeLocale, zhText, enText);
+}
+
+function resolvePluginStateDir(api: OpenClawPluginApi): string {
+  try {
+    return api.runtime.state.resolveStateDir();
+  } catch {
+    return path.join(HOME_DIR, ".openclaw");
+  }
 }
 
 function plural(value: number, unit: "day" | "hour" | "minute"): string {
@@ -1967,6 +1976,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     const resolved = resolvePluginRuntime(api);
     const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
+    const stateDir = resolvePluginStateDir(api);
     runtimeLocale = resolveRuntimeLocale();
     const adminAutoStart = pluginConfig.adminAutoStart ?? true;
     const decisionLogMaxLength = pluginConfig.decisionLogMaxLength ?? 240;
@@ -2025,11 +2035,23 @@ const plugin = {
           },
           ...(pluginConfig.adminPort !== undefined ? { port: pluginConfig.adminPort } : {})
         };
-        void adminBuildPromise.then(() =>
-          startAdminServer(adminServerOptions).catch((error) => {
+        void adminBuildPromise
+          .then(() => startAdminServer(adminServerOptions))
+          .then((result) => {
+            announceAdminConsole({
+              locale: runtimeLocale,
+              logger: {
+                info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
+                warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`),
+              },
+              stateDir,
+              state: result.state,
+              url: `http://127.0.0.1:${result.runtime.port}`,
+            });
+          })
+          .catch((error) => {
             api.logger.warn?.(`safeclaw: failed to auto-start admin dashboard (${String(error)})`);
-          }),
-        );
+          });
       } else {
         api.logger.info?.(
           `safeclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,

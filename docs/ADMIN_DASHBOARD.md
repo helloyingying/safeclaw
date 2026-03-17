@@ -13,6 +13,14 @@
   - supports `EN` and `中文` in the dashboard header.
   - preference is persisted in browser local storage.
   - API save calls include `x-safeclaw-locale` so backend status messages follow UI language.
+- Theme switch:
+  - supports `system`, `light`, and `dark` in the dashboard header.
+  - preference is persisted in browser local storage.
+  - first paint resolves theme before stylesheet render to avoid light-theme flash.
+- UI contribution baseline:
+  - dashboard UI work should ship with both `en` / `zh-CN` coverage and light / dark theme support by default.
+  - new user-facing text should reuse the existing locale path instead of hardcoded single-language copy.
+  - new visual states should be built on shared theme tokens so charts, tables, badges, toolbars, and status states remain readable in both themes.
 - Metrics card: decision totals (`allow`, `warn/challenge`, `block`).
 - Recent decisions table: time, decision, source, resource scope, hook, tool, reasons.
 - Rule panel:

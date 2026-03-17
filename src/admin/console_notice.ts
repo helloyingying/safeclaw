@@ -1,0 +1,171 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+import type { SafeClawLocale } from "../i18n/locale.ts";
+import { pickLocalized } from "../i18n/locale.ts";
+
+export type AdminConsoleState = "started" | "already-running";
+
+export type AdminConsoleLogger = {
+  info?: (message: string) => void;
+  warn?: (message: string) => void;
+};
+
+export type BrowserOpenResult = {
+  ok: boolean;
+  command?: string;
+  error?: string;
+};
+
+export type BrowserOpener = (url: string) => BrowserOpenResult;
+
+export type AnnounceAdminConsoleOptions = {
+  locale: SafeClawLocale;
+  logger: AdminConsoleLogger;
+  url: string;
+  state: AdminConsoleState;
+  stateDir?: string;
+  opener?: BrowserOpener;
+};
+
+export type AnnounceAdminConsoleResult = {
+  firstRun: boolean;
+  openedAutomatically: boolean;
+  markerPath?: string;
+};
+
+const MARKER_FILE_NAME = "admin-dashboard-opened-v1.json";
+const BANNER_BORDER = "=".repeat(72);
+
+function emitLog(logger: AdminConsoleLogger, message: string): void {
+  logger.info?.(message);
+}
+
+function emitWarn(logger: AdminConsoleLogger, message: string): void {
+  logger.warn?.(message);
+}
+
+function localize(locale: SafeClawLocale, zhText: string, enText: string): string {
+  return pickLocalized(locale, zhText, enText);
+}
+
+export function resolveAdminConsoleMarkerPath(stateDir: string): string {
+  return path.join(stateDir, "plugins", "safeclaw", MARKER_FILE_NAME);
+}
+
+export function buildAdminConsoleBanner(params: {
+  locale: SafeClawLocale;
+  url: string;
+  state: AdminConsoleState;
+  openedAutomatically: boolean;
+}): string[] {
+  const { locale, url, state, openedAutomatically } = params;
+  const title =
+    state === "already-running"
+      ? localize(locale, "SafeClaw 管理后台已在运行", "SafeClaw admin dashboard is already running")
+      : localize(locale, "SafeClaw 管理后台已启动", "SafeClaw admin dashboard is ready");
+  const openHint = openedAutomatically
+    ? localize(
+        locale,
+        "首次启动已自动在默认浏览器中打开。",
+        "Opened automatically in your default browser on first startup.",
+      )
+    : localize(
+        locale,
+        "如未自动打开，请手动访问下面的链接。",
+        "If your browser did not open automatically, open the URL below manually.",
+      );
+
+  return [BANNER_BORDER, title, `URL: ${url}`, openHint, BANNER_BORDER];
+}
+
+function writeAdminConsoleMarker(markerPath: string, url: string): void {
+  mkdirSync(path.dirname(markerPath), { recursive: true });
+  writeFileSync(
+    markerPath,
+    JSON.stringify(
+      {
+        opened_at: new Date().toISOString(),
+        url,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+export function openAdminConsoleInBrowser(url: string): BrowserOpenResult {
+  if (process.platform === "darwin") {
+    const result = spawnSync("open", [url], { stdio: "ignore", timeout: 5_000 });
+    if (result.error) {
+      return { ok: false, command: "open", error: String(result.error) };
+    }
+    if (result.status !== 0) {
+      return { ok: false, command: "open", error: `exit code ${result.status}` };
+    }
+    return { ok: true, command: "open" };
+  }
+
+  if (process.platform === "win32") {
+    const result = spawnSync("cmd", ["/c", "start", "", url], {
+      stdio: "ignore",
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    if (result.error) {
+      return { ok: false, command: "cmd /c start", error: String(result.error) };
+    }
+    if (result.status !== 0) {
+      return { ok: false, command: "cmd /c start", error: `exit code ${result.status}` };
+    }
+    return { ok: true, command: "cmd /c start" };
+  }
+
+  if (process.platform === "linux") {
+    const result = spawnSync("xdg-open", [url], { stdio: "ignore", timeout: 5_000 });
+    if (result.error) {
+      return { ok: false, command: "xdg-open", error: String(result.error) };
+    }
+    if (result.status !== 0) {
+      return { ok: false, command: "xdg-open", error: `exit code ${result.status}` };
+    }
+    return { ok: true, command: "xdg-open" };
+  }
+
+  return {
+    ok: false,
+    error: `unsupported platform ${process.platform}`,
+  };
+}
+
+export function announceAdminConsole(options: AnnounceAdminConsoleOptions): AnnounceAdminConsoleResult {
+  const { locale, logger, url, state, stateDir, opener = openAdminConsoleInBrowser } = options;
+  const markerPath = stateDir ? resolveAdminConsoleMarkerPath(stateDir) : undefined;
+  const firstRun = Boolean(markerPath) && !existsSync(markerPath);
+
+  let openedAutomatically = false;
+  if (firstRun) {
+    const result = opener(url);
+    if (result.ok) {
+      openedAutomatically = true;
+      if (markerPath) {
+        writeAdminConsoleMarker(markerPath, url);
+      }
+    } else {
+      const via = result.command ? ` via ${result.command}` : "";
+      emitWarn(logger, `safeclaw: failed to auto-open admin dashboard${via} (${result.error ?? "unknown error"})`);
+    }
+  }
+
+  for (const line of buildAdminConsoleBanner({ locale, url, state, openedAutomatically })) {
+    emitLog(logger, line);
+  }
+
+  return {
+    firstRun,
+    openedAutomatically,
+    ...(markerPath !== undefined ? { markerPath } : {}),
+  };
+}

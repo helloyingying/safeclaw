@@ -3,9 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>SafeClaw 控制台</title>
     <link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg" />
     <link rel="shortcut icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      (() => {
+        const key = "safeclaw.admin.theme";
+        const queryTheme = new URLSearchParams(window.location.search).get("theme");
+        const preference = queryTheme || window.localStorage.getItem(key) || "system";
+        const resolvedTheme =
+          preference === "light" || preference === "dark"
+            ? preference
+            : window.matchMedia?.("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.dataset.theme = resolvedTheme;
+        document.documentElement.style.colorScheme = resolvedTheme;
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
