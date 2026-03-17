@@ -132,4 +132,4 @@ npm run admin:build
 
 ## 许可证
 
-暂未声明。
+MIT，详见 [LICENSE](./LICENSE)。

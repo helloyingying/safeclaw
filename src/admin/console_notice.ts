@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { resolveSecurityClawStateDir } from "../infrastructure/config/plugin_config_parser.ts";
 import type { SecurityClawLocale } from "../i18n/locale.ts";
 import { pickLocalized } from "../i18n/locale.ts";
 
@@ -52,7 +53,7 @@ function localize(locale: SecurityClawLocale, zhText: string, enText: string): s
 }
 
 export function resolveAdminConsoleMarkerPath(stateDir: string): string {
-  return path.join(stateDir, "plugins", "securityclaw", MARKER_FILE_NAME);
+  return path.join(resolveSecurityClawStateDir(stateDir), MARKER_FILE_NAME);
 }
 
 export function buildAdminConsoleBanner(params: {

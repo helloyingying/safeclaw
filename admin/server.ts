@@ -16,6 +16,11 @@ import { ConfigManager } from "../src/config/loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "../src/config/runtime_override.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 import { AccountPolicyEngine } from "../src/domain/services/account_policy_engine.ts";
+import {
+  PluginConfigParser,
+  resolveDefaultOpenClawStateDir,
+  type SecurityClawPluginConfig,
+} from "../src/infrastructure/config/plugin_config_parser.ts";
 import { normalizeFileRules } from "../src/domain/services/file_rule_registry.ts";
 import {
   hydrateSensitivePathConfig,
@@ -28,12 +33,7 @@ import { pickLocalized, resolveSecurityClawLocale } from "../src/i18n/locale.ts"
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.resolve(ROOT, "admin/public");
 const DEFAULT_PORT = Number(process.env.SECURITYCLAW_ADMIN_PORT ?? 4780);
-const DEFAULT_CONFIG_PATH = process.env.SECURITYCLAW_CONFIG_PATH ?? path.resolve(ROOT, "config/policy.default.yaml");
-const DEFAULT_STATUS_PATH = process.env.SECURITYCLAW_STATUS_PATH ?? path.resolve(ROOT, "runtime/securityclaw-status.json");
-const DEFAULT_DB_PATH = process.env.SECURITYCLAW_DB_PATH ?? path.resolve(ROOT, "runtime/securityclaw.db");
-const DEFAULT_LEGACY_OVERRIDE_PATH =
-  process.env.SECURITYCLAW_LEGACY_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
-const DEFAULT_OPENCLAW_HOME = process.env.OPENCLAW_HOME ?? path.join(os.homedir(), ".openclaw");
+const DEFAULT_OPENCLAW_HOME = resolveDefaultOpenClawStateDir();
 
 type AdminLogger = {
   info?: (message: string) => void;
@@ -856,14 +856,29 @@ function readEffectivePolicy(runtime: AdminRuntime, strategyStore: StrategyStore
   return override !== undefined ? { base, effective, override } : { base, effective };
 }
 
+function resolveAdminPluginConfig(options: AdminServerOptions): SecurityClawPluginConfig {
+  return {
+    ...(process.env.SECURITYCLAW_CONFIG_PATH ? { configPath: process.env.SECURITYCLAW_CONFIG_PATH } : {}),
+    ...(process.env.SECURITYCLAW_LEGACY_OVERRIDE_PATH ? { overridePath: process.env.SECURITYCLAW_LEGACY_OVERRIDE_PATH } : {}),
+    ...(process.env.SECURITYCLAW_STATUS_PATH ? { statusPath: process.env.SECURITYCLAW_STATUS_PATH } : {}),
+    ...(process.env.SECURITYCLAW_DB_PATH ? { dbPath: process.env.SECURITYCLAW_DB_PATH } : {}),
+    ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
+    ...(options.legacyOverridePath !== undefined ? { overridePath: options.legacyOverridePath } : {}),
+    ...(options.statusPath !== undefined ? { statusPath: options.statusPath } : {}),
+    ...(options.dbPath !== undefined ? { dbPath: options.dbPath } : {}),
+  };
+}
+
 function resolveRuntime(options: AdminServerOptions): AdminRuntime {
+  const openClawHome = options.openClawHome ?? DEFAULT_OPENCLAW_HOME;
+  const resolved = PluginConfigParser.resolve(ROOT, resolveAdminPluginConfig(options), openClawHome);
   return {
     port: options.port ?? DEFAULT_PORT,
-    configPath: options.configPath ?? DEFAULT_CONFIG_PATH,
-    legacyOverridePath: options.legacyOverridePath ?? DEFAULT_LEGACY_OVERRIDE_PATH,
-    statusPath: options.statusPath ?? DEFAULT_STATUS_PATH,
-    dbPath: options.dbPath ?? DEFAULT_DB_PATH,
-    openClawHome: options.openClawHome ?? DEFAULT_OPENCLAW_HOME
+    configPath: resolved.configPath,
+    legacyOverridePath: resolved.legacyOverridePath,
+    statusPath: resolved.statusPath,
+    dbPath: resolved.dbPath,
+    openClawHome
   };
 }
 

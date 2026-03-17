@@ -5,7 +5,8 @@
 - Plugin load now automatically checks admin frontend assets and rebuilds `admin/public/app.js` when `admin/src` is newer or bundle is missing.
 - Optional manual mode: run `npm run admin` when you want standalone startup or local debugging.
 - Short-lived CLI commands such as `openclaw gateway restart` do not keep the dashboard process alive.
-- You can set `plugins.entries.securityclaw.config.adminAutoStart=false` to disable auto-start.
+- `openclaw.json` usually does not need a `securityclaw.config` block at all; add `adminPort` only when you want a non-default port.
+- You can still set `plugins.entries.securityclaw.config.adminAutoStart=false` to disable auto-start.
 
 ## Current UI Behavior
 - Locale switch:
@@ -50,7 +51,7 @@
   - policy section edits score thresholds, risk-by-severity matrix, and default handling for unscanned or changed-without-version-update skills.
 
 ## Strategy Configuration
-- The panel writes overrides to SQLite (`runtime/securityclaw.db`) via `PUT /api/strategy`.
+- The panel writes overrides to SQLite (`~/.openclaw/extensions/securityclaw/data/securityclaw.db` by default) via `PUT /api/strategy`.
 - Editable fields from UI:
   - full `policies` array, mainly `decision` per rule.
   - `sensitivity.custom_path_rules`
@@ -76,7 +77,7 @@
   - disabling a built-in mapping removes that path-to-label inference without rewriting policy definitions.
 
 ## Runtime Status
-- Data source: `runtime/securityclaw-status.json` via `GET /api/status`.
+- Data source: `~/.openclaw/extensions/securityclaw/runtime/securityclaw-status.json` by default via `GET /api/status`.
 - Shows totals and recent decisions with simplified labels.
 - Skill interception status uses SQLite-backed APIs (`/api/skills/status`, `/api/skills`, `/api/skills/:skillId`, `/api/skills/policy`).
 
@@ -87,6 +88,6 @@
 ## Environment Variables
 - `SECURITYCLAW_ADMIN_PORT` (default `4780`)
 - `SECURITYCLAW_CONFIG_PATH` (default `config/policy.default.yaml`)
-- `SECURITYCLAW_DB_PATH` (default `runtime/securityclaw.db`)
+- `SECURITYCLAW_DB_PATH` (default `~/.openclaw/extensions/securityclaw/data/securityclaw.db`)
 - `SECURITYCLAW_LEGACY_OVERRIDE_PATH` (default `config/policy.overrides.json`, read-once migration input)
-- `SECURITYCLAW_STATUS_PATH` (default `runtime/securityclaw-status.json`)
+- `SECURITYCLAW_STATUS_PATH` (default `~/.openclaw/extensions/securityclaw/runtime/securityclaw-status.json`)

@@ -1,7 +1,8 @@
 {
   "name": "securityclaw",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "SecurityClaw security plugin for OpenClaw-compatible hooks.",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "securityclaw": "bin/securityclaw.mjs"
@@ -24,6 +25,7 @@
   },
   "files": [
     "CHANGELOG.md",
+    "LICENSE",
     "README.md",
     "README.zh-CN.md",
     "admin/public",

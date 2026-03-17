@@ -132,4 +132,4 @@ npm run admin:build
 
 ## License
 
-Not declared yet.
+MIT. See [LICENSE](./LICENSE).

@@ -9,6 +9,7 @@ import { RuntimeStatusStore } from "../src/monitoring/status_store.ts";
 type Snapshot = {
   config: {
     policy_version: string;
+    strategy_db_path?: string;
   };
   hooks: {
     before_tool_call: {
@@ -173,6 +174,31 @@ test("status store bootstraps sqlite from legacy status json once", () => {
 
     store.close();
     store = undefined;
+  } finally {
+    store?.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("status store defaults sqlite into sibling data directory when snapshot lives under runtime", () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-status-runtime-fallback-"));
+  const snapshotPath = path.join(tempDir, "extensions", "securityclaw", "runtime", "securityclaw-status.json");
+  const expectedDbPath = path.join(tempDir, "extensions", "securityclaw", "data", "securityclaw.db");
+  let store: RuntimeStatusStore | undefined;
+
+  try {
+    store = new RuntimeStatusStore(snapshotPath);
+    store.markBoot({
+      environment: "default",
+      policy_version: "2026-03-17",
+      policy_count: 1,
+      config_path: "/tmp/policy.default.yaml",
+      strategy_db_path: expectedDbPath,
+      strategy_loaded: false,
+    });
+
+    const snapshot = readSnapshot(snapshotPath);
+    assert.equal(snapshot.config.strategy_db_path, expectedDbPath);
   } finally {
     store?.close();
     rmSync(tempDir, { recursive: true, force: true });

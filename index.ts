@@ -23,6 +23,11 @@ import { DecisionEngine } from "./src/engine/decision_engine.ts";
 import { DlpEngine } from "./src/engine/dlp_engine.ts";
 import { RuleEngine } from "./src/engine/rule_engine.ts";
 import { EventEmitter, HttpEventSink } from "./src/events/emitter.ts";
+import {
+  PluginConfigParser,
+  type ResolvedPluginRuntime,
+  type SecurityClawPluginConfig,
+} from "./src/infrastructure/config/plugin_config_parser.ts";
 import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
 import { ensureAdminAssetsBuilt } from "./src/admin/build.ts";
@@ -44,6 +49,7 @@ import type { SecurityClawLocale } from "./src/i18n/locale.ts";
 import { localeForIntl, pickLocalized, resolveSecurityClawLocale } from "./src/i18n/locale.ts";
 import type {
   AccountPolicyRecord,
+  Decision,
   DecisionContext,
   DecisionSource,
   DlpFinding,
@@ -52,27 +58,6 @@ import type {
   SecurityClawConfig,
   SecurityDecisionEvent
 } from "./src/types.ts";
-
-type SecurityClawPluginConfig = {
-  configPath?: string;
-  overridePath?: string;
-  dbPath?: string;
-  webhookUrl?: string;
-  policyVersion?: string;
-  environment?: string;
-  approvalTtlSeconds?: number;
-  persistMode?: "strict" | "compat";
-  decisionLogMaxLength?: number;
-  statusPath?: string;
-  adminAutoStart?: boolean;
-  adminPort?: number;
-};
-
-type ResolvedPluginRuntime = {
-  configPath: string;
-  dbPath: string;
-  legacyOverridePath: string;
-};
 
 type RuntimeDependencies = {
   config: SecurityClawConfig;
@@ -127,6 +112,8 @@ const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
 const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
 const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
 const APPROVAL_NOTIFICATION_HISTORY_LIMIT = 12;
+const SECURITYCLAW_PROTECTED_STORAGE_RULE_ID = "internal:securityclaw-protected-storage";
+const SECURITYCLAW_PROTECTED_STORAGE_REASON = "SECURITYCLAW_STATE_STORAGE_PROTECTED";
 const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
 const COMMAND_KEY_PATTERN = /(command|cmd|script|query|sql)/i;
 const URL_KEY_PATTERN = /(url|uri|endpoint|host|domain|upload|webhook|callback|proxy|origin|destination|dest)/i;
@@ -1678,6 +1665,60 @@ function formatApprovalBlockReason(params: {
   return lines.join("\n");
 }
 
+function hasExplicitReadOnlyAccess(
+  rawToolName: string | undefined,
+  decisionContext: DecisionContext,
+): boolean {
+  if (rawToolName === "shell.exec") {
+    return false;
+  }
+  if (decisionContext.tool_group !== "filesystem") {
+    return false;
+  }
+  return decisionContext.operation === "read" ||
+    decisionContext.operation === "list" ||
+    decisionContext.operation === "search";
+}
+
+function matchesProtectedStoragePath(candidate: string, resolved: ResolvedPluginRuntime): boolean {
+  if (resolved.protectedDataDir) {
+    const normalizedProtectedDataDir = path.normalize(resolved.protectedDataDir);
+    if (candidate === normalizedProtectedDataDir || isPathInside(normalizedProtectedDataDir, candidate)) {
+      return true;
+    }
+  }
+  return resolved.protectedDbPaths.some((protectedPath) => candidate === path.normalize(protectedPath));
+}
+
+function evaluateProtectedStorageAccess(
+  rawToolName: string | undefined,
+  decisionContext: DecisionContext,
+  resolved: ResolvedPluginRuntime,
+): {
+  decision: Decision;
+  decisionSource: DecisionSource;
+  reasonCodes: string[];
+  rules: string;
+} | undefined {
+  if (decisionContext.resource_paths.length === 0) {
+    return undefined;
+  }
+
+  const matchedPath = decisionContext.resource_paths.some((candidate) =>
+    matchesProtectedStoragePath(path.normalize(candidate), resolved)
+  );
+  if (!matchedPath || hasExplicitReadOnlyAccess(rawToolName, decisionContext)) {
+    return undefined;
+  }
+
+  return {
+    decision: "block",
+    decisionSource: "default",
+    reasonCodes: [SECURITYCLAW_PROTECTED_STORAGE_REASON],
+    rules: SECURITYCLAW_PROTECTED_STORAGE_RULE_ID,
+  };
+}
+
 function parseApprovalId(args: string | undefined): string | undefined {
   const value = args?.trim();
   return value ? value.split(/\s+/)[0] : undefined;
@@ -1685,26 +1726,7 @@ function parseApprovalId(args: string | undefined): string | undefined {
 
 function resolvePluginRuntime(api: OpenClawPluginApi): ResolvedPluginRuntime {
   const pluginConfig = (api.pluginConfig ?? {}) as SecurityClawPluginConfig;
-  const configPath = pluginConfig.configPath
-    ? path.isAbsolute(pluginConfig.configPath)
-      ? pluginConfig.configPath
-      : path.resolve(PLUGIN_ROOT, pluginConfig.configPath)
-    : path.resolve(PLUGIN_ROOT, "./config/policy.default.yaml");
-  const dbPath = pluginConfig.dbPath
-    ? path.isAbsolute(pluginConfig.dbPath)
-      ? pluginConfig.dbPath
-      : path.resolve(PLUGIN_ROOT, pluginConfig.dbPath)
-    : path.resolve(PLUGIN_ROOT, "./runtime/securityclaw.db");
-  const legacyOverridePath = pluginConfig.overridePath
-    ? path.isAbsolute(pluginConfig.overridePath)
-      ? pluginConfig.overridePath
-      : path.resolve(PLUGIN_ROOT, pluginConfig.overridePath)
-    : path.resolve(PLUGIN_ROOT, "./config/policy.overrides.json");
-  return {
-    configPath,
-    dbPath,
-    legacyOverridePath
-  };
+  return PluginConfigParser.resolve(PLUGIN_ROOT, pluginConfig, resolvePluginStateDir(api));
 }
 
 function createEventEmitter(config: SecurityClawConfig): EventEmitter {
@@ -1941,11 +1963,7 @@ const plugin = {
     runtimeLocale = resolveRuntimeLocale();
     const adminAutoStart = pluginConfig.adminAutoStart ?? true;
     const decisionLogMaxLength = pluginConfig.decisionLogMaxLength ?? 240;
-    const statusPath = pluginConfig.statusPath
-      ? path.isAbsolute(pluginConfig.statusPath)
-        ? pluginConfig.statusPath
-        : path.resolve(PLUGIN_ROOT, pluginConfig.statusPath)
-      : path.resolve(PLUGIN_ROOT, "./runtime/securityclaw-status.json");
+    const statusPath = resolved.statusPath;
     const dbPath = resolved.dbPath;
     const statusStore = new RuntimeStatusStore({ snapshotPath: statusPath, dbPath });
     const liveConfig = new LiveConfigResolver({
@@ -2254,101 +2272,112 @@ const plugin = {
           rawArguments,
           argsSummary,
         );
-        const matchedFileRule = matchFileRule(decisionContext.resource_paths, current.config.file_rules);
-        const matches = matchedFileRule ? [] : current.ruleEngine.match(decisionContext);
-        const rules = matchedFileRule ? `file_rule:${matchedFileRule.id}` : matchedRuleIds(matches);
-        const outcome = matchedFileRule
-          ? {
-              decision: matchedFileRule.decision,
-              decision_source: "file_rule" as const,
-              reason_codes: matchedFileRule.reason_codes?.length
-                ? [...matchedFileRule.reason_codes]
-                : [defaultFileRuleReasonCode(matchedFileRule.decision)],
-              matched_rules: [],
-              ...(matchedFileRule.decision === "challenge"
-                ? { challenge_ttl_seconds: current.config.defaults.approval_ttl_seconds }
-                : {}),
-            }
-          : current.decisionEngine.evaluate(decisionContext, matches);
         const traceId = decisionContext.security_context.trace_id;
-        const ruleIds = matchedFileRule ? [`file_rule:${matchedFileRule.id}`] : matches.map((match) => match.rule.rule_id);
         const effectiveToolName = decisionContext.tool_name ?? normalizedToolName ?? "unknown-tool";
         const approvalSubject = resolveApprovalSubject(hookContext);
         const accountPolicy = current.accountPolicyEngine.getPolicy(approvalSubject);
-        const accountOverride = matchedFileRule ? undefined : current.accountPolicyEngine.evaluate(approvalSubject);
-        const approvalRequestKey = createApprovalRequestKey({
-          policy_version: current.config.policy_version,
-          scope: decisionContext.scope,
-          tool_name: effectiveToolName,
-          resource_scope: decisionContext.resource_scope,
-          resource_paths: [],
-          params: {
-            operation: decisionContext.operation ?? null,
-            destination_type: decisionContext.destination_type ?? null,
-            dest_domain: decisionContext.dest_domain ?? null,
-            rule_ids: ruleIds,
-          },
-        });
-        let effectiveDecision = accountOverride?.decision ?? outcome.decision;
-        let effectiveDecisionSource = accountOverride?.decision_source ?? outcome.decision_source;
-        let effectiveReasonCodes = [...(accountOverride?.reason_codes ?? outcome.reason_codes)];
+        const protectedStorageAccess = evaluateProtectedStorageAccess(normalizedToolName, decisionContext, resolved);
+        let rules = protectedStorageAccess?.rules ?? "-";
+        let effectiveDecision = protectedStorageAccess?.decision ?? "allow";
+        let effectiveDecisionSource = protectedStorageAccess?.decisionSource ?? "default";
+        let effectiveReasonCodes = [...(protectedStorageAccess?.reasonCodes ?? ["ALLOW"])];
+        let accountOverride: ReturnType<AccountPolicyEngine["evaluate"]> | undefined;
         let approvalBlockReason: string | undefined;
 
-        if (effectiveDecision === "challenge" && approvalBridge.enabled) {
-          const approvalScope = decisionContext.scope;
-          const approved = approvalStore.findApproved(approvalSubject, approvalRequestKey);
-          if (approved) {
-            effectiveDecision = "allow";
-            effectiveDecisionSource = "approval";
-            effectiveReasonCodes = ["APPROVAL_GRANTED"];
-          } else {
-            let pending = approvalStore.findPending(approvalSubject, approvalRequestKey);
-            let notificationResult: ApprovalNotificationResult = {
-              sent: Boolean(pending?.notifications.length),
-              notifications: pending?.notifications ?? [],
-            };
+        if (!protectedStorageAccess) {
+          const matchedFileRule = matchFileRule(decisionContext.resource_paths, current.config.file_rules);
+          const matches = matchedFileRule ? [] : current.ruleEngine.match(decisionContext);
+          const outcome = matchedFileRule
+            ? {
+                decision: matchedFileRule.decision,
+                decision_source: "file_rule" as const,
+                reason_codes: matchedFileRule.reason_codes?.length
+                  ? [...matchedFileRule.reason_codes]
+                  : [defaultFileRuleReasonCode(matchedFileRule.decision)],
+                matched_rules: [],
+                ...(matchedFileRule.decision === "challenge"
+                  ? { challenge_ttl_seconds: current.config.defaults.approval_ttl_seconds }
+                  : {}),
+              }
+            : current.decisionEngine.evaluate(decisionContext, matches);
+          const ruleIds = matchedFileRule
+            ? [`file_rule:${matchedFileRule.id}`]
+            : matches.map((match) => match.rule.rule_id);
+          rules = matchedFileRule ? `file_rule:${matchedFileRule.id}` : matchedRuleIds(matches);
+          accountOverride = matchedFileRule ? undefined : current.accountPolicyEngine.evaluate(approvalSubject);
+          const approvalRequestKey = createApprovalRequestKey({
+            policy_version: current.config.policy_version,
+            scope: decisionContext.scope,
+            tool_name: effectiveToolName,
+            resource_scope: decisionContext.resource_scope,
+            resource_paths: [],
+            params: {
+              operation: decisionContext.operation ?? null,
+              destination_type: decisionContext.destination_type ?? null,
+              dest_domain: decisionContext.dest_domain ?? null,
+              rule_ids: ruleIds,
+            },
+          });
+          effectiveDecision = accountOverride?.decision ?? outcome.decision;
+          effectiveDecisionSource = accountOverride?.decision_source ?? outcome.decision_source;
+          effectiveReasonCodes = [...(accountOverride?.reason_codes ?? outcome.reason_codes)];
 
-            if (!pending) {
-              pending = approvalStore.create({
-                request_key: approvalRequestKey,
-                session_scope: approvalSubject,
-                expires_at: new Date(
-                  Date.now() +
-                    ((outcome.challenge_ttl_seconds ?? current.config.defaults.approval_ttl_seconds) * 1000),
-                ).toISOString(),
-                policy_version: current.config.policy_version,
-                actor_id: approvalSubject,
-                scope: approvalScope,
-                tool_name: effectiveToolName,
-                resource_scope: decisionContext.resource_scope,
-                resource_paths: decisionContext.resource_paths,
-                reason_codes: outcome.reason_codes,
-                rule_ids: ruleIds,
-                args_summary: argsSummary,
+          if (effectiveDecision === "challenge" && approvalBridge.enabled) {
+            const approvalScope = decisionContext.scope;
+            const approved = approvalStore.findApproved(approvalSubject, approvalRequestKey);
+            if (approved) {
+              effectiveDecision = "allow";
+              effectiveDecisionSource = "approval";
+              effectiveReasonCodes = ["APPROVAL_GRANTED"];
+            } else {
+              let pending = approvalStore.findPending(approvalSubject, approvalRequestKey);
+              let notificationResult: ApprovalNotificationResult = {
+                sent: Boolean(pending?.notifications.length),
+                notifications: pending?.notifications ?? [],
+              };
+
+              if (!pending) {
+                pending = approvalStore.create({
+                  request_key: approvalRequestKey,
+                  session_scope: approvalSubject,
+                  expires_at: new Date(
+                    Date.now() +
+                      ((outcome.challenge_ttl_seconds ?? current.config.defaults.approval_ttl_seconds) * 1000),
+                  ).toISOString(),
+                  policy_version: current.config.policy_version,
+                  actor_id: approvalSubject,
+                  scope: approvalScope,
+                  tool_name: effectiveToolName,
+                  resource_scope: decisionContext.resource_scope,
+                  resource_paths: decisionContext.resource_paths,
+                  reason_codes: outcome.reason_codes,
+                  rule_ids: ruleIds,
+                  args_summary: argsSummary,
+                });
+              }
+
+              if (approvalBridge.targets.length > 0 && shouldResendPendingApproval(pending)) {
+                notificationResult = await notifyApprovalTargets(api, approvalBridge.targets, pending);
+                if (notificationResult.notifications.length > 0) {
+                  pending =
+                    approvalStore.updateNotifications(
+                      pending.approval_id,
+                      mergeApprovalNotifications(pending.notifications, notificationResult.notifications),
+                    ) ?? pending;
+                }
+              }
+
+              approvalBlockReason = formatApprovalBlockReason({
+                toolName: event.toolName,
+                scope: decisionContext.scope,
+                traceId,
+                resourceScope: decisionContext.resource_scope,
+                reasonCodes: outcome.reason_codes,
+                rules,
+                approvalId: pending.approval_id,
+                notificationSent: notificationResult.sent || pending.notifications.length > 0,
               });
             }
-
-            if (approvalBridge.targets.length > 0 && shouldResendPendingApproval(pending)) {
-              notificationResult = await notifyApprovalTargets(api, approvalBridge.targets, pending);
-              if (notificationResult.notifications.length > 0) {
-                pending =
-                  approvalStore.updateNotifications(
-                    pending.approval_id,
-                    mergeApprovalNotifications(pending.notifications, notificationResult.notifications),
-                  ) ?? pending;
-              }
-            }
-
-            approvalBlockReason = formatApprovalBlockReason({
-              toolName: event.toolName,
-              scope: decisionContext.scope,
-              traceId,
-              resourceScope: decisionContext.resource_scope,
-              reasonCodes: outcome.reason_codes,
-              rules,
-              approvalId: pending.approval_id,
-              notificationSent: notificationResult.sent || pending.notifications.length > 0,
-            });
           }
         }
 

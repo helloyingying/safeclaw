@@ -131,6 +131,14 @@ function optionalString(value: string | null): string | undefined {
   return value ?? undefined;
 }
 
+function resolveDbPathFromSnapshotPath(snapshotPath: string): string {
+  const snapshotDir = path.dirname(path.resolve(snapshotPath));
+  if (path.basename(snapshotDir) === "runtime") {
+    return path.resolve(snapshotDir, "..", "data", "securityclaw.db");
+  }
+  return path.resolve(snapshotDir, "securityclaw.db");
+}
+
 const STATUS_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
@@ -180,18 +188,16 @@ export class RuntimeStatusStore {
       typeof statusPathOrOptions === "string"
         ? ({
             snapshotPath: statusPathOrOptions,
-            dbPath: path.resolve(path.dirname(statusPathOrOptions), "securityclaw.db"),
+            dbPath: resolveDbPathFromSnapshotPath(statusPathOrOptions),
             maxRecent
           } satisfies RuntimeStatusStoreOptions)
         : {
             snapshotPath: statusPathOrOptions.snapshotPath,
-            dbPath:
-              statusPathOrOptions.dbPath ??
-              path.resolve(path.dirname(statusPathOrOptions.snapshotPath), "securityclaw.db"),
+            dbPath: statusPathOrOptions.dbPath ?? resolveDbPathFromSnapshotPath(statusPathOrOptions.snapshotPath),
             maxRecent: statusPathOrOptions.maxRecent ?? 80
           };
     this.#snapshotPath = options.snapshotPath;
-    this.#dbPath = options.dbPath ?? path.resolve(path.dirname(options.snapshotPath), "securityclaw.db");
+    this.#dbPath = options.dbPath ?? resolveDbPathFromSnapshotPath(options.snapshotPath);
     this.#maxRecent = options.maxRecent ?? 80;
     mkdirSync(path.dirname(this.#snapshotPath), { recursive: true });
     mkdirSync(path.dirname(this.#dbPath), { recursive: true });

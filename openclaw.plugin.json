@@ -16,7 +16,7 @@
       },
       "dbPath": {
         "type": "string",
-        "description": "Path to local SQLite database for strategy persistence, runtime status, and decision history."
+        "description": "Optional absolute SQLite override for internal use. Relative values are ignored; normal installs use extensions/securityclaw/data/securityclaw.db."
       },
       "webhookUrl": {
         "type": "string",
@@ -43,7 +43,7 @@
       },
       "statusPath": {
         "type": "string",
-        "description": "Path to runtime status JSON written by SecurityClaw for dashboard monitoring."
+        "description": "Optional absolute status snapshot override for internal use. Relative values are ignored; normal installs use extensions/securityclaw/runtime/securityclaw-status.json."
       },
       "adminAutoStart": {
         "type": "boolean",

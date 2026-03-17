@@ -31,7 +31,7 @@ Last updated: 2026-03-15
 ### Verification Notes
 - Required done-gate passes (`npm test`, which includes `npm run typecheck` and unit tests).
 - Admin bundle rebuild succeeds (`npm run admin:build`).
-- Dashboard writes action edits to SQLite (`runtime/securityclaw.db`) through `PUT /api/strategy`.
+- Dashboard writes action edits to SQLite (`~/.openclaw/extensions/securityclaw/data/securityclaw.db` by default) through `PUT /api/strategy`.
 
 ## Next Plan
 

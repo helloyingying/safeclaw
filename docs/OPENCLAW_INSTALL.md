@@ -71,8 +71,6 @@ If you need to inspect the resulting config manually, it should look like this:
       "securityclaw": {
         "enabled": true,
         "config": {
-          "configPath": "./config/policy.default.yaml",
-          "adminAutoStart": true,
           "adminPort": 4780
         }
       }
@@ -81,18 +79,21 @@ If you need to inspect the resulting config manually, it should look like this:
 }
 ```
 
+In most cases, `securityclaw` does not need any explicit config block at all. Keep only `adminPort` when you want to override the default dashboard port.
+
 ## Install Steps
 1. Run `npm run openclaw:install`.
 2. Run `openclaw plugins list` and confirm `securityclaw` shows as `loaded`.
 3. Open `http://127.0.0.1:4780` if you want the local dashboard.
 
 ## Operational Notes
-- `config.configPath` is resolved relative to the installed plugin root, so `./config/policy.default.yaml` points to the packaged default policy.
-- `config.dbPath` defaults to the installed plugin root's `runtime/securityclaw.db` unless you override it explicitly.
+- `config.configPath` is optional. If unset, SecurityClaw uses the packaged default policy file.
+- SecurityClaw stores SQLite under OpenClaw state: `~/.openclaw/extensions/securityclaw/data/securityclaw.db`.
 - `config.overridePath` is only a legacy migration input (read-once import into SQLite), not an active persistence target.
-- `config.statusPath` defaults to the installed plugin root's `runtime/securityclaw-status.json`.
-- `config.adminAutoStart` defaults to `true`, so dashboard starts automatically when plugin load happens inside a persistent gateway service/runtime.
+- Runtime status is written under OpenClaw state: `~/.openclaw/extensions/securityclaw/runtime/securityclaw-status.json`.
+- `config.adminAutoStart` is optional and defaults to `true`, so dashboard starts automatically when plugin load happens inside a persistent gateway service/runtime.
 - `config.adminPort` controls dashboard bind port (default `4780`).
+- Relative `dbPath` / `statusPath` values are ignored to avoid writing back into the source tree's `runtime/` directory.
 - Release archives ship with a prebuilt admin bundle, so the installed plugin does not need the development `admin/src` tree.
 - Short-lived CLI commands that happen to load plugins (for example `openclaw gateway restart`) will skip dashboard auto-start; use `npm run admin` if you want a standalone local dashboard during debugging.
 - If you want webhook audit delivery, set `plugins.entries.securityclaw.config.webhookUrl`.

@@ -8,6 +8,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import plugin from "../index.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
+import { resolveDefaultSecurityClawDbPath } from "../src/infrastructure/config/plugin_config_parser.ts";
 
 type HookHandler = (...args: unknown[]) => unknown;
 type BeforeToolCallHook = (
@@ -26,21 +27,23 @@ const DEFAULT_GATEWAY_CTX = {
 
 function createPluginApiHarness(paths: {
   configPath: string;
-  dbPath: string;
-  statusPath: string;
+  dbPath?: string;
+  statusPath?: string;
+  stateDir?: string;
 }) {
   const hooks = new Map<string, HookHandler>();
+  const pluginConfig = {
+    configPath: paths.configPath,
+    ...(paths.dbPath !== undefined ? { dbPath: paths.dbPath } : {}),
+    ...(paths.statusPath !== undefined ? { statusPath: paths.statusPath } : {}),
+    adminAutoStart: false,
+  };
   const api = {
     id: "securityclaw",
     name: "SecurityClaw Security",
     source: "test",
     config: {},
-    pluginConfig: {
-      configPath: paths.configPath,
-      dbPath: paths.dbPath,
-      statusPath: paths.statusPath,
-      adminAutoStart: false,
-    },
+    pluginConfig,
     runtime: {
       version: "test",
       config: {
@@ -116,7 +119,7 @@ function createPluginApiHarness(paths: {
       },
       state: {
         resolveStateDir() {
-          return path.dirname(paths.dbPath);
+          return paths.stateDir ?? (paths.dbPath ? path.dirname(paths.dbPath) : os.tmpdir());
         },
       },
       modelAuth: {
@@ -229,6 +232,76 @@ async function createBeforeToolCallHook() {
     },
   };
 }
+
+async function createProtectedStorageHook() {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-protected-storage-"));
+  const stateDir = path.join(tempDir, "openclaw-state");
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = resolveDefaultSecurityClawDbPath(stateDir);
+
+  copyFileSync("./config/policy.default.yaml", configPath);
+  const harness = createPluginApiHarness({ configPath, stateDir });
+  await plugin.register(harness.api);
+
+  const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+  assert.ok(beforeToolCall);
+
+  return {
+    beforeToolCall,
+    dbPath,
+    stateDir,
+    cleanup() {
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
+test("gateway blocks writes to default SecurityClaw sqlite even inside the current workspace", async () => {
+  const harness = await createProtectedStorageHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.write",
+        params: {
+          path: harness.dbPath,
+          content: "tamper",
+        },
+      },
+      {
+        ...DEFAULT_GATEWAY_CTX,
+        workspaceDir: path.dirname(harness.dbPath),
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /SECURITYCLAW_STATE_STORAGE_PROTECTED/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway blocks shell access to protected SecurityClaw sqlite paths", async () => {
+  const harness = await createProtectedStorageHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: `sqlite3 ${JSON.stringify(harness.dbPath)} "DELETE FROM strategy_override"`,
+        },
+      },
+      {
+        ...DEFAULT_GATEWAY_CTX,
+        workspaceDir: path.dirname(harness.dbPath),
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /SECURITYCLAW_STATE_STORAGE_PROTECTED/);
+  } finally {
+    harness.cleanup();
+  }
+});
 
 test("gateway classifies messages.read as sms and challenges generic content access", async () => {
   const harness = await createBeforeToolCallHook();
