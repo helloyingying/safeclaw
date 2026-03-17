@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.2] - 2026-03-17
+
+### Changed
+- Simplified the README install section to focus on product overview plus remote install and uninstall flows.
+- Clarified that published npm releases ship with a prebuilt admin frontend bundle.
+- Prevented admin build tooling from being shipped as runtime npm dependencies.
+- Avoided auto-opening the dashboard from short-lived gateway service commands before the persistent admin backend is ready.
+
 ## [0.1.0] - 2026-03-15
 
 ### 架构重构

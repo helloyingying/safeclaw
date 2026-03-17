@@ -1,6 +1,6 @@
 {
   "name": "securityclaw",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "SecurityClaw security plugin for OpenClaw-compatible hooks.",
   "license": "MIT",
   "type": "module",
@@ -42,7 +42,7 @@
     "test:unit": "node --test --experimental-strip-types",
     "test": "npm run typecheck && npm run test:unit",
     "check": "npm test",
-    "admin": "node --experimental-strip-types ./admin/server.ts",
+    "admin": "npm run admin:build && node --experimental-strip-types ./admin/server.ts",
     "admin:build": "node ./scripts/build-admin.mjs",
     "prepack": "npm test && npm run admin:build",
     "pack:plugin": "node ./scripts/pack-plugin.mjs",
@@ -50,17 +50,15 @@
     "release:check": "node ./scripts/release-preflight.mjs",
     "release:dry-run": "npm run release:check && npm publish --dry-run --access public"
   },
-  "dependencies": {
-    "esbuild": "^0.27.4",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "recharts": "^3.8.0"
-  },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.27.4",
     "openclaw": "^2026.3.13",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "recharts": "^3.8.0",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

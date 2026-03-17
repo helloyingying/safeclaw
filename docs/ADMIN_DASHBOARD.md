@@ -2,8 +2,9 @@
 
 ## Start
 - Default behavior: when `securityclaw` is loaded inside a persistent OpenClaw gateway service/runtime, dashboard auto-starts at `http://127.0.0.1:4780`.
-- Plugin load now automatically checks admin frontend assets and rebuilds `admin/public/app.js` when `admin/src` is newer or bundle is missing.
+- Published release archives ship with a prebuilt admin frontend bundle, so installed plugins do not rebuild `admin/public/app.js` at install/startup time.
 - Optional manual mode: run `npm run admin` when you want standalone startup or local debugging.
+- `npm run admin` rebuilds the local frontend bundle first so repository checkouts stay in sync during development.
 - Short-lived CLI commands such as `openclaw gateway restart` do not keep the dashboard process alive.
 - `openclaw.json` usually does not need a `securityclaw.config` block at all; add `adminPort` only when you want a non-default port.
 - You can still set `plugins.entries.securityclaw.config.adminAutoStart=false` to disable auto-start.

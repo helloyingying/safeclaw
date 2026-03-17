@@ -168,9 +168,10 @@ export function announceAdminConsole(options: AnnounceAdminConsoleOptions): Anno
   const { locale, logger, url, state, stateDir, opener = openAdminConsoleInBrowser } = options;
   const markerPath = stateDir ? resolveAdminConsoleMarkerPath(stateDir) : undefined;
   const firstRun = markerPath !== undefined && !existsSync(markerPath);
+  const shouldAutoOpen = firstRun && state !== "service-command";
 
   let openedAutomatically = false;
-  if (firstRun) {
+  if (shouldAutoOpen) {
     const result = opener(url);
     if (result.ok) {
       openedAutomatically = true;

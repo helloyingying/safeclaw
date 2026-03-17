@@ -19,99 +19,69 @@ LLM agents can execute powerful tools. SecurityClaw provides a policy guardrail 
 - Decision events for audit and observability
 - Built-in internationalization (`en` and `zh-CN`) for runtime/admin text
 
-## Architecture
+## Install
 
-SecurityClaw follows a layered architecture:
+### Direct Use
 
-- `domain`: policy, approval, context inference, formatting
-- `domain/services/sensitive_path_registry.ts`: built-in + runtime-overridden sensitive path mappings
-- `engine`: rule matching, decisioning, DLP scanning
-- `config`: base YAML + SQLite runtime override
-- `admin`: dashboard backend + frontend
-- `monitoring`: runtime status and decision snapshots
+Install the latest published release:
 
-See [Architecture](./docs/ARCHITECTURE.md) and [Technical Solution](./docs/TECHNICAL_SOLUTION.md).
+```bash
+npx securityclaw install
+```
 
-## Quick Start
+Or install through the remote script:
 
-### 1. Install dependencies
+```bash
+curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
+```
+
+Install a specific published version:
+
+```bash
+SECURITYCLAW_VERSION=0.0.2 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
+```
+
+After installation, if the admin dashboard did not open automatically, open `http://127.0.0.1:4780`.
+
+### From Source
+
+Clone the repository, then install dependencies:
 
 ```bash
 npm install
 ```
 
-### 2. Install into OpenClaw
+Install the current workspace build into OpenClaw:
 
 ```bash
 npm run openclaw:install
 ```
 
-Alternative install paths for end users:
-
-```bash
-npx securityclaw install
-curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
-```
-
-### 3. Run verification
+Run verification:
 
 ```bash
 npm test
 ```
 
-### 4. Start admin dashboard (standalone)
+Start the standalone admin dashboard when needed:
 
 ```bash
 npm run admin
 ```
 
-Default dashboard URL: `http://127.0.0.1:4780`
+## Uninstall
 
-## OpenClaw Integration
-
-Preferred local install:
+Remove the installed plugin from OpenClaw:
 
 ```bash
-npm run openclaw:install
+openclaw plugins uninstall securityclaw
 ```
 
-This creates a versioned plugin archive, installs it through `openclaw plugins install`, restarts the gateway, and verifies gateway health.
-See [OpenClaw Install Guide](./docs/OPENCLAW_INSTALL.md) for details.
+Preview the removal first if needed:
 
-## Approval Commands
-
-After setting one account policy with `is_admin=true`, the admin can run:
-
-- `/securityclaw-approve <approval_id>`
-- `/securityclaw-approve <approval_id> long`
-- `/securityclaw-reject <approval_id>`
-- `/securityclaw-pending`
-
-## Admin Dashboard
-
-Dashboard supports English and Chinese UI switching and stores language preference in local storage.
-By default, it follows the host system language.
-
-Main panels:
-
-- Overview: posture and trend signals, plus a skill-risk snapshot for high-priority installed skills
-- Decisions: recent decision events and reasons
-- Policies: grouped rule strategy controls plus sensitive-path registry management
-- Skill Interception: installed skill inventory, risk scoring, undeclared-change detection, rescan/quarantine/trust override actions, and interception policy matrix
-- Accounts: admin approver account selection and mode settings
-
-Sensitive path registry behavior:
-
-- Built-in path patterns cover credentials, personal content, download staging, browser profiles, browser secret stores, and communication stores.
-- Registry entries are persisted in SQLite runtime strategy overrides together with rule decisions.
-- Built-in entries can be disabled from the dashboard, and custom path rules can be added without editing the base YAML.
-
-Skill interception behavior:
-
-- Dashboard discovers installed skills from local OpenClaw / Codex skill roots and stores scan results in SQLite.
-- A skill can be flagged when its content changes without a matching version update.
-- Overview surfaces the most important skill signals directly so admins can see high-risk items without switching tabs.
-- The dedicated Skill Interception panel supports rescan, quarantine, temporary trust override, and risk-matrix editing.
+```bash
+openclaw plugins uninstall securityclaw --dry-run
+```
 
 ## Documentation
 
@@ -120,15 +90,6 @@ Skill interception behavior:
 - [Admin Dashboard](./docs/ADMIN_DASHBOARD.md)
 - [Runbook](./docs/RUNBOOK.md)
 - [Integration Guide](./docs/INTEGRATION_GUIDE.md)
-
-## Development
-
-```bash
-npm run typecheck
-npm run test:unit
-npm test
-npm run admin:build
-```
 
 ## License
 

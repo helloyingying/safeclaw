@@ -30,7 +30,6 @@ import {
 } from "./src/infrastructure/config/plugin_config_parser.ts";
 import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
-import { ensureAdminAssetsBuilt } from "./src/admin/build.ts";
 import { announceAdminConsole, shouldAnnounceAdminConsoleForArgv } from "./src/admin/console_notice.ts";
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
@@ -1991,68 +1990,66 @@ const plugin = {
       return runtime;
     }
 
-    statusStore.markBoot(toStatusConfig(runtime.config, runtime.overrideLoaded, resolved));
-    const adminBuildPromise = ensureAdminAssetsBuilt({
-      logger: {
-        info: (message: string) => api.logger.info?.(`securityclaw: ${message}`)
+    function startManagedAdminConsole(): void {
+      if (!adminAutoStart) {
+        api.logger.info?.("securityclaw: admin auto-start disabled by config");
+        return;
       }
-    }).catch((error) => {
-      api.logger.warn?.(`securityclaw: failed to refresh admin bundle (${String(error)})`);
-    });
-    if (adminAutoStart) {
+
       const autoStartDecision = shouldAutoStartAdminServer(process.env);
-      if (autoStartDecision.enabled) {
-        const adminServerOptions = {
-          configPath: resolved.configPath,
-          legacyOverridePath: resolved.legacyOverridePath,
-          statusPath,
-          dbPath,
-          unrefOnStart: true,
-          logger: {
-            info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
-            warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`)
-          },
-          ...(pluginConfig.adminPort !== undefined ? { port: pluginConfig.adminPort } : {})
-        };
-        void adminBuildPromise
-          .then(() => startAdminServer(adminServerOptions))
-          .then((result) => {
-            announceAdminConsole({
-              locale: runtimeLocale,
-              logger: {
-                info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
-                warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`),
-              },
-              stateDir,
-              state: result.state,
-              url: `http://127.0.0.1:${result.runtime.port}`,
-            });
-          })
-          .catch((error) => {
-            api.logger.warn?.(`securityclaw: failed to auto-start admin dashboard (${String(error)})`);
+      if (!autoStartDecision.enabled) {
+        if (shouldAnnounceAdminConsoleForArgv(process.argv)) {
+          announceAdminConsole({
+            locale: runtimeLocale,
+            logger: {
+              info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
+              warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`),
+            },
+            stateDir,
+            state: "service-command",
+            url: adminConsoleUrl,
           });
-	      } else {
-	        if (shouldAnnounceAdminConsoleForArgv(process.argv)) {
-	          announceAdminConsole({
-	            locale: runtimeLocale,
-	            logger: {
-	              info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
-	              warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`),
-	            },
-	            stateDir,
-	            state: "service-command",
-	            url: adminConsoleUrl,
-	          });
-	          api.logger.info?.("securityclaw: admin dashboard is hosted by the background OpenClaw gateway service");
-	        } else {
-	          api.logger.info?.(
-	            `securityclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,
-	          );
-	        }
-	      }
-	    } else {
-      api.logger.info?.("securityclaw: admin auto-start disabled by config");
+          api.logger.info?.("securityclaw: admin dashboard is hosted by the background OpenClaw gateway service");
+        } else {
+          api.logger.info?.(
+            `securityclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,
+          );
+        }
+        return;
+      }
+
+      const adminServerOptions = {
+        configPath: resolved.configPath,
+        legacyOverridePath: resolved.legacyOverridePath,
+        statusPath,
+        dbPath,
+        unrefOnStart: true,
+        logger: {
+          info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
+          warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`),
+        },
+        ...(pluginConfig.adminPort !== undefined ? { port: pluginConfig.adminPort } : {}),
+      };
+
+      void startAdminServer(adminServerOptions)
+        .then((result) => {
+          announceAdminConsole({
+            locale: runtimeLocale,
+            logger: {
+              info: (message: string) => api.logger.info?.(`securityclaw: ${message}`),
+              warn: (message: string) => api.logger.warn?.(`securityclaw: ${message}`),
+            },
+            stateDir,
+            state: result.state,
+            url: `http://127.0.0.1:${result.runtime.port}`,
+          });
+        })
+        .catch((error) => {
+          api.logger.warn?.(`securityclaw: failed to auto-start admin dashboard (${String(error)})`);
+        });
     }
+
+    statusStore.markBoot(toStatusConfig(runtime.config, runtime.overrideLoaded, resolved));
 
     api.logger.info?.(
       `securityclaw: boot env=${runtime.config.environment} policy_version=${runtime.config.policy_version} dlp_mode=${runtime.config.dlp.on_dlp_hit} rules=${runtime.config.policies.length}`,
@@ -2655,6 +2652,7 @@ const plugin = {
       { priority: 100 },
     );
 
+    startManagedAdminConsole();
     api.logger.info?.(`securityclaw: loaded policy_version=${runtime.config.policy_version}`);
   }
 };

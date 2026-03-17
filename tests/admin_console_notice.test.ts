@@ -162,3 +162,32 @@ test("admin console announcement retries auto-open until it succeeds", () => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("service-command announcement waits for the persistent gateway to open the dashboard", () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-admin-console-service-"));
+  let openAttempts = 0;
+
+  try {
+    const result = announceAdminConsole({
+      locale: "en",
+      logger: {
+        info() {},
+        warn() {},
+      },
+      stateDir: tempDir,
+      state: "service-command",
+      url: "http://127.0.0.1:4780",
+      opener() {
+        openAttempts += 1;
+        return { ok: true, command: "test-open" };
+      },
+    });
+
+    assert.equal(result.firstRun, true);
+    assert.equal(result.openedAutomatically, false);
+    assert.equal(openAttempts, 0);
+    assert.equal(existsSync(resolveAdminConsoleMarkerPath(tempDir)), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

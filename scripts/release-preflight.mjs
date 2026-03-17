@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
+const packageLock = JSON.parse(readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
 const installScript = readFileSync(path.join(ROOT, "install.sh"), "utf8");
+const buildOnlyDependencies = ["esbuild", "react", "react-dom", "recharts"];
 
 const failures = [];
 const packageName = typeof pkg.name === "string" ? pkg.name.trim() : "";
@@ -26,6 +28,29 @@ if (installPackage !== packageName) {
 const requiredRepository = "git+https://github.com/znary/securityclaw.git";
 if (pkg.repository?.url !== requiredRepository) {
   failures.push(`package.json repository.url must be '${requiredRepository}' for trusted publishing provenance.`);
+}
+
+const runtimeDependencies = pkg.dependencies ?? {};
+for (const dependencyName of buildOnlyDependencies) {
+  if (dependencyName in runtimeDependencies) {
+    failures.push(`package.json dependencies must not include build-only package '${dependencyName}'.`);
+  }
+}
+
+const lockRoot = packageLock.packages?.[""] ?? {};
+if (packageLock.name !== packageName || lockRoot.name !== packageName) {
+  failures.push("package-lock.json name must match package.json name.");
+}
+
+if (packageLock.version !== pkg.version || lockRoot.version !== pkg.version) {
+  failures.push("package-lock.json version must match package.json version.");
+}
+
+const lockRuntimeDependencies = lockRoot.dependencies ?? {};
+for (const dependencyName of buildOnlyDependencies) {
+  if (dependencyName in lockRuntimeDependencies) {
+    failures.push(`package-lock.json runtime dependencies must not include build-only package '${dependencyName}'.`);
+  }
 }
 
 if (failures.length > 0) {

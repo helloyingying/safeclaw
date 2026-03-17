@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh 
 Optional environment overrides:
 
 ```bash
-SECURITYCLAW_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
+SECURITYCLAW_VERSION=0.0.2 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
 SECURITYCLAW_NPM_PACKAGE=securityclaw curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
 ```
 
@@ -94,7 +94,7 @@ In most cases, `securityclaw` does not need any explicit config block at all. Ke
 - `config.adminAutoStart` is optional and defaults to `true`, so dashboard starts automatically when plugin load happens inside a persistent gateway service/runtime.
 - `config.adminPort` controls dashboard bind port (default `4780`).
 - Relative `dbPath` / `statusPath` values are ignored to avoid writing back into the source tree's `runtime/` directory.
-- Release archives ship with a prebuilt admin bundle, so the installed plugin does not need the development `admin/src` tree.
+- Release archives ship with a prebuilt admin bundle, so the installed plugin does not need the development `admin/src` tree or the React/esbuild build toolchain at runtime.
 - Short-lived CLI commands that happen to load plugins (for example `openclaw gateway restart`) will skip dashboard auto-start; use `npm run admin` if you want a standalone local dashboard during debugging.
 - If you want webhook audit delivery, set `plugins.entries.securityclaw.config.webhookUrl`.
 - `before_tool_call` uses a pure rule-first model: matched rules decide `allow/warn/challenge/block`, otherwise default allow.
