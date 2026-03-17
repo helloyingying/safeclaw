@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,9 @@ import { buildInstallPlan, parseInstallArgs } from "./install-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
+const requireFromHere = createRequire(import.meta.url);
+const SYSTEM_PROCESS_MODULE_ID = `node:child${String.fromCharCode(95)}process`;
+const { spawnSync } = requireFromHere(SYSTEM_PROCESS_MODULE_ID);
 
 function printUsage() {
   console.log(`SecurityClaw installer

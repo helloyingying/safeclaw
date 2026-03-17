@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh 
 Optional environment overrides:
 
 ```bash
-SECURITYCLAW_VERSION=0.0.2 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
+SECURITYCLAW_VERSION=0.0.3 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
 SECURITYCLAW_NPM_PACKAGE=securityclaw curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
 ```
 

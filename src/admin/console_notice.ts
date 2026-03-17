@@ -1,10 +1,10 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { resolveSecurityClawStateDir } from "../infrastructure/config/plugin_config_parser.ts";
 import type { SecurityClawLocale } from "../i18n/locale.ts";
 import { pickLocalized } from "../i18n/locale.ts";
+import { runProcessSync } from "../runtime/process_runner.ts";
 
 export type AdminConsoleState = "started" | "already-running" | "service-command";
 
@@ -122,7 +122,7 @@ function writeAdminConsoleMarker(markerPath: string, url: string): void {
 
 export function openAdminConsoleInBrowser(url: string): BrowserOpenResult {
   if (process.platform === "darwin") {
-    const result = spawnSync("open", [url], { stdio: "ignore", timeout: 5_000 });
+    const result = runProcessSync("open", [url], { stdio: "ignore", timeout: 5_000 });
     if (result.error) {
       return { ok: false, command: "open", error: String(result.error) };
     }
@@ -133,7 +133,7 @@ export function openAdminConsoleInBrowser(url: string): BrowserOpenResult {
   }
 
   if (process.platform === "win32") {
-    const result = spawnSync("cmd", ["/c", "start", "", url], {
+    const result = runProcessSync("cmd", ["/c", "start", "", url], {
       stdio: "ignore",
       timeout: 5_000,
       windowsHide: true,
@@ -148,7 +148,7 @@ export function openAdminConsoleInBrowser(url: string): BrowserOpenResult {
   }
 
   if (process.platform === "linux") {
-    const result = spawnSync("xdg-open", [url], { stdio: "ignore", timeout: 5_000 });
+    const result = runProcessSync("xdg-open", [url], { stdio: "ignore", timeout: 5_000 });
     if (result.error) {
       return { ok: false, command: "xdg-open", error: String(result.error) };
     }

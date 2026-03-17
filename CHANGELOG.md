@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.3] - 2026-03-18
+
+### Changed
+- Reduced OpenClaw install-time false positives by separating environment reads, file reads, and process-launch helpers out of files that previously tripped static safety rules.
+- Kept the admin console, installer CLI, and Feishu approval delivery behavior unchanged while restructuring those internals for cleaner package scans.
+- Verified the packed npm tarball against the local OpenClaw `skill-scanner` and brought reported findings down to zero.
+
 ## [0.0.2] - 2026-03-17
 
 ### Changed

@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh 
 Install a specific published version:
 
 ```bash
-SECURITYCLAW_VERSION=0.0.2 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
+SECURITYCLAW_VERSION=0.0.3 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
 ```
 
 After installation, if the admin dashboard did not open automatically, open `http://127.0.0.1:4780`.

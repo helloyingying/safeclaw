@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh 
 安装指定发布版本：
 
 ```bash
-SECURITYCLAW_VERSION=0.0.2 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
+SECURITYCLAW_VERSION=0.0.3 curl -fsSL https://raw.githubusercontent.com/znary/securityclaw/main/install.sh | bash
 ```
 
 安装完成后，如果管理后台没有自动打开，可手动访问 `http://127.0.0.1:4780`。

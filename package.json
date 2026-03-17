@@ -1,6 +1,6 @@
 {
   "name": "securityclaw",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "SecurityClaw security plugin for OpenClaw-compatible hooks.",
   "license": "MIT",
   "type": "module",

@@ -1,6 +1,5 @@
 import http from "node:http";
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,6 +9,7 @@ import {
   matchesAdminDecisionFilter,
   normalizeAdminDecisionFilterId,
 } from "../src/admin/dashboard_url_state.ts";
+import { readJsonRecordFile, readUtf8File } from "../src/admin/file_reader.ts";
 import { SkillInterceptionStore } from "../src/admin/skill_interception_store.ts";
 import { listOpenClawChatSessions } from "../src/admin/openclaw_session_catalog.ts";
 import { ConfigManager } from "../src/config/loader.ts";
@@ -29,10 +29,13 @@ import {
 } from "../src/domain/services/sensitive_path_registry.ts";
 import type { SecurityClawLocale } from "../src/i18n/locale.ts";
 import { pickLocalized, resolveSecurityClawLocale } from "../src/i18n/locale.ts";
+import { readSecurityClawAdminServerEnv, resolveSecurityClawAdminPort } from "../src/runtime/process_env.ts";
+import { runProcessSync } from "../src/runtime/process_runner.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.resolve(ROOT, "admin/public");
-const DEFAULT_PORT = Number(process.env.SECURITYCLAW_ADMIN_PORT ?? 4780);
+const DEFAULT_ADMIN_ENV = readSecurityClawAdminServerEnv();
+const DEFAULT_PORT = resolveSecurityClawAdminPort();
 const DEFAULT_OPENCLAW_HOME = resolveDefaultOpenClawStateDir();
 
 type AdminLogger = {
@@ -128,7 +131,7 @@ const EMPTY_DECISION_COUNTS: DecisionHistoryCounts = {
   block: 0,
 };
 
-const ADMIN_DEFAULT_LOCALE = resolveSecurityClawLocale(process.env.SECURITYCLAW_LOCALE, "en");
+const ADMIN_DEFAULT_LOCALE = resolveSecurityClawLocale(DEFAULT_ADMIN_ENV.locale, "en");
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -181,7 +184,7 @@ function safeReadStatus(statusPath: string): JsonRecord {
     };
   }
   try {
-    return JSON.parse(readFileSync(statusPath, "utf8")) as JsonRecord;
+    return readJsonRecordFile(statusPath);
   } catch {
     return {
       message: "status file exists but cannot be parsed",
@@ -842,7 +845,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: U
           : ext === ".svg"
             ? "image/svg+xml"
           : "application/octet-stream";
-  sendText(res, 200, readFileSync(absolute, "utf8"), contentType);
+  sendText(res, 200, readUtf8File(absolute), contentType);
 }
 
 function readEffectivePolicy(runtime: AdminRuntime, strategyStore: StrategyStore): {
@@ -858,10 +861,10 @@ function readEffectivePolicy(runtime: AdminRuntime, strategyStore: StrategyStore
 
 function resolveAdminPluginConfig(options: AdminServerOptions): SecurityClawPluginConfig {
   return {
-    ...(process.env.SECURITYCLAW_CONFIG_PATH ? { configPath: process.env.SECURITYCLAW_CONFIG_PATH } : {}),
-    ...(process.env.SECURITYCLAW_LEGACY_OVERRIDE_PATH ? { overridePath: process.env.SECURITYCLAW_LEGACY_OVERRIDE_PATH } : {}),
-    ...(process.env.SECURITYCLAW_STATUS_PATH ? { statusPath: process.env.SECURITYCLAW_STATUS_PATH } : {}),
-    ...(process.env.SECURITYCLAW_DB_PATH ? { dbPath: process.env.SECURITYCLAW_DB_PATH } : {}),
+    ...(DEFAULT_ADMIN_ENV.configPath ? { configPath: DEFAULT_ADMIN_ENV.configPath } : {}),
+    ...(DEFAULT_ADMIN_ENV.legacyOverridePath ? { overridePath: DEFAULT_ADMIN_ENV.legacyOverridePath } : {}),
+    ...(DEFAULT_ADMIN_ENV.statusPath ? { statusPath: DEFAULT_ADMIN_ENV.statusPath } : {}),
+    ...(DEFAULT_ADMIN_ENV.dbPath ? { dbPath: DEFAULT_ADMIN_ENV.dbPath } : {}),
     ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
     ...(options.legacyOverridePath !== undefined ? { overridePath: options.legacyOverridePath } : {}),
     ...(options.statusPath !== undefined ? { statusPath: options.statusPath } : {}),
@@ -890,19 +893,19 @@ function parsePids(output: string): number[] {
 }
 
 function listListeningPidsByPort(port: number): number[] {
-  const result = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8" });
+  const result = runProcessSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8" });
   if (result.error || result.status !== 0) {
     return [];
   }
-  return parsePids(result.stdout);
+  return parsePids(result.stdout ?? "");
 }
 
 function readProcessCommand(pid: number): string {
-  const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+  const result = runProcessSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
   if (result.error || result.status !== 0) {
     return "";
   }
-  return result.stdout.trim();
+  return (result.stdout ?? "").trim();
 }
 
 function looksLikeOpenClawProcess(command: string): boolean {

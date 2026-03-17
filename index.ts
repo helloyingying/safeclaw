@@ -32,6 +32,7 @@ import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
 import { announceAdminConsole, shouldAnnounceAdminConsoleForArgv } from "./src/admin/console_notice.ts";
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
+import { readProcessEnvValue, resolveSecurityClawAdminPort } from "./src/runtime/process_env.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
 import {
@@ -171,7 +172,7 @@ function resolvePluginStateDir(api: OpenClawPluginApi): string {
 }
 
 function resolveAdminConsoleUrl(pluginConfig: SecurityClawPluginConfig): string {
-  const port = pluginConfig.adminPort ?? Number(process.env.SECURITYCLAW_ADMIN_PORT ?? 4780);
+  const port = pluginConfig.adminPort ?? resolveSecurityClawAdminPort();
   return `http://127.0.0.1:${port}`;
 }
 
@@ -1164,7 +1165,7 @@ function resolveFeishuSecretValue(value: unknown): string | undefined {
   const source = feishuTrimmedString(record.source)?.toLowerCase();
   const id = feishuTrimmedString(record.id);
   if (source === "env" && id) {
-    const envValue = feishuTrimmedString(process.env[id]);
+    const envValue = feishuTrimmedString(readProcessEnvValue(id));
     if (envValue) {
       return envValue;
     }
@@ -1996,7 +1997,7 @@ const plugin = {
         return;
       }
 
-      const autoStartDecision = shouldAutoStartAdminServer(process.env);
+      const autoStartDecision = shouldAutoStartAdminServer();
       if (!autoStartDecision.enabled) {
         if (shouldAnnounceAdminConsoleForArgv(process.argv)) {
           announceAdminConsole({

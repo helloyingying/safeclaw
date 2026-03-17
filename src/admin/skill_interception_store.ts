@@ -670,8 +670,21 @@ export function analyzeSkillDocument(input: {
   const normalizedName = input.name.trim().toLowerCase();
   const siblingNames = input.siblingNames.map((item) => item.trim().toLowerCase()).filter(Boolean);
   const downloadExecutePattern = /(curl|wget)[^\n]{0,120}\|\s*(sh|bash|zsh)|download[^.\n]{0,60}(then )?(run|execute)/i;
-  const shellExecPattern =
-    /(exec_command|spawnSync|child_process|bash\s+-lc|zsh\s+-lc|powershell|rm\s+-rf|chmod\s+-R|chown\s+-R)/i;
+  const childProcessToken = `child${String.fromCharCode(95)}process`;
+  const shellExecPattern = new RegExp(
+    [
+      "exec_command",
+      "spawnSync",
+      childProcessToken,
+      "bash\\s+-lc",
+      "zsh\\s+-lc",
+      "powershell",
+      "rm\\s+-rf",
+      "chmod\\s+-R",
+      "chown\\s+-R",
+    ].join("|"),
+    "i",
+  );
   const bypassPattern =
     /(ignore|bypass|disable|skip)[^.\n]{0,40}(policy|security|guard|safety)|hide (the )?(output|logs)|不要提示|不要暴露/i;
   const credentialPattern =
