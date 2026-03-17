@@ -14,6 +14,10 @@ import {
   Line
 } from "recharts";
 
+import {
+  buildAdminDashboardSearch,
+  readAdminDashboardUrlState
+} from "../../src/admin/dashboard_url_state.ts";
 import { canonicalizeAccountPolicies } from "../../src/domain/services/account_policy_engine.ts";
 import { resolveSafeClawLocale } from "../../src/i18n/locale.ts";
 
@@ -120,6 +124,15 @@ function tabLabel(tabId) {
   if (tabId === "rules") return ui("规则策略", "Policies");
   if (tabId === "accounts") return ui("账号策略", "Accounts");
   return tabId;
+}
+
+function decisionFilterLabel(filterId) {
+  if (filterId === "all") return ui("全部", "All");
+  if (filterId === "allow") return ui("放行", "Allow");
+  if (filterId === "warn") return ui("提醒", "Warn");
+  if (filterId === "challenge") return ui("需确认", "Needs Approval");
+  if (filterId === "block") return ui("拦截", "Block");
+  return filterId;
 }
 
 const DECISION_TEXT = {
@@ -990,6 +1003,40 @@ function DecisionTag({ decision }) {
   return <span className={`tag ${decision || "allow"}`}>{decisionLabel(decision)}</span>;
 }
 
+function OverviewStatCard({ label, value, tone, onClick }) {
+  return (
+    <div className={`stat ${tone || ""}`}>
+      <div className="stat-head">
+        <b>{label}</b>
+      </div>
+      {typeof onClick === "function" ? (
+        <button
+          className="stat-value-button"
+          type="button"
+          onClick={onClick}
+          aria-label={`${label}: ${value}`}
+          title={label}
+        >
+          {value}
+        </button>
+      ) : (
+        <span className="stat-value">{value}</span>
+      )}
+    </div>
+  );
+}
+
+function buildDecisionApiPath(decisionFilter, decisionPage) {
+  const searchParams = new URLSearchParams({
+    page: String(decisionPage),
+    page_size: String(DECISIONS_PER_PAGE)
+  });
+  if (decisionFilter !== "all") {
+    searchParams.set("decision", decisionFilter);
+  }
+  return `/api/decisions?${searchParams.toString()}`;
+}
+
 function trimLabel(value, max = 10) {
   if (typeof value !== "string") {
     return "";
@@ -1083,6 +1130,20 @@ function readInitialAdminThemePreference() {
   return normalizeAdminThemePreference(queryTheme || storedTheme);
 }
 
+function readInitialAdminDashboardViewState() {
+  if (typeof window === "undefined") {
+    return {
+      tab: "overview",
+      decisionFilter: "all",
+      decisionPage: 1
+    };
+  }
+  return readAdminDashboardUrlState({
+    search: window.location.search,
+    hash: window.location.hash
+  });
+}
+
 function App() {
   const [locale, setLocale] = useState(readInitialAdminLocale);
   activeLocale = locale;
@@ -1099,13 +1160,12 @@ function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [decisionLoading, setDecisionLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState(() => {
-    const hash = window.location.hash.replace("#", "");
-    const valid = ["overview", "events", "rules", "accounts"];
-    return valid.includes(hash) ? hash : "overview";
-  });
-  const [decisionPage, setDecisionPage] = useState(1);
+  const [activeTab, setActiveTab] = useState(() => readInitialAdminDashboardViewState().tab);
+  const [decisionFilter, setDecisionFilter] = useState(() => readInitialAdminDashboardViewState().decisionFilter);
+  const [decisionPage, setDecisionPage] = useState(() => readInitialAdminDashboardViewState().decisionPage);
+  const [decisionPayload, setDecisionPayload] = useState(null);
   const [activeRuleKey, setActiveRuleKey] = useState("");
   const [sidePanelOffset, setSidePanelOffset] = useState(0);
   const rulesColumnRef = useRef(null);
@@ -1187,6 +1247,73 @@ function App() {
     }
   }, [theme, themePreference]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const syncFromLocation = () => {
+      const next = readAdminDashboardUrlState({
+        search: window.location.search,
+        hash: window.location.hash
+      });
+      setActiveTab(next.tab);
+      setDecisionFilter(next.decisionFilter);
+      setDecisionPage(next.decisionPage);
+    };
+
+    window.addEventListener("popstate", syncFromLocation);
+    window.addEventListener("hashchange", syncFromLocation);
+    return () => {
+      window.removeEventListener("popstate", syncFromLocation);
+      window.removeEventListener("hashchange", syncFromLocation);
+    };
+  }, []);
+
+  const navigateDashboard = useCallback((nextViewState) => {
+    const resolvedTab = nextViewState.tab ?? activeTab;
+    const resolvedDecisionFilter = nextViewState.decisionFilter ?? decisionFilter;
+    const resolvedDecisionPage = nextViewState.decisionPage ?? decisionPage;
+
+    setActiveTab(resolvedTab);
+    setDecisionFilter(resolvedDecisionFilter);
+    setDecisionPage(resolvedDecisionPage);
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextSearch = buildAdminDashboardSearch({
+      currentSearch: window.location.search,
+      tab: resolvedTab,
+      decisionFilter: resolvedDecisionFilter,
+      decisionPage: resolvedDecisionPage
+    });
+    const nextUrl = `${window.location.pathname}${nextSearch}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl !== currentUrl || window.location.hash) {
+      window.history.pushState({}, "", nextUrl);
+    }
+  }, [activeTab, decisionFilter, decisionPage]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextSearch = buildAdminDashboardSearch({
+      currentSearch: window.location.search,
+      tab: activeTab,
+      decisionFilter,
+      decisionPage
+    });
+    const nextUrl = `${window.location.pathname}${nextSearch}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl !== currentUrl || window.location.hash) {
+      window.history.replaceState({}, "", nextUrl);
+    }
+  }, [activeTab, decisionFilter, decisionPage]);
+
   const loadData = useCallback(async (options = {}) => {
     const {
       syncRules = true,
@@ -1222,9 +1349,28 @@ function App() {
     }
   }, []);
 
+  const loadDecisionPage = useCallback(async (options = {}) => {
+    const { silent = false } = options;
+    if (!silent) {
+      setDecisionLoading(true);
+    }
+    try {
+      const payload = await getJson(buildDecisionApiPath(decisionFilter, decisionPage));
+      setDecisionPayload(payload);
+    } catch (loadError) {
+      setError(String(loadError));
+    } finally {
+      setDecisionLoading(false);
+    }
+  }, [decisionFilter, decisionPage]);
+
   useEffect(() => {
     void loadData({ syncRules: true, syncAccounts: true, silent: false });
   }, [loadData]);
+
+  useEffect(() => {
+    void loadDecisionPage({ silent: false });
+  }, [loadDecisionPage]);
 
   useEffect(() => {
     if (hasPendingChanges || saving) {
@@ -1232,27 +1378,40 @@ function App() {
     }
     const timer = setInterval(() => {
       void loadData({ syncRules: true, syncAccounts: true, silent: true });
+      void loadDecisionPage({ silent: true });
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [hasPendingChanges, loadData, saving]);
+  }, [hasPendingChanges, loadData, loadDecisionPage, saving]);
 
-  const totals = statusPayload?.totals || {};
   const decisions = toArray(statusPayload?.status?.recent_decisions);
+  const decisionCounts = decisionPayload?.counts || {
+    all: 0,
+    allow: 0,
+    warn: 0,
+    challenge: 0,
+    block: 0
+  };
+  const filteredDecisionTotal = Number(decisionPayload?.total || 0);
   const latestDecision = decisions[0] || null;
-  const totalDecisionPages = Math.max(1, Math.ceil(decisions.length / DECISIONS_PER_PAGE));
-  const pagedDecisions = decisions.slice(
-    (decisionPage - 1) * DECISIONS_PER_PAGE,
-    decisionPage * DECISIONS_PER_PAGE
-  );
+  const totalDecisionPages = Math.max(1, Math.ceil(filteredDecisionTotal / DECISIONS_PER_PAGE));
+  const pagedDecisions = toArray(decisionPayload?.items);
   const pageItems = buildPageItems(decisionPage, totalDecisionPages);
-  const firstDecisionIndex = decisions.length === 0 ? 0 : (decisionPage - 1) * DECISIONS_PER_PAGE + 1;
-  const lastDecisionIndex = Math.min(decisionPage * DECISIONS_PER_PAGE, decisions.length);
+  const firstDecisionIndex = filteredDecisionTotal === 0 ? 0 : (decisionPage - 1) * DECISIONS_PER_PAGE + 1;
+  const lastDecisionIndex = Math.min(decisionPage * DECISIONS_PER_PAGE, filteredDecisionTotal);
+  const decisionFilterOptions = [
+    { value: "all", count: decisionCounts.all },
+    { value: "allow", count: decisionCounts.allow },
+    { value: "warn", count: decisionCounts.warn },
+    { value: "challenge", count: decisionCounts.challenge },
+    { value: "block", count: decisionCounts.block }
+  ];
 
   const stats = {
-    total: Number(totals.total || 0),
-    allow: Number(totals.allow || 0),
-    watch: Number(totals.warn || 0) + Number(totals.challenge || 0),
-    block: Number(totals.block || 0)
+    total: decisionCounts.all,
+    allow: decisionCounts.allow,
+    warn: decisionCounts.warn,
+    challenge: decisionCounts.challenge,
+    block: decisionCounts.block
   };
   const beforeToolDecisions = useMemo(
     () => decisions.filter((item) => item.hook === "before_tool_call"),
@@ -1433,8 +1592,11 @@ function App() {
   }, [accountPolicies, hasPendingAccountChanges, loading, saveAccounts, saving]);
 
   useEffect(() => {
+    if (decisionLoading) {
+      return;
+    }
     setDecisionPage((current) => Math.min(current, totalDecisionPages));
-  }, [totalDecisionPages]);
+  }, [decisionLoading, totalDecisionPages]);
 
   useEffect(() => {
     if (!activeRuleKey) {
@@ -1481,8 +1643,27 @@ function App() {
   }, [activeTab, firstRuleKey, policyEntries.length]);
 
   function switchTab(tabId) {
-    setActiveTab(tabId);
-    window.location.hash = tabId;
+    navigateDashboard({
+      tab: tabId,
+      decisionFilter,
+      decisionPage
+    });
+  }
+
+  function openDecisionRecords(filterId) {
+    navigateDashboard({
+      tab: "events",
+      decisionFilter: filterId,
+      decisionPage: 1
+    });
+  }
+
+  function selectDecisionFilter(filterId) {
+    navigateDashboard({
+      tab: "events",
+      decisionFilter: filterId,
+      decisionPage: 1
+    });
   }
 
   function onDecisionChange(index, decision) {
@@ -1561,14 +1742,19 @@ function App() {
 
   const tabCounts = {
     overview: stats.total,
-    events: decisions.length,
+    events: stats.total,
     rules: policies.length,
     accounts: accountPolicies.length
   };
-  const postureTitle = stats.block > 0
+  const recentBlockCount = decisions.filter((item) => item.decision === "block").length;
+  const recentChallengeCount = decisions.filter((item) => item.decision === "challenge").length;
+  const recentWarnCount = decisions.filter((item) => item.decision === "warn").length;
+  const postureTitle = recentBlockCount > 0
     ? ui("防护规则正在主动拦截风险操作", "Protection rules are actively blocking risky operations")
-    : stats.watch > 0
-      ? ui("当前以提醒和确认为主的审慎策略", "Current posture emphasizes warnings and approvals")
+    : recentChallengeCount > 0
+      ? ui("当前以需确认为主的审慎策略", "Current posture emphasizes approval-required decisions")
+      : recentWarnCount > 0
+        ? ui("当前以提醒为主，规则正在提示潜在风险", "Current posture is warning-first and highlighting potential risk")
       : ui("当前以放行为主，运行相对平稳", "Current posture is mostly allow and relatively stable");
   const postureDescription = latestDecision
     ? `${decisionLabel(latestDecision.decision)} · ${latestDecision.tool || ui("未知操作", "Unknown operation")} · ${resourceScopeLabel(latestDecision.resource_scope)}`
@@ -1582,6 +1768,10 @@ function App() {
     ? buildRuleConversation(activeRuleEntry.policy, activeRuleEntry.index)
     : [];
   const isRuleSideVisible = Boolean(activeRuleEntry && activeRuleGuide);
+  const hasActiveDecisionFilter = decisionFilter !== "all";
+  const decisionFilterSummary = hasActiveDecisionFilter
+    ? ui(`当前筛选：${decisionFilterLabel(decisionFilter)}，共 ${filteredDecisionTotal} 条记录。`, `Filter: ${decisionFilterLabel(decisionFilter)}. ${filteredDecisionTotal} records in total.`)
+    : ui(`当前展示全部决策记录，共 ${filteredDecisionTotal} 条。`, `Showing all decision records. ${filteredDecisionTotal} records in total.`);
   const themeControls = [
     {
       value: "system",
@@ -1694,22 +1884,35 @@ function App() {
             <div className="overview-grid">
               <div className="panel-card">
                 <div className="stats">
-                  <div className="stat">
-                    <b>{ui("总请求", "Total Requests")}</b>
-                    <span>{stats.total}</span>
-                  </div>
-                  <div className="stat good">
-                    <b>{ui("放行", "Allow")}</b>
-                    <span>{stats.allow}</span>
-                  </div>
-                  <div className="stat warn">
-                    <b>{ui("提醒 / 确认", "Warn / Challenge")}</b>
-                    <span>{stats.watch}</span>
-                  </div>
-                  <div className="stat bad">
-                    <b>{ui("拦截", "Block")}</b>
-                    <span>{stats.block}</span>
-                  </div>
+                  <OverviewStatCard
+                    label={ui("决策记录", "Decision Records")}
+                    value={stats.total}
+                    onClick={() => openDecisionRecords("all")}
+                  />
+                  <OverviewStatCard
+                    label={ui("放行", "Allow")}
+                    value={stats.allow}
+                    tone="good"
+                    onClick={() => openDecisionRecords("allow")}
+                  />
+                  <OverviewStatCard
+                    label={ui("提醒", "Warn")}
+                    value={stats.warn}
+                    tone="warn"
+                    onClick={() => openDecisionRecords("warn")}
+                  />
+                  <OverviewStatCard
+                    label={ui("需确认", "Needs Approval")}
+                    value={stats.challenge}
+                    tone="warn"
+                    onClick={() => openDecisionRecords("challenge")}
+                  />
+                  <OverviewStatCard
+                    label={ui("拦截", "Block")}
+                    value={stats.block}
+                    tone="bad"
+                    onClick={() => openDecisionRecords("block")}
+                  />
                 </div>
               </div>
 
@@ -1721,8 +1924,8 @@ function App() {
                 </div>
                 <div className="insight-list">
                   <div className="insight-item">
-                    <span>{ui("提醒 / 确认占比", "Warn / Challenge Ratio")}</span>
-                    <strong>{formatPercent(stats.watch, stats.total)}</strong>
+                    <span>{ui("需确认占比", "Approval Ratio")}</span>
+                    <strong>{formatPercent(stats.challenge, stats.total)}</strong>
                   </div>
                   <div className="insight-item">
                     <span>{ui("拦截占比", "Block Ratio")}</span>
@@ -1845,23 +2048,48 @@ function App() {
               <div className="card-head card-head-compact">
                 <h2>{ui("决策记录", "Decisions")}</h2>
                 <div className="header-actions">
+                  {hasActiveDecisionFilter ? (
+                    <span className="meta-pill meta-pill-highlight">
+                      {ui("筛选", "Filter")} {decisionFilterLabel(decisionFilter)}
+                    </span>
+                  ) : null}
                   <button
                     className="ghost small"
                     type="button"
                     onClick={() =>
-                      void loadData({
-                        syncRules: !hasPendingChanges && !saving,
-                        syncAccounts: !hasPendingChanges && !saving,
-                        silent: false
-                      })
+                      Promise.all([
+                        loadData({
+                          syncRules: !hasPendingChanges && !saving,
+                          syncAccounts: !hasPendingChanges && !saving,
+                          silent: false
+                        }),
+                        loadDecisionPage({ silent: false })
+                      ])
                     }
                   >
                     {ui("刷新", "Refresh")}
                   </button>
                 </div>
               </div>
-                <div className="table-wrap">
-                  <table>
+              <div className="decision-toolbar">
+                <div className="decision-filter-group" role="group" aria-label={ui("决策筛选", "Decision filters")}>
+                  {decisionFilterOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      className={`filter-chip ${decisionFilter === option.value ? "active" : ""}`}
+                      type="button"
+                      aria-pressed={decisionFilter === option.value}
+                      onClick={() => selectDecisionFilter(option.value)}
+                    >
+                      <span>{decisionFilterLabel(option.value)}</span>
+                      <span className="filter-chip-count">{option.count}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="decision-toolbar-note">{decisionFilterSummary}</div>
+              </div>
+              <div className="table-wrap">
+                <table>
                   <thead>
                     <tr>
                       <th>{ui("时间", "Time")}</th>
@@ -1874,9 +2102,15 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {decisions.length === 0 ? (
+                    {filteredDecisionTotal === 0 ? (
                       <tr>
-                        <td colSpan={7}>{loading ? ui("加载中...", "Loading...") : ui("暂无决策记录", "No decision records")}</td>
+                        <td colSpan={7}>
+                          {loading || decisionLoading
+                            ? ui("加载中...", "Loading...")
+                            : hasActiveDecisionFilter
+                              ? ui(`暂无“${decisionFilterLabel(decisionFilter)}”记录`, `No "${decisionFilterLabel(decisionFilter)}" records`)
+                              : ui("暂无决策记录", "No decision records")}
+                        </td>
                       </tr>
                     ) : (
                       pagedDecisions.map((item, index) => (
@@ -1896,17 +2130,23 @@ function App() {
                   </tbody>
                 </table>
               </div>
-              {decisions.length > 0 ? (
+              {filteredDecisionTotal > 0 ? (
                 <div className="pagination">
                   <div className="pagination-summary">
-                    {ui("显示", "Showing")} {firstDecisionIndex}-{lastDecisionIndex} / {decisions.length} · {ui("第", "Page ")}{decisionPage} / {totalDecisionPages}
+                    {ui("显示", "Showing")} {firstDecisionIndex}-{lastDecisionIndex} / {filteredDecisionTotal} · {ui("第", "Page ")}{decisionPage} / {totalDecisionPages}
                   </div>
                   <div className="pagination-controls">
                     <button
                       className="ghost small"
                       type="button"
                       disabled={decisionPage === 1}
-                      onClick={() => setDecisionPage((current) => Math.max(1, current - 1))}
+                      onClick={() =>
+                        navigateDashboard({
+                          tab: "events",
+                          decisionFilter,
+                          decisionPage: Math.max(1, decisionPage - 1)
+                        })
+                      }
                     >
                       {ui("上一页", "Prev")}
                     </button>
@@ -1916,7 +2156,13 @@ function App() {
                         className={`page-button ${page === decisionPage ? "active" : ""}`}
                         type="button"
                         aria-current={page === decisionPage ? "page" : undefined}
-                        onClick={() => setDecisionPage(page)}
+                        onClick={() =>
+                          navigateDashboard({
+                            tab: "events",
+                            decisionFilter,
+                            decisionPage: page
+                          })
+                        }
                       >
                         {page}
                       </button>
@@ -1925,7 +2171,13 @@ function App() {
                       className="ghost small"
                       type="button"
                       disabled={decisionPage === totalDecisionPages}
-                      onClick={() => setDecisionPage((current) => Math.min(totalDecisionPages, current + 1))}
+                      onClick={() =>
+                        navigateDashboard({
+                          tab: "events",
+                          decisionFilter,
+                          decisionPage: Math.min(totalDecisionPages, decisionPage + 1)
+                        })
+                      }
                     >
                       {ui("下一页", "Next")}
                     </button>

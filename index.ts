@@ -26,7 +26,7 @@ import { EventEmitter, HttpEventSink } from "./src/events/emitter.ts";
 import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
 import { ensureAdminAssetsBuilt } from "./src/admin/build.ts";
-import { announceAdminConsole } from "./src/admin/console_notice.ts";
+import { announceAdminConsole, shouldAnnounceAdminConsoleForArgv } from "./src/admin/console_notice.ts";
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
@@ -174,6 +174,11 @@ function resolvePluginStateDir(api: OpenClawPluginApi): string {
   } catch {
     return path.join(HOME_DIR, ".openclaw");
   }
+}
+
+function resolveAdminConsoleUrl(pluginConfig: SafeClawPluginConfig): string {
+  const port = pluginConfig.adminPort ?? Number(process.env.SAFECLAW_ADMIN_PORT ?? 4780);
+  return `http://127.0.0.1:${port}`;
 }
 
 function plural(value: number, unit: "day" | "hour" | "minute"): string {
@@ -1976,6 +1981,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     const resolved = resolvePluginRuntime(api);
     const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
+    const adminConsoleUrl = resolveAdminConsoleUrl(pluginConfig);
     const stateDir = resolvePluginStateDir(api);
     runtimeLocale = resolveRuntimeLocale();
     const adminAutoStart = pluginConfig.adminAutoStart ?? true;
@@ -2052,12 +2058,26 @@ const plugin = {
           .catch((error) => {
             api.logger.warn?.(`safeclaw: failed to auto-start admin dashboard (${String(error)})`);
           });
-      } else {
-        api.logger.info?.(
-          `safeclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,
-        );
-      }
-    } else {
+	      } else {
+	        if (shouldAnnounceAdminConsoleForArgv(process.argv)) {
+	          announceAdminConsole({
+	            locale: runtimeLocale,
+	            logger: {
+	              info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
+	              warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`),
+	            },
+	            stateDir,
+	            state: "service-command",
+	            url: adminConsoleUrl,
+	          });
+	          api.logger.info?.("safeclaw: admin dashboard is hosted by the background OpenClaw gateway service");
+	        } else {
+	          api.logger.info?.(
+	            `safeclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,
+	          );
+	        }
+	      }
+	    } else {
       api.logger.info?.("safeclaw: admin auto-start disabled by config");
     }
 

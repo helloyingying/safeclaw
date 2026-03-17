@@ -5,7 +5,7 @@ import path from "node:path";
 import type { SafeClawLocale } from "../i18n/locale.ts";
 import { pickLocalized } from "../i18n/locale.ts";
 
-export type AdminConsoleState = "started" | "already-running";
+export type AdminConsoleState = "started" | "already-running" | "service-command";
 
 export type AdminConsoleLogger = {
   info?: (message: string) => void;
@@ -37,6 +37,7 @@ export type AnnounceAdminConsoleResult = {
 
 const MARKER_FILE_NAME = "admin-dashboard-opened-v1.json";
 const BANNER_BORDER = "=".repeat(72);
+const GATEWAY_COMMANDS_WITH_ADMIN_BANNER = new Set(["run", "start", "restart", "status"]);
 
 function emitLog(logger: AdminConsoleLogger, message: string): void {
   logger.info?.(message);
@@ -64,20 +65,42 @@ export function buildAdminConsoleBanner(params: {
   const title =
     state === "already-running"
       ? localize(locale, "SafeClaw 管理后台已在运行", "SafeClaw admin dashboard is already running")
-      : localize(locale, "SafeClaw 管理后台已启动", "SafeClaw admin dashboard is ready");
+      : state === "service-command"
+        ? localize(locale, "SafeClaw 管理后台入口", "SafeClaw admin dashboard entry")
+        : localize(locale, "SafeClaw 管理后台已启动", "SafeClaw admin dashboard is ready");
   const openHint = openedAutomatically
     ? localize(
         locale,
         "首次启动已自动在默认浏览器中打开。",
         "Opened automatically in your default browser on first startup.",
       )
-    : localize(
-        locale,
-        "如未自动打开，请手动访问下面的链接。",
-        "If your browser did not open automatically, open the URL below manually.",
-      );
+    : state === "service-command"
+      ? localize(
+          locale,
+          "后台由 OpenClaw gateway 服务托管；如未自动打开，请手动访问下面的链接。",
+          "The background OpenClaw gateway service hosts this dashboard; if your browser did not open automatically, open the URL below manually.",
+        )
+      : localize(
+          locale,
+          "如未自动打开，请手动访问下面的链接。",
+          "If your browser did not open automatically, open the URL below manually.",
+        );
 
   return [BANNER_BORDER, title, `URL: ${url}`, openHint, BANNER_BORDER];
+}
+
+export function shouldAnnounceAdminConsoleForArgv(argv: readonly string[] = process.argv): boolean {
+  const gatewayIndex = argv.findIndex((value) => value === "gateway");
+  if (gatewayIndex < 0) {
+    return false;
+  }
+
+  for (const token of argv.slice(gatewayIndex + 1)) {
+    if (GATEWAY_COMMANDS_WITH_ADMIN_BANNER.has(token)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function writeAdminConsoleMarker(markerPath: string, url: string): void {
@@ -143,7 +166,7 @@ export function openAdminConsoleInBrowser(url: string): BrowserOpenResult {
 export function announceAdminConsole(options: AnnounceAdminConsoleOptions): AnnounceAdminConsoleResult {
   const { locale, logger, url, state, stateDir, opener = openAdminConsoleInBrowser } = options;
   const markerPath = stateDir ? resolveAdminConsoleMarkerPath(stateDir) : undefined;
-  const firstRun = Boolean(markerPath) && !existsSync(markerPath);
+  const firstRun = markerPath !== undefined && !existsSync(markerPath);
 
   let openedAutomatically = false;
   if (firstRun) {
