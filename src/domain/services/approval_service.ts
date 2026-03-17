@@ -56,12 +56,12 @@ export class ApprovalService {
             buttons: [
               [
                 {
-                  text: `${this.text("临时批准", "Approve (temp)")}(${this.formatApprovalGrantDuration(record, "temporary")})`,
+                  text: this.formatApprovalButtonLabel(record, "temporary"),
                   callback_data: `/safeclaw-approve ${record.approval_id}`,
                   style: "success",
                 },
                 {
-                  text: `${this.text("长期授权", "Approve (long)")}(${this.formatApprovalGrantDuration(record, "longterm")})`,
+                  text: this.formatApprovalButtonLabel(record, "longterm"),
                   callback_data: `/safeclaw-approve ${record.approval_id} long`,
                   style: "primary",
                 },
@@ -158,17 +158,27 @@ export class ApprovalService {
     const reasons = params.reasonCodes.join(", ");
     const notifyHint = params.notificationSent
       ? this.text(
-        "已向管理员发送授权请求。管理员批准后，该用户在当前范围内会自动放行直到授权过期。",
-        "An approval request was sent to administrators. After approval, this subject is auto-allowed within the same scope until the grant expires.",
+        "已通知管理员，批准后可重试。",
+        "Sent to admin. Retry after approval.",
       )
       : this.text(
-        "未配置或未成功发送授权通知，请由管理员使用 SafeClaw 审批命令处理。",
-        "Approval routing is unavailable or delivery failed. Administrators must handle it with SafeClaw approval commands.",
+        "通知失败，请将审批单交给管理员处理。",
+        "Admin notification failed. Share the request ID with an approver.",
       );
-    return this.text(
-      `SafeClaw 已拦截敏感调用: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope})。原因: ${reasons}。rules=${params.rules}。approval_id=${params.approvalId}。${notifyHint} trace_id=${params.traceId}`,
-      `SafeClaw paused a sensitive call: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope}). reasons=${reasons}. rules=${params.rules}. approval_id=${params.approvalId}. ${notifyHint} trace_id=${params.traceId}`,
-    );
+    const lines = [
+      this.text("SafeClaw 需要审批", "SafeClaw Approval Required"),
+      `${this.text("工具", "Tool")}: ${params.toolName}`,
+      `${this.text("范围", "Scope")}: ${params.scope}`,
+      `${this.text("资源", "Resource")}: ${this.formatResourceScopeDetail(params.resourceScope)}`,
+      `${this.text("原因", "Reason")}: ${reasons || this.text("策略要求复核", "Policy review required")}`,
+      ...(params.rules && params.rules !== "-"
+        ? [`${this.text("规则", "Policy")}: ${params.rules}`]
+        : []),
+      `${this.text("审批单", "Request ID")}: ${params.approvalId}`,
+      `${this.text("状态", "Status")}: ${notifyHint}`,
+      `${this.text("追踪", "Trace")}: ${params.traceId}`,
+    ];
+    return lines.join("\n");
   }
 
   formatPendingApprovals(records: StoredApprovalRecord[]): string {
@@ -185,29 +195,29 @@ export class ApprovalService {
 
   private formatApprovalPrompt(record: StoredApprovalRecord): string {
     const paths = record.resource_paths.length > 0
-      ? this.trimText(record.resource_paths.slice(0, 3).join(" | "), 180)
-      : this.text("未提供", "Not provided");
-    const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : this.text("未命中具体规则", "No explicit rule matched");
-    const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : this.text("无附加原因", "No additional reason");
-    const summary = record.args_summary ? this.trimText(record.args_summary, 220) : this.text("无参数摘要", "No argument summary");
-    const temporaryExpiresAt = this.resolveApprovalGrantExpiry(record, "temporary");
-    const longtermExpiresAt = this.resolveApprovalGrantExpiry(record, "longterm");
+      ? this.trimText(record.resource_paths.slice(0, 3).join(" | "), 160)
+      : undefined;
+    const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : undefined;
+    const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : this.text("策略要求复核", "Policy review required");
+    const summary = record.args_summary ? this.trimText(record.args_summary, 180) : undefined;
 
     return [
-      this.text("SafeClaw 授权请求", "SafeClaw Approval Request"),
-      `ID: ${record.approval_id}`,
-      `${this.text("授权对象", "Subject")}: ${record.actor_id}`,
-      `${this.text("授权范围", "Scope")}: ${record.scope}`,
-      `${this.text("最近触发工具", "Latest tool")}: ${record.tool_name}`,
-      `${this.text("资源范围", "Resource scope")}: ${this.formatResourceScopeLabel(record.resource_scope)}`,
-      `${this.text("路径", "Paths")}: ${paths}`,
-      `${this.text("规则", "Rules")}: ${rules}`,
-      `${this.text("原因", "Reasons")}: ${reasons}`,
-      `${this.text("参数摘要", "Arguments")}: ${summary}`,
-      `${this.text("待审批截至", "Approval expires at")}: ${this.formatTimestampForApproval(record.expires_at)}`,
-      `${this.text("临时授权", "Temporary grant")}: /safeclaw-approve ${record.approval_id} (${this.formatApprovalGrantDuration(record, "temporary")}${this.text("，有效至 ", ", expires at ")}${this.formatTimestampForApproval(temporaryExpiresAt)})`,
-      `${this.text("长期授权", "Long-lived grant")}: /safeclaw-approve ${record.approval_id} long (${this.formatApprovalGrantDuration(record, "longterm")}${this.text("，有效至 ", ", expires at ")}${this.formatTimestampForApproval(longtermExpiresAt)})`,
-      `${this.text("拒绝", "Reject")}: /safeclaw-reject ${record.approval_id}`,
+      this.text("SafeClaw 审批请求", "SafeClaw Approval"),
+      `${this.text("对象", "Subject")}: ${record.actor_id}`,
+      `${this.text("工具", "Tool")}: ${record.tool_name}`,
+      `${this.text("范围", "Scope")}: ${record.scope}`,
+      `${this.text("资源", "Resource")}: ${this.formatResourceScopeDetail(record.resource_scope)}`,
+      `${this.text("原因", "Reason")}: ${reasons}`,
+      `${this.text("请求截止", "Request expires")}: ${this.formatTimestampForApproval(record.expires_at)}`,
+      `${this.text("审批单", "Request ID")}: ${record.approval_id}`,
+      ...(paths ? [`${this.text("路径", "Paths")}: ${paths}`] : []),
+      ...(summary ? [`${this.text("参数", "Args")}: ${summary}`] : []),
+      ...(rules ? [`${this.text("规则", "Policy")}: ${rules}`] : []),
+      "",
+      this.text("操作", "Actions"),
+      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "temporary")}: /safeclaw-approve ${record.approval_id}`,
+      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "longterm")}: /safeclaw-approve ${record.approval_id} long`,
+      `- ${this.text("拒绝", "Reject")}: /safeclaw-reject ${record.approval_id}`,
     ].join("\n");
   }
 
@@ -228,6 +238,22 @@ export class ApprovalService {
     return mode === "longterm"
       ? this.formatDurationMs(APPROVAL_LONG_GRANT_TTL_MS)
       : this.formatDurationMs(this.resolveTemporaryGrantDurationMs(record));
+  }
+
+  private formatCompactApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+    const durationMs = mode === "longterm"
+      ? APPROVAL_LONG_GRANT_TTL_MS
+      : this.resolveTemporaryGrantDurationMs(record);
+    const totalMinutes = Math.max(1, Math.round(durationMs / 60_000));
+    const totalHours = totalMinutes / 60;
+    const totalDays = totalHours / 24;
+    if (Number.isInteger(totalDays) && totalDays >= 1) {
+      return this.text(`${totalDays}天`, `${totalDays}d`);
+    }
+    if (Number.isInteger(totalHours) && totalHours >= 1) {
+      return this.text(`${totalHours}小时`, `${totalHours}h`);
+    }
+    return this.text(`${totalMinutes}分钟`, `${totalMinutes}m`);
   }
 
   private resolveTemporaryGrantDurationMs(record: StoredApprovalRecord): number {
@@ -263,7 +289,6 @@ export class ApprovalService {
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
-        second: "2-digit",
         hour12: false,
       }).formatToParts(new Date(timestamp));
       const values = parts.reduce<Record<string, string>>((output, part) => {
@@ -272,10 +297,18 @@ export class ApprovalService {
         }
         return output;
       }, {});
-      return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second} (${timeZone})`;
+      return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute} (${timeZone})`;
     } catch {
       return `${new Date(timestamp).toISOString()} (${timeZone})`;
     }
+  }
+
+  private formatApprovalButtonLabel(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+    return `${this.text("批准", "Approve")} ${this.formatCompactApprovalGrantDuration(record, mode)}`;
+  }
+
+  private formatResourceScopeDetail(scope: string): string {
+    return `${this.formatResourceScopeLabel(scope)} (${scope})`;
   }
 
   private parseTimestampMs(value: string | undefined): number | undefined {

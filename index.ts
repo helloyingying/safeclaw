@@ -899,31 +899,35 @@ function formatResourceScopeLabel(scope: ResourceScope): string {
   return text("无路径", "No path");
 }
 
+function formatResourceScopeDetail(scope: ResourceScope): string {
+  return `${formatResourceScopeLabel(scope)} (${scope})`;
+}
+
 function formatApprovalPrompt(record: StoredApprovalRecord): string {
   const paths = record.resource_paths.length > 0
-    ? trimText(record.resource_paths.slice(0, 3).join(" | "), 180)
-    : text("未提供", "Not provided");
-  const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : text("未命中具体规则", "No explicit rule matched");
-  const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : text("无附加原因", "No additional reason");
-  const summary = record.args_summary ? trimText(record.args_summary, 220) : text("无参数摘要", "No argument summary");
-  const temporaryExpiresAt = resolveApprovalGrantExpiry(record, "temporary");
-  const longtermExpiresAt = resolveApprovalGrantExpiry(record, "longterm");
+    ? trimText(record.resource_paths.slice(0, 3).join(" | "), 160)
+    : undefined;
+  const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : undefined;
+  const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : text("策略要求复核", "Policy review required");
+  const summary = record.args_summary ? trimText(record.args_summary, 180) : undefined;
 
   return [
-    text("SafeClaw 授权请求", "SafeClaw Approval Request"),
-    `ID: ${record.approval_id}`,
-    `${text("授权对象", "Subject")}: ${record.actor_id}`,
-    `${text("授权范围", "Scope")}: ${record.scope}`,
-    `${text("最近触发工具", "Latest tool")}: ${record.tool_name}`,
-    `${text("资源范围", "Resource scope")}: ${formatResourceScopeLabel(record.resource_scope)}`,
-    `${text("路径", "Paths")}: ${paths}`,
-    `${text("规则", "Rules")}: ${rules}`,
-    `${text("原因", "Reasons")}: ${reasons}`,
-    `${text("参数摘要", "Arguments")}: ${summary}`,
-    `${text("待审批截至", "Approval expires at")}: ${formatTimestampForApproval(record.expires_at)}`,
-    `${text("临时授权", "Temporary grant")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} (${formatApprovalGrantDuration(record, "temporary")}${text("，有效至 ", ", expires at ")}${formatTimestampForApproval(temporaryExpiresAt)})`,
-    `${text("长期授权", "Long-lived grant")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long (${formatApprovalGrantDuration(record, "longterm")}${text("，有效至 ", ", expires at ")}${formatTimestampForApproval(longtermExpiresAt)})`,
-    `${text("拒绝", "Reject")}: /${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
+    text("SafeClaw 审批请求", "SafeClaw Approval"),
+    `${text("对象", "Subject")}: ${record.actor_id}`,
+    `${text("工具", "Tool")}: ${record.tool_name}`,
+    `${text("范围", "Scope")}: ${record.scope}`,
+    `${text("资源", "Resource")}: ${formatResourceScopeDetail(record.resource_scope)}`,
+    `${text("原因", "Reason")}: ${reasons}`,
+    `${text("请求截止", "Request expires")}: ${formatTimestampForApproval(record.expires_at)}`,
+    `${text("审批单", "Request ID")}: ${record.approval_id}`,
+    ...(paths ? [`${text("路径", "Paths")}: ${paths}`] : []),
+    ...(summary ? [`${text("参数", "Args")}: ${summary}`] : []),
+    ...(rules ? [`${text("规则", "Policy")}: ${rules}`] : []),
+    "",
+    text("操作", "Actions"),
+    `- ${text("批准", "Approve")} ${formatApprovalGrantDuration(record, "temporary")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
+    `- ${text("批准", "Approve")} ${formatApprovalGrantDuration(record, "longterm")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
+    `- ${text("拒绝", "Reject")}: /${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
   ].join("\n");
 }
 
@@ -974,7 +978,6 @@ function formatTimestampForApproval(value: string | undefined, timeZone = APPROV
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-      second: "2-digit",
       hour12: false,
     }).formatToParts(new Date(timestamp));
     const values = parts.reduce<Record<string, string>>((output, part) => {
@@ -983,7 +986,7 @@ function formatTimestampForApproval(value: string | undefined, timeZone = APPROV
       }
       return output;
     }, {});
-    return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second} (${timeZone})`;
+    return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute} (${timeZone})`;
   } catch {
     return `${new Date(timestamp).toISOString()} (${timeZone})`;
   }
@@ -999,6 +1002,26 @@ function formatApprovalGrantDuration(record: StoredApprovalRecord, mode: Approva
   return mode === "longterm"
     ? formatDurationMs(APPROVAL_LONG_GRANT_TTL_MS)
     : formatDurationMs(resolveTemporaryGrantDurationMs(record));
+}
+
+function formatCompactApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+  const durationMs = mode === "longterm"
+    ? APPROVAL_LONG_GRANT_TTL_MS
+    : resolveTemporaryGrantDurationMs(record);
+  const totalMinutes = Math.max(1, Math.round(durationMs / 60_000));
+  const totalHours = totalMinutes / 60;
+  const totalDays = totalHours / 24;
+  if (Number.isInteger(totalDays) && totalDays >= 1) {
+    return text(`${totalDays}天`, `${totalDays}d`);
+  }
+  if (Number.isInteger(totalHours) && totalHours >= 1) {
+    return text(`${totalHours}小时`, `${totalHours}h`);
+  }
+  return text(`${totalMinutes}分钟`, `${totalMinutes}m`);
+}
+
+function formatApprovalButtonLabel(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+  return `${text("批准", "Approve")} ${formatCompactApprovalGrantDuration(record, mode)}`;
 }
 
 function shouldResendPendingApproval(record: StoredApprovalRecord, nowMs = Date.now()): boolean {
@@ -1429,12 +1452,12 @@ async function sendApprovalNotification(
       buttons: [
         [
           {
-            text: `${text("临时批准", "Approve (temp)")}(${formatApprovalGrantDuration(record, "temporary")})`,
+            text: formatApprovalButtonLabel(record, "temporary"),
             callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
             style: "success",
           },
           {
-            text: `${text("长期授权", "Approve (long)")}(${formatApprovalGrantDuration(record, "longterm")})`,
+            text: formatApprovalButtonLabel(record, "longterm"),
             callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
             style: "primary",
           },
@@ -1666,17 +1689,25 @@ function formatApprovalBlockReason(params: {
   const reasons = params.reasonCodes.join(", ");
   const notifyHint = params.notificationSent
     ? text(
-      "已向管理员发送授权请求。管理员批准后，该用户在当前范围内会自动放行直到授权过期。",
-      "An approval request was sent to administrators. After approval, this subject is auto-allowed within the same scope until the grant expires.",
+      "已通知管理员，批准后可重试。",
+      "Sent to admin. Retry after approval.",
     )
     : text(
-      "未配置或未成功发送授权通知，请由管理员使用 SafeClaw 审批命令处理。",
-      "Approval routing is unavailable or delivery failed. Administrators must handle it with SafeClaw approval commands.",
+      "通知失败，请将审批单交给管理员处理。",
+      "Admin notification failed. Share the request ID with an approver.",
     );
-  return text(
-    `SafeClaw 已拦截敏感调用: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope})。原因: ${reasons}。rules=${params.rules}。approval_id=${params.approvalId}。${notifyHint} trace_id=${params.traceId}`,
-    `SafeClaw paused a sensitive call: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope}). reasons=${reasons}. rules=${params.rules}. approval_id=${params.approvalId}. ${notifyHint} trace_id=${params.traceId}`,
-  );
+  const lines = [
+    text("SafeClaw 需要审批", "SafeClaw Approval Required"),
+    `${text("工具", "Tool")}: ${params.toolName}`,
+    `${text("范围", "Scope")}: ${params.scope}`,
+    `${text("资源", "Resource")}: ${formatResourceScopeDetail(params.resourceScope)}`,
+    `${text("原因", "Reason")}: ${reasons || text("策略要求复核", "Policy review required")}`,
+    ...(params.rules && params.rules !== "-" ? [`${text("规则", "Policy")}: ${params.rules}`] : []),
+    `${text("审批单", "Request ID")}: ${params.approvalId}`,
+    `${text("状态", "Status")}: ${notifyHint}`,
+    `${text("追踪", "Trace")}: ${params.traceId}`,
+  ];
+  return lines.join("\n");
 }
 
 function parseApprovalId(args: string | undefined): string | undefined {
@@ -1909,16 +1940,24 @@ function formatToolBlockReason(
   rules: string,
 ): string {
   const reasons = reasonCodes.join(", ");
-  if (decision === "challenge") {
-    return text(
-      `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`,
-      `SafeClaw paused a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact an administrator to approve and retry. trace_id=${traceId}`,
-    );
-  }
-  return text(
-    `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`,
-    `SafeClaw blocked a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact a security administrator to adjust policy. trace_id=${traceId}`,
-  );
+  const lines = [
+    text(
+      decision === "challenge" ? "SafeClaw 需要审批" : "SafeClaw 已阻止此操作",
+      decision === "challenge" ? "SafeClaw Approval Required" : "SafeClaw Blocked",
+    ),
+    `${text("工具", "Tool")}: ${toolName}`,
+    `${text("范围", "Scope")}: ${scope}`,
+    `${text("资源", "Resource")}: ${formatResourceScopeDetail(resourceScope)}`,
+    `${text("来源", "Source")}: ${decisionSource}`,
+    `${text("原因", "Reason")}: ${reasons || text("策略要求复核", "Policy review required")}`,
+    ...(rules && rules !== "-" ? [`${text("规则", "Policy")}: ${rules}`] : []),
+    `${text("处理", "Action")}: ${text(
+      decision === "challenge" ? "联系管理员审批后重试" : "联系安全管理员调整策略",
+      decision === "challenge" ? "Contact an admin to approve and retry" : "Contact a security admin to adjust policy",
+    )}`,
+    `${text("追踪", "Trace")}: ${traceId}`,
+  ];
+  return lines.join("\n");
 }
 
 const plugin = {

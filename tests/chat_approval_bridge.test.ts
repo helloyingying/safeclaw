@@ -17,6 +17,10 @@ type BeforeToolCallHook = (
 ) => Promise<{ block?: boolean; blockReason?: string } | undefined>;
 type GatewayStopHook = (event?: Record<string, unknown>, ctx?: Record<string, unknown>) => Promise<unknown> | unknown;
 
+function extractApprovalId(value: unknown): string | undefined {
+  return String(value).match(/(?:approval_id=|(?:Request ID|审批单): )([a-f0-9-]+)/i)?.[1];
+}
+
 function createPluginApiHarness(paths: {
   configPath: string;
   dbPath: string;
@@ -269,7 +273,7 @@ test("chat approval bridge auto-enables from admin account policies without plug
     );
 
     assert.deepEqual(first?.block, true);
-    const approvalId = String(first?.blockReason).match(/approval_id=([a-f0-9-]+)/i)?.[1];
+    const approvalId = extractApprovalId(first?.blockReason);
     assert.ok(approvalId);
     assert.equal(harness.sentMessages.length, 1);
     assert.equal(harness.sentMessages[0].to, "secops-admin");
@@ -358,8 +362,8 @@ test("chat approval bridge supports command-only approvals on non-button channel
 
     assert.deepEqual(blocked?.block, true);
     assert.equal(harness.sentMessages.length, 0);
-    assert.match(String(blocked?.blockReason), /(Approval routing is unavailable or delivery failed|未配置或未成功发送授权通知)/);
-    const approvalId = String(blocked?.blockReason).match(/approval_id=([a-f0-9-]+)/i)?.[1];
+    assert.match(String(blocked?.blockReason), /(Admin notification failed|通知失败)/);
+    const approvalId = extractApprovalId(blocked?.blockReason);
     assert.ok(approvalId);
 
     const pendingCommand = harness.commands.get("safeclaw-pending");
@@ -444,14 +448,16 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     );
 
     assert.deepEqual(first?.block, true);
-    assert.match(String(first?.blockReason), /approval_id=/);
+    assert.match(String(first?.blockReason), /(Request ID|审批单): [a-f0-9-]+/);
+    assert.match(String(first?.blockReason), /(Status|状态): /);
     assert.equal(harness.sentMessages.length, 1);
-    assert.match(harness.sentMessages[0].text, /(SafeClaw Approval Request|SafeClaw 授权请求)/);
-    assert.match(harness.sentMessages[0].text, /(Approval expires at|待审批截至): .+\(.+\)/);
-    assert.match(harness.sentMessages[0].text, /(Temporary grant|临时授权): .*(10 minutes|10分钟)/);
+    assert.match(harness.sentMessages[0].text, /(SafeClaw Approval|SafeClaw 审批请求)/);
+    assert.match(harness.sentMessages[0].text, /(Request expires|请求截止): .+\(.+\)/);
+    assert.match(harness.sentMessages[0].text, /(Actions|操作)/);
+    assert.match(harness.sentMessages[0].text, /\/safeclaw-approve .* long/);
     const buttons = harness.sentMessages[0].opts?.buttons as Array<Array<{ text: string }>> | undefined;
-    assert.match(String(buttons?.[0]?.[0]?.text), /(Approve \(temp\)\(10 minutes\)|临时批准\(10分钟\))/);
-    assert.match(String(buttons?.[0]?.[1]?.text), /(Approve \(long\)\(30 days\)|长期授权\(30天\))/);
+    assert.match(String(buttons?.[0]?.[0]?.text), /(Approve 10m|批准 10分钟)/);
+    assert.match(String(buttons?.[0]?.[1]?.text), /(Approve 30d|批准 30天)/);
 
     const secondPending = await beforeToolCall(
       {
@@ -471,7 +477,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     assert.deepEqual(secondPending?.block, true);
     assert.equal(harness.sentMessages.length, 1);
 
-    const approvalId = String(first?.blockReason).match(/approval_id=([a-f0-9-]+)/i)?.[1];
+    const approvalId = extractApprovalId(first?.blockReason);
     assert.ok(approvalId);
 
     const pendingCommand = harness.commands.get("safeclaw-pending");
@@ -561,7 +567,7 @@ test("chat approval bridge supports long-lived subject authorization", async () 
     );
 
     assert.deepEqual(blocked?.block, true);
-    const approvalId = String(blocked?.blockReason).match(/approval_id=([a-f0-9-]+)/i)?.[1];
+    const approvalId = extractApprovalId(blocked?.blockReason);
     assert.ok(approvalId);
 
     const approveCommand = harness.commands.get("safeclaw-approve");

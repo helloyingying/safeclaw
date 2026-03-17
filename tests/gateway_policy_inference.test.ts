@@ -279,7 +279,7 @@ test("gateway classifies imsg history shell access as sms and challenges it", as
 
     assert.deepEqual(blocked?.block, true);
     assert.match(String(blocked?.blockReason), /SMS_CONTENT_ACCESS_REQUIRES_APPROVAL/);
-    assert.match(String(blocked?.blockReason), /resource_scope=workspace_outside/);
+    assert.match(String(blocked?.blockReason), /workspace_outside/);
   } finally {
     harness.cleanup();
   }
@@ -301,7 +301,7 @@ test("gateway classifies sqlite access to Messages chat.db and blocks OTP reads"
 
     assert.deepEqual(blocked?.block, true);
     assert.match(String(blocked?.blockReason), /SMS_OTP_ACCESS_BLOCK/);
-    assert.match(String(blocked?.blockReason), /resource_scope=workspace_outside/);
+    assert.match(String(blocked?.blockReason), /workspace_outside/);
   } finally {
     harness.cleanup();
   }

@@ -44,8 +44,9 @@ Add this to `~/.openclaw/openclaw.json`:
 1. Stop the gateway if it is managed manually.
 2. Update `~/.openclaw/openclaw.json` with the `plugins.load.paths`, `plugins.allow`, and `plugins.entries.safeclaw` fields above.
 3. Keep the SafeClaw repo at `/Users/liuzhuangm4/develop/safeclaw` so OpenClaw can load `index.ts` and `openclaw.plugin.json`.
-4. Restart the gateway.
-5. Run `openclaw plugins list` and confirm `safeclaw` shows as `loaded`.
+4. Restart the gateway with `openclaw gateway restart`.
+5. Run `openclaw gateway status` to confirm the service is healthy.
+6. Run `openclaw plugins list` and confirm `safeclaw` shows as `loaded`.
 
 ## Operational Notes
 - `config.configPath` is resolved relative to the plugin root, so `./config/policy.default.yaml` points to this repo's default policy.

@@ -30,18 +30,44 @@ export class FormattingService {
     locale: SafeClawLocale = "en",
   ): string {
     const reasons = reasonCodes.join(", ");
-    if (decision === "challenge") {
-      return pickLocalized(
+    const resourceLabel = FormattingService.formatResourceScopeLabel(resourceScope, locale);
+    const lines = [
+      pickLocalized(
         locale,
-        `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`,
-        `SafeClaw paused a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact an administrator to approve and retry. trace_id=${traceId}`,
-      );
+        decision === "challenge" ? "SafeClaw 需要审批" : "SafeClaw 已阻止此操作",
+        decision === "challenge" ? "SafeClaw Approval Required" : "SafeClaw Blocked",
+      ),
+      `${pickLocalized(locale, "工具", "Tool")}: ${toolName}`,
+      `${pickLocalized(locale, "范围", "Scope")}: ${scope}`,
+      `${pickLocalized(locale, "资源", "Resource")}: ${resourceLabel} (${resourceScope})`,
+      `${pickLocalized(locale, "来源", "Source")}: ${decisionSource}`,
+      `${pickLocalized(locale, "原因", "Reason")}: ${reasons || pickLocalized(locale, "策略要求复核", "Policy review required")}`,
+      ...(rules && rules !== "-" ? [`${pickLocalized(locale, "规则", "Policy")}: ${rules}`] : []),
+      `${pickLocalized(
+        locale,
+        "处理",
+        "Action",
+      )}: ${pickLocalized(
+        locale,
+        decision === "challenge" ? "联系管理员审批后重试" : "联系安全管理员调整策略",
+        decision === "challenge" ? "Contact an admin to approve and retry" : "Contact a security admin to adjust policy",
+      )}`,
+      `${pickLocalized(locale, "追踪", "Trace")}: ${traceId}`,
+    ];
+    return lines.join("\n");
+  }
+
+  private static formatResourceScopeLabel(scope: ResourceScope, locale: SafeClawLocale): string {
+    if (scope === "workspace_inside") {
+      return pickLocalized(locale, "工作区内", "Inside workspace");
     }
-    return pickLocalized(
-      locale,
-      `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`,
-      `SafeClaw blocked a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact a security administrator to adjust policy. trace_id=${traceId}`,
-    );
+    if (scope === "workspace_outside") {
+      return pickLocalized(locale, "工作区外", "Outside workspace");
+    }
+    if (scope === "system") {
+      return pickLocalized(locale, "系统目录", "System directory");
+    }
+    return pickLocalized(locale, "无路径", "No path");
   }
 
   static normalizeToolName(rawToolName: string): string {
