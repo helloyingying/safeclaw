@@ -18,6 +18,18 @@ test("strategy store persists override in sqlite", () => {
     store.writeOverride({
       environment: "prod",
       policy_version: "2026-03-14",
+      sensitivity: {
+        disabled_builtin_ids: ["download-staging-downloads-directory"],
+        custom_path_rules: [
+          {
+            id: "custom-sensitive-share",
+            asset_label: "credential",
+            match_type: "prefix",
+            pattern: "/srv/secrets",
+            source: "custom"
+          }
+        ]
+      },
       account_policies: [
         {
           subject: "telegram:chat-42",
@@ -29,12 +41,15 @@ test("strategy store persists override in sqlite", () => {
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
     assert.equal(store.readOverride()?.account_policies?.[0]?.subject, "telegram:chat-42");
+    assert.equal(store.readOverride()?.sensitivity?.disabled_builtin_ids?.[0], "download-staging-downloads-directory");
+    assert.equal(store.readOverride()?.sensitivity?.custom_path_rules?.[0]?.id, "custom-sensitive-share");
 
     store.close();
     store = new StrategyStore(dbPath);
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
     assert.equal(store.readOverride()?.account_policies?.[0]?.mode, "default_allow");
+    assert.equal(store.readOverride()?.sensitivity?.custom_path_rules?.[0]?.pattern, "/srv/secrets");
   } finally {
     store?.close();
     rmSync(tempDir, { recursive: true, force: true });

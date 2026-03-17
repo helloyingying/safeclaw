@@ -30,7 +30,15 @@ import { announceAdminConsole, shouldAnnounceAdminConsoleForArgv } from "./src/a
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
+import {
+  extractEmbeddedPathCandidates,
+  hasEmbeddedPathHint,
+  isPathLikeCandidate,
+  resolvePathCandidate,
+} from "./src/domain/services/path_candidate_inference.ts";
+import { hydrateSensitivePathConfig } from "./src/domain/services/sensitive_path_registry.ts";
 import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
+import { inferSensitivityLabels } from "./src/domain/services/sensitivity_label_inference.ts";
 import type { SafeClawLocale } from "./src/i18n/locale.ts";
 import { localeForIntl, pickLocalized, resolveSafeClawLocale } from "./src/i18n/locale.ts";
 import type {
@@ -124,7 +132,6 @@ const URL_KEY_PATTERN = /(url|uri|endpoint|host|domain|upload|webhook|callback|p
 const SYSTEM_PATH_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/private/etc", "/System", "/Library"];
 const DEFAULT_MESSAGES_DB_PATH = path.join(HOME_DIR, "Library/Messages/chat.db");
 const MESSAGE_DB_PATH_PATTERN = /(?:~\/Library\/Messages\/chat\.db|\/Users\/[^/\s"'`;]+\/Library\/Messages\/chat\.db)/i;
-const OTP_PATTERN = /otp|one[- ]time|verification code|验证码|passcode|login (?:code|notification|alert)|登录提醒/i;
 const PERSONAL_STORAGE_DOMAINS = [
   "dropbox.com",
   "drive.google.com",
@@ -196,23 +203,7 @@ function isPathLike(value: string, keyHint: string): boolean {
   if (PATH_KEY_PATTERN.test(keyHint)) {
     return true;
   }
-  return (
-    value.startsWith("/") ||
-    value.startsWith("~/") ||
-    value.startsWith("./") ||
-    value.startsWith("../")
-  );
-}
-
-function extractEmbeddedPathCandidates(value: string): string[] {
-  const matches = value.match(/(?:^|[\s"'=])((?:~\/|\/|\.\/|\.\.\/)[^\s"'`;|&<>]+)/g) ?? [];
-  return matches
-    .map((match) => match.trim().replace(/^["'=]+/, ""))
-    .map((match) => {
-      const pathMatch = match.match(/(?:~\/|\/|\.\/|\.\.\/)[^\s"'`;|&<>]+/);
-      return pathMatch ? pathMatch[0] : "";
-    })
-    .filter(Boolean);
+  return isPathLikeCandidate(value);
 }
 
 function collectPathCandidates(value: unknown, keyHint = "", depth = 0, output: string[] = []): string[] {
@@ -224,7 +215,7 @@ function collectPathCandidates(value: unknown, keyHint = "", depth = 0, output: 
     const trimmed = value.trim();
     if (trimmed && isPathLike(trimmed, keyHint)) {
       output.push(trimmed);
-    } else if (trimmed && (COMMAND_KEY_PATTERN.test(keyHint) || trimmed.includes("~/") || trimmed.includes("/"))) {
+    } else if (trimmed && (COMMAND_KEY_PATTERN.test(keyHint) || hasEmbeddedPathHint(trimmed))) {
       for (const candidate of extractEmbeddedPathCandidates(trimmed)) {
         output.push(candidate);
         if (output.length >= 24) {
@@ -256,27 +247,6 @@ function collectPathCandidates(value: unknown, keyHint = "", depth = 0, output: 
     }
   }
   return output;
-}
-
-function resolvePathCandidate(candidate: string, workspaceDir?: string): string | undefined {
-  if (!candidate) {
-    return undefined;
-  }
-
-  let normalized = candidate;
-  if (normalized.startsWith("~/")) {
-    normalized = path.join(HOME_DIR, normalized.slice(2));
-  } else if (normalized === "~") {
-    normalized = HOME_DIR;
-  }
-
-  if (path.isAbsolute(normalized)) {
-    return path.normalize(normalized);
-  }
-  if (!workspaceDir) {
-    return undefined;
-  }
-  return path.normalize(path.resolve(workspaceDir, normalized));
 }
 
 function isPathInside(rootDir: string, candidate: string): boolean {
@@ -548,12 +518,6 @@ function inferFileType(resourcePaths: string[]): string | undefined {
   return undefined;
 }
 
-function addLabel(labels: Set<string>, condition: boolean, label: string): void {
-  if (condition) {
-    labels.add(label);
-  }
-}
-
 function extractShellCommandText(args: unknown): string | undefined {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return undefined;
@@ -646,31 +610,20 @@ function deriveToolContext(
 }
 
 function inferLabels(
+  config: SafeClawConfig,
   toolGroup: string | undefined,
   resourcePaths: string[],
   toolArgsSummary: string | undefined,
 ): Pick<DecisionContext, "asset_labels" | "data_labels"> {
-  const corpus = [...resourcePaths, toolArgsSummary ?? ""].join(" ").toLowerCase();
-  const assetLabels = new Set<string>();
-  const dataLabels = new Set<string>();
-
-  addLabel(assetLabels, /finance|invoice|billing|payroll|ledger/.test(corpus), "financial");
-  addLabel(dataLabels, /finance|invoice|billing|payroll|ledger/.test(corpus), "financial");
-  addLabel(assetLabels, /customer|client|crm|contact/.test(corpus), "customer_data");
-  addLabel(dataLabels, /customer|client|crm|contact/.test(corpus), "customer_data");
-  addLabel(assetLabels, /hr|personnel|resume|employee|salary/.test(corpus), "hr");
-  addLabel(dataLabels, /hr|personnel|resume|employee|salary/.test(corpus), "pii");
-  addLabel(assetLabels, /\.env\b|\.npmrc\b|\.pypirc\b|\.ssh\b|id_rsa\b|kubeconfig\b|aws\/credentials\b/.test(corpus), "credential");
-  addLabel(dataLabels, /token|secret|password|bearer|cookie|session|jwt|private key|id_rsa/.test(corpus), "secret");
-  addLabel(dataLabels, OTP_PATTERN.test(corpus), "otp");
-  addLabel(assetLabels, /\.github\/workflows\/|dockerfile\b|terraform|\.tf\b|k8s|kubernetes|deployment\.ya?ml|secret\.ya?ml|iam/.test(corpus), "control_plane");
-  addLabel(dataLabels, toolGroup === "email" || toolGroup === "sms", "communications");
-  addLabel(dataLabels, toolGroup === "album", "media");
-  addLabel(dataLabels, toolGroup === "browser", "browser_secret");
-
+  const inferred = inferSensitivityLabels(
+    toolGroup,
+    resourcePaths,
+    toolArgsSummary,
+    config.sensitivity.path_rules,
+  );
   return {
-    asset_labels: [...assetLabels],
-    data_labels: [...dataLabels],
+    asset_labels: inferred.assetLabels,
+    data_labels: inferred.dataLabels,
   };
 }
 
@@ -1774,7 +1727,8 @@ function applyPluginConfigOverrides(config: SafeClawConfig, pluginConfig: SafeCl
     event_sink: {
       ...config.event_sink,
       ...(webhookUrl !== undefined ? { webhook_url: webhookUrl } : {})
-    }
+    },
+    sensitivity: hydrateSensitivePathConfig(config.sensitivity)
   };
 }
 
@@ -1825,7 +1779,7 @@ function buildDecisionContext(
   const destination = classifyDestination(urlCandidates);
   const fileType = inferFileType(derivedToolContext.resourcePaths);
   const summary = toolArgsSummary ?? (args !== undefined ? summarizeForLog(args, 240) : undefined);
-  const labels = inferLabels(toolGroup, derivedToolContext.resourcePaths, summary);
+  const labels = inferLabels(config, toolGroup, derivedToolContext.resourcePaths, summary);
   const volume = inferVolume(args, derivedToolContext.resourcePaths);
 
   return {
@@ -2384,15 +2338,18 @@ const plugin = {
           }
         }
 
-        const decisionLog = [
-          "safeclaw: before_tool_call",
-          `trace_id=${traceId}`,
-          `actor=${approvalSubject}`,
-          `scope=${decisionContext.scope}`,
-          `resource_scope=${decisionContext.resource_scope}`,
-          `tool=${effectiveToolName}`,
-          `raw_tool=${event.toolName}`,
-          `decision=${effectiveDecision}`,
+	        const decisionLog = [
+	          "safeclaw: before_tool_call",
+	          `trace_id=${traceId}`,
+	          `actor=${approvalSubject}`,
+	          `scope=${decisionContext.scope}`,
+	          `resource_scope=${decisionContext.resource_scope}`,
+	          `paths=${decisionContext.resource_paths.length > 0 ? trimText(decisionContext.resource_paths.slice(0, 3).join("|"), 200) : "-"}`,
+	          `asset_labels=${decisionContext.asset_labels.length > 0 ? decisionContext.asset_labels.join(",") : "-"}`,
+	          `data_labels=${decisionContext.data_labels.length > 0 ? decisionContext.data_labels.join(",") : "-"}`,
+	          `tool=${effectiveToolName}`,
+	          `raw_tool=${event.toolName}`,
+	          `decision=${effectiveDecision}`,
           `source=${effectiveDecisionSource}`,
           `account_mode=${accountPolicy?.mode ?? "apply_rules"}`,
           `is_admin=${accountPolicy?.is_admin === true}`,

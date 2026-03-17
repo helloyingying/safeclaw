@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import type { SafeClawConfig } from "../types.ts";
+import { hydrateSensitivePathConfig } from "../domain/services/sensitive_path_registry.ts";
 import { deepClone, deepFreeze, parseScalar, stripInlineComment } from "../utils.ts";
 import { validateConfig } from "./validator.ts";
 
@@ -133,7 +134,7 @@ export class ConfigManager {
     const resolved = resolve(path);
     const source = readFileSync(resolved, "utf8");
     const raw = parseYaml(source);
-    const config = validateConfig(raw);
+    const config = hydrateConfig(validateConfig(raw));
     return new ConfigManager(config, resolved);
   }
 
@@ -148,7 +149,7 @@ export class ConfigManager {
   reload(nextSource?: string): SafeClawConfig {
     try {
       const raw = nextSource ? parseYaml(nextSource) : parseYaml(readFileSync(this.#path!, "utf8"));
-      const validated = deepFreeze(deepClone(validateConfig(raw)));
+      const validated = deepFreeze(deepClone(hydrateConfig(validateConfig(raw))));
       this.#config = validated;
       this.#lastKnownGood = validated;
       return this.#config;
@@ -157,4 +158,11 @@ export class ConfigManager {
       return this.#config;
     }
   }
+}
+
+function hydrateConfig(config: SafeClawConfig): SafeClawConfig {
+  return {
+    ...config,
+    sensitivity: hydrateSensitivePathConfig(config.sensitivity)
+  };
 }

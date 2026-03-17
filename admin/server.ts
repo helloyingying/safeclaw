@@ -15,6 +15,11 @@ import { ConfigManager } from "../src/config/loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "../src/config/runtime_override.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 import { AccountPolicyEngine } from "../src/domain/services/account_policy_engine.ts";
+import {
+  hydrateSensitivePathConfig,
+  listRemovedBuiltinSensitivePathRules,
+  normalizeSensitivePathStrategyOverride,
+} from "../src/domain/services/sensitive_path_registry.ts";
 import type { SafeClawLocale } from "../src/i18n/locale.ts";
 import { pickLocalized, resolveSafeClawLocale } from "../src/i18n/locale.ts";
 
@@ -373,6 +378,21 @@ function readAccountPolicies(strategyStore: StrategyStore) {
   return AccountPolicyEngine.sanitize(strategyStore.readOverride()?.account_policies);
 }
 
+function readSensitivePathStrategy(
+  baseConfig: ReturnType<ConfigManager["getConfig"]>,
+  override: RuntimeOverride | undefined,
+) {
+  const baseSensitivity = hydrateSensitivePathConfig(baseConfig.sensitivity);
+  const sensitivityOverride = normalizeSensitivePathStrategyOverride(override?.sensitivity);
+  return {
+    path_rules: baseConfig.sensitivity.path_rules,
+    effective_path_rules: baseSensitivity.path_rules,
+    custom_path_rules: sensitivityOverride?.custom_path_rules ?? [],
+    disabled_builtin_ids: sensitivityOverride?.disabled_builtin_ids ?? [],
+    removed_builtin_path_rules: listRemovedBuiltinSensitivePathRules(baseSensitivity, sensitivityOverride),
+  };
+}
+
 function handleApi(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -420,7 +440,7 @@ function handleApi(
 
   if (req.method === "GET" && url.pathname === "/api/strategy") {
     try {
-      const { effective, override } = readEffectivePolicy(runtime, strategyStore);
+      const { base, effective, override } = readEffectivePolicy(runtime, strategyStore);
       sendJson(res, 200, {
         paths: {
           config_path: runtime.configPath,
@@ -430,7 +450,11 @@ function handleApi(
         strategy: {
           environment: effective.environment,
           policy_version: effective.policy_version,
-          policies: effective.policies
+          policies: effective.policies,
+          sensitivity: {
+            ...readSensitivePathStrategy(base, override),
+            effective_path_rules: effective.sensitivity.path_rules,
+          }
         }
       });
     } catch (error) {
@@ -461,6 +485,10 @@ function handleApi(
       try {
         const body = await readBody(req);
         const current = strategyStore.readOverride() ?? {};
+        const hasSensitivity = Object.prototype.hasOwnProperty.call(body, "sensitivity");
+        const nextSensitivity = hasSensitivity
+          ? normalizeSensitivePathStrategyOverride(body.sensitivity)
+          : current.sensitivity;
 
         const nextOverride: RuntimeOverride = {
           ...current,
@@ -472,7 +500,8 @@ function handleApi(
           policies:
             Array.isArray(body.policies)
               ? (body.policies as RuntimeOverride["policies"])
-              : current.policies
+              : current.policies,
+          ...(hasSensitivity ? { sensitivity: nextSensitivity } : {})
         };
 
         const base = ConfigManager.fromFile(runtime.configPath).getConfig();
@@ -490,7 +519,8 @@ function handleApi(
           effective: {
             environment: validated.environment,
             policy_version: validated.policy_version,
-            policy_count: validated.policies.length
+            policy_count: validated.policies.length,
+            sensitive_path_rule_count: validated.sensitivity.path_rules.length
           }
         });
       } catch (error) {

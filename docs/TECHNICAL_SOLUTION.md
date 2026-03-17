@@ -50,6 +50,10 @@ External Integrations (optional)
 
 ### 处理
 1. 规则匹配（identity/scope/tool/tags/resource_scope/path_prefix）
+2. 敏感路径注册表推断：
+   - 先把路径按内置/运行时覆写的 registry 映射为 asset labels
+   - 支持 `prefix` / `glob` / `regex`
+   - 支持删除内置项和补充自定义项
 2. 决策选择：
    - 命中规则：按优先级和匹配精度选择规则动作
    - 无命中：默认放行（`NO_MATCH_DEFAULT_ALLOW`）
@@ -115,6 +119,11 @@ External Integrations (optional)
 ### 配置源
 - 本地 YAML（必选）
 - SQLite 运行时策略覆盖（可选）
+
+### 可热更新内容
+- 规则动作 (`policies`)
+- 账号策略 (`account_policies`)
+- 敏感路径注册表覆写 (`sensitivity.disabled_builtin_ids`, `sensitivity.custom_path_rules`)
 
 ### 热更新
 - 拉取 -> 校验 -> 原子替换

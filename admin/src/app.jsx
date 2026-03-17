@@ -261,6 +261,32 @@ const DATA_LABEL_TEXT = {
   media: { "zh-CN": "媒体资料", en: "Media" }
 };
 
+const SENSITIVE_PATH_LABEL_TEXT = {
+  credential: { "zh-CN": "凭据目录", en: "Credential Stores" },
+  personal_content: { "zh-CN": "个人内容", en: "Personal Content" },
+  download_staging: { "zh-CN": "下载暂存区", en: "Download Staging" },
+  browser_profile: { "zh-CN": "浏览器资料", en: "Browser Profiles" },
+  browser_secret_store: { "zh-CN": "浏览器密钥库", en: "Browser Secret Stores" },
+  communication_store: { "zh-CN": "通信存储", en: "Communication Stores" }
+};
+
+const SENSITIVE_PATH_MATCH_TYPE_TEXT = {
+  prefix: { "zh-CN": "前缀", en: "Prefix" },
+  glob: { "zh-CN": "Glob", en: "Glob" },
+  regex: { "zh-CN": "正则", en: "Regex" }
+};
+
+const SENSITIVE_PATH_LABEL_OPTIONS = [
+  "credential",
+  "personal_content",
+  "download_staging",
+  "browser_profile",
+  "browser_secret_store",
+  "communication_store"
+];
+
+const SENSITIVE_PATH_MATCH_TYPE_OPTIONS = ["prefix", "glob", "regex"];
+
 const RULE_IMPACT_EXAMPLES = {
   "high-risk-command-block": {
     scene: "执行 `rm -rf` 或 `curl ... | sh` 这类高危命令。",
@@ -611,6 +637,90 @@ function extractPolicies(strategyPayload) {
   return Array.isArray(list)
     ? clone(list).map((policy) => ({ ...policy, enabled: true }))
     : [];
+}
+
+function compareSensitivePathRules(left, right) {
+  const sourceCompare = String(left?.source || "custom").localeCompare(String(right?.source || "custom"));
+  if (sourceCompare !== 0) return sourceCompare;
+  const labelCompare = String(left?.asset_label || "").localeCompare(String(right?.asset_label || ""));
+  if (labelCompare !== 0) return labelCompare;
+  const typeCompare = String(left?.match_type || "").localeCompare(String(right?.match_type || ""));
+  if (typeCompare !== 0) return typeCompare;
+  return String(left?.id || "").localeCompare(String(right?.id || ""));
+}
+
+function normalizeSensitivePathRule(rule, fallbackSource = "custom") {
+  if (!rule || typeof rule !== "object") {
+    return null;
+  }
+  const id = typeof rule.id === "string" ? rule.id.trim() : "";
+  const assetLabel = typeof rule.asset_label === "string" ? rule.asset_label.trim() : "";
+  const matchType = typeof rule.match_type === "string" ? rule.match_type.trim() : "";
+  const pattern = typeof rule.pattern === "string" ? rule.pattern.trim() : "";
+  const source = rule.source === "builtin" || rule.source === "custom" ? rule.source : fallbackSource;
+  if (!id || !assetLabel || !pattern || !SENSITIVE_PATH_MATCH_TYPE_OPTIONS.includes(matchType)) {
+    return null;
+  }
+  return {
+    id,
+    asset_label: assetLabel,
+    match_type: matchType,
+    pattern,
+    source
+  };
+}
+
+function normalizeSensitivePathRules(rules, fallbackSource = "custom") {
+  if (!Array.isArray(rules)) {
+    return [];
+  }
+  const deduped = new Map();
+  rules.forEach((rule) => {
+    const normalized = normalizeSensitivePathRule(rule, fallbackSource);
+    if (normalized) {
+      deduped.set(normalized.id, normalized);
+    }
+  });
+  return Array.from(deduped.values()).sort(compareSensitivePathRules);
+}
+
+function normalizeSensitivePathStrategy(strategy) {
+  const disabledBuiltinIds = Array.isArray(strategy?.disabled_builtin_ids)
+    ? Array.from(
+        new Set(
+          strategy.disabled_builtin_ids
+            .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+            .filter(Boolean)
+        )
+      ).sort((left, right) => left.localeCompare(right))
+    : [];
+
+  return {
+    effective_path_rules: normalizeSensitivePathRules(strategy?.effective_path_rules ?? strategy?.path_rules, "builtin"),
+    custom_path_rules: normalizeSensitivePathRules(strategy?.custom_path_rules, "custom"),
+    removed_builtin_path_rules: normalizeSensitivePathRules(strategy?.removed_builtin_path_rules, "builtin"),
+    disabled_builtin_ids: disabledBuiltinIds
+  };
+}
+
+function extractSensitivePathStrategy(strategyPayload) {
+  return normalizeSensitivePathStrategy(strategyPayload?.strategy?.sensitivity);
+}
+
+function serializeSensitivePathStrategy(strategy) {
+  const normalized = normalizeSensitivePathStrategy(strategy);
+  return JSON.stringify({
+    custom_path_rules: normalized.custom_path_rules,
+    disabled_builtin_ids: normalized.disabled_builtin_ids
+  });
+}
+
+function sensitivePathLabel(label) {
+  return readLocalized(SENSITIVE_PATH_LABEL_TEXT, label, label || ui("未标记", "Unlabeled"));
+}
+
+function sensitivePathMatchTypeLabel(matchType) {
+  return readLocalized(SENSITIVE_PATH_MATCH_TYPE_TEXT, matchType, matchType || ui("未知", "Unknown"));
 }
 
 function extractAccountPolicies(accountPayload) {
@@ -1153,10 +1263,15 @@ function App() {
   const [statusPayload, setStatusPayload] = useState(null);
   const [policies, setPolicies] = useState([]);
   const [publishedPolicies, setPublishedPolicies] = useState([]);
+  const [sensitivePathStrategy, setSensitivePathStrategy] = useState(() => normalizeSensitivePathStrategy());
+  const [publishedSensitivePathStrategy, setPublishedSensitivePathStrategy] = useState(() => normalizeSensitivePathStrategy());
   const [accountPolicies, setAccountPolicies] = useState([]);
   const [publishedAccountPolicies, setPublishedAccountPolicies] = useState([]);
   const [availableSessions, setAvailableSessions] = useState([]);
   const [selectedSessionSubject, setSelectedSessionSubject] = useState("");
+  const [newSensitivePathLabel, setNewSensitivePathLabel] = useState(SENSITIVE_PATH_LABEL_OPTIONS[0]);
+  const [newSensitivePathMatchType, setNewSensitivePathMatchType] = useState(SENSITIVE_PATH_MATCH_TYPE_OPTIONS[0]);
+  const [newSensitivePathPattern, setNewSensitivePathPattern] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1175,13 +1290,17 @@ function App() {
     () => JSON.stringify(policies) !== JSON.stringify(publishedPolicies),
     [policies, publishedPolicies]
   );
+  const hasPendingSensitivePathChanges = useMemo(
+    () => serializeSensitivePathStrategy(sensitivePathStrategy) !== serializeSensitivePathStrategy(publishedSensitivePathStrategy),
+    [publishedSensitivePathStrategy, sensitivePathStrategy]
+  );
   const hasPendingAccountChanges = useMemo(
     () =>
       JSON.stringify(canonicalizeAccountPolicies(accountPolicies)) !==
       JSON.stringify(canonicalizeAccountPolicies(publishedAccountPolicies)),
     [accountPolicies, publishedAccountPolicies]
   );
-  const hasPendingChanges = hasPendingRuleChanges || hasPendingAccountChanges;
+  const hasPendingChanges = hasPendingRuleChanges || hasPendingSensitivePathChanges || hasPendingAccountChanges;
   const groupedPolicies = useMemo(() => {
     const groups = new Map();
     policies.forEach((policy, index) => {
@@ -1208,6 +1327,39 @@ function App() {
     () => accountPolicies.find((account) => account.is_admin)?.subject || "",
     [accountPolicies]
   );
+  const effectiveSensitivePathRules = useMemo(
+    () => normalizeSensitivePathRules(sensitivePathStrategy.effective_path_rules, "builtin"),
+    [sensitivePathStrategy]
+  );
+  const customSensitivePathRules = useMemo(
+    () => normalizeSensitivePathRules(sensitivePathStrategy.custom_path_rules, "custom"),
+    [sensitivePathStrategy]
+  );
+  const removedBuiltinSensitivePathRules = useMemo(
+    () => normalizeSensitivePathRules(sensitivePathStrategy.removed_builtin_path_rules, "builtin"),
+    [sensitivePathStrategy]
+  );
+  const groupedSensitivePathRules = useMemo(() => {
+    const groups = new Map();
+    effectiveSensitivePathRules.forEach((rule) => {
+      const key = rule.asset_label || "unknown";
+      const list = groups.get(key) || [];
+      list.push(rule);
+      groups.set(key, list);
+    });
+    return Array.from(groups.entries()).sort((left, right) => sensitivePathLabel(left[0]).localeCompare(sensitivePathLabel(right[0]), activeLocale === "zh-CN" ? "zh-CN" : "en-US"));
+  }, [effectiveSensitivePathRules, locale]);
+  const sensitivePathRuleCountsByLabel = useMemo(() => {
+    const counts = new Map();
+    policies.forEach((policy, index) => {
+      toArray(policy?.match?.asset_labels).forEach((label) => {
+        const list = counts.get(label) || [];
+        list.push(policyTitle(policy, index));
+        counts.set(label, list);
+      });
+    });
+    return counts;
+  }, [locale, policies]);
   const firstRuleKey = policyEntries[0]?.key || "";
 
   useEffect(() => {
@@ -1332,12 +1484,15 @@ function App() {
       ]);
       setStatusPayload(status);
       const nextPolicies = extractPolicies(strategy);
+      const nextSensitivePathStrategy = extractSensitivePathStrategy(strategy);
       const nextAccountPolicies = extractAccountPolicies(accounts);
       setPublishedPolicies(nextPolicies);
+      setPublishedSensitivePathStrategy(nextSensitivePathStrategy);
       setPublishedAccountPolicies(nextAccountPolicies);
       setAvailableSessions(extractChatSessions(accounts));
       if (syncRules === true) {
         setPolicies(clone(nextPolicies));
+        setSensitivePathStrategy(clone(nextSensitivePathStrategy));
       }
       if (syncAccounts === true) {
         setAccountPolicies(clone(nextAccountPolicies));
@@ -1501,11 +1656,12 @@ function App() {
   const trendTotalCount = trendTotals.reduce((sum, value) => sum + value, 0);
   const trendRiskCount = trendRisks.reduce((sum, value) => sum + value, 0);
 
-  const savePolicies = useCallback(async (nextPolicies) => {
+  const saveStrategy = useCallback(async (nextPolicies, nextSensitivePaths) => {
     const normalizedPolicies = nextPolicies.map((policy) => ({ ...policy, enabled: true }));
+    const normalizedSensitivePathStrategy = normalizeSensitivePathStrategy(nextSensitivePaths);
     setSaving(true);
     setError("");
-    setMessage(ui("规则自动保存中...", "Saving policy changes..."));
+    setMessage(ui("规则与敏感路径自动保存中...", "Saving policy and sensitive path changes..."));
     try {
       const response = await fetch("/api/strategy", {
         method: "PUT",
@@ -1515,7 +1671,11 @@ function App() {
           "x-safeclaw-locale": activeLocale
         },
         body: JSON.stringify({
-          policies: normalizedPolicies
+          policies: normalizedPolicies,
+          sensitivity: {
+            custom_path_rules: normalizedSensitivePathStrategy.custom_path_rules,
+            disabled_builtin_ids: normalizedSensitivePathStrategy.disabled_builtin_ids
+          }
         })
       });
       const payload = await response.json();
@@ -1524,8 +1684,13 @@ function App() {
       }
       const suffix = payload.restart_required ? ui(" 需要重启 gateway 后完整生效。", " A gateway restart is required for full effect.") : "";
       const details = `${payload.message || ""}${suffix}`.trim();
-      setMessage(details ? `${ui("规则已自动保存。", "Policies saved automatically.")} ${details}` : ui("规则已自动保存。", "Policies saved automatically."));
+      setMessage(
+        details
+          ? `${ui("规则与敏感路径已自动保存。", "Policies and sensitive paths saved automatically.")} ${details}`
+          : ui("规则与敏感路径已自动保存。", "Policies and sensitive paths saved automatically.")
+      );
       setPublishedPolicies(clone(normalizedPolicies));
+      setPublishedSensitivePathStrategy(clone(normalizedSensitivePathStrategy));
       await loadData({ syncRules: false, syncAccounts: false, silent: true });
     } catch (saveError) {
       setError(String(saveError));
@@ -1570,15 +1735,20 @@ function App() {
   }, [loadData]);
 
   useEffect(() => {
-    if (loading || saving || !hasPendingRuleChanges) {
+    if (loading || saving || (!hasPendingRuleChanges && !hasPendingSensitivePathChanges)) {
       return undefined;
     }
-    setMessage(ui("检测到规则变更，正在自动保存...", "Rule changes detected. Saving automatically..."));
+    setMessage(
+      ui(
+        "检测到规则或敏感路径变更，正在自动保存...",
+        "Rule or sensitive path changes detected. Saving automatically..."
+      )
+    );
     const timer = setTimeout(() => {
-      void savePolicies(policies);
+      void saveStrategy(policies, sensitivePathStrategy);
     }, 500);
     return () => clearTimeout(timer);
-  }, [hasPendingRuleChanges, loading, policies, savePolicies, saving]);
+  }, [hasPendingRuleChanges, hasPendingSensitivePathChanges, loading, policies, saveStrategy, saving, sensitivePathStrategy]);
 
   useEffect(() => {
     if (loading || saving || !hasPendingAccountChanges) {
@@ -1740,6 +1910,53 @@ function App() {
     setAccountPolicies((current) => current.filter((account) => account.subject !== subject));
   }
 
+  function addSensitivePathRule() {
+    const pattern = newSensitivePathPattern.trim();
+    if (!pattern) {
+      return;
+    }
+    const customRule = {
+      id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      asset_label: newSensitivePathLabel,
+      match_type: newSensitivePathMatchType,
+      pattern,
+      source: "custom"
+    };
+    setSensitivePathStrategy((current) => normalizeSensitivePathStrategy({
+      ...current,
+      effective_path_rules: [...toArray(current.effective_path_rules), customRule],
+      custom_path_rules: [...toArray(current.custom_path_rules), customRule]
+    }));
+    setNewSensitivePathPattern("");
+  }
+
+  function removeSensitivePathRule(rule) {
+    setSensitivePathStrategy((current) => {
+      if (rule.source === "builtin") {
+        return normalizeSensitivePathStrategy({
+          ...current,
+          effective_path_rules: toArray(current.effective_path_rules).filter((item) => item.id !== rule.id),
+          removed_builtin_path_rules: [...toArray(current.removed_builtin_path_rules), rule],
+          disabled_builtin_ids: [...toArray(current.disabled_builtin_ids), rule.id]
+        });
+      }
+      return normalizeSensitivePathStrategy({
+        ...current,
+        effective_path_rules: toArray(current.effective_path_rules).filter((item) => item.id !== rule.id),
+        custom_path_rules: toArray(current.custom_path_rules).filter((item) => item.id !== rule.id)
+      });
+    });
+  }
+
+  function restoreSensitivePathRule(rule) {
+    setSensitivePathStrategy((current) => normalizeSensitivePathStrategy({
+      ...current,
+      effective_path_rules: [...toArray(current.effective_path_rules), rule],
+      removed_builtin_path_rules: toArray(current.removed_builtin_path_rules).filter((item) => item.id !== rule.id),
+      disabled_builtin_ids: toArray(current.disabled_builtin_ids).filter((item) => item !== rule.id)
+    }));
+  }
+
   const tabCounts = {
     overview: stats.total,
     events: stats.total,
@@ -1760,7 +1977,9 @@ function App() {
     ? `${decisionLabel(latestDecision.decision)} · ${latestDecision.tool || ui("未知操作", "Unknown operation")} · ${resourceScopeLabel(latestDecision.resource_scope)}`
     : ui("等待新的运行数据进入控制台。", "Waiting for new runtime data.");
   const statusTone = error ? "error" : hasPendingChanges || saving ? "warn" : "good";
-  const statusMessage = error || message || (hasPendingChanges ? ui("检测到规则变更，正在自动保存...", "Rule changes detected. Saving automatically...") : "");
+  const statusMessage = error || message || (hasPendingChanges
+    ? ui("检测到策略变更，正在自动保存...", "Strategy changes detected. Saving automatically...")
+    : "");
   const shouldShowStatus = Boolean(statusMessage);
   const activeRuleEntry = policyEntries.find((entry) => entry.key === activeRuleKey) || null;
   const activeRuleGuide = activeRuleEntry ? ruleImpactGuide(activeRuleEntry.policy, activeRuleEntry.index) : null;
@@ -1801,6 +2020,7 @@ function App() {
       icon: <ToolbarMonogram text="A" />
     }
   ];
+  const canAddSensitivePath = Boolean(newSensitivePathPattern.trim());
 
   return (
     <div className="app">
@@ -2201,8 +2421,148 @@ function App() {
                 <div className="rule-meta">
                   <span className="meta-pill">{ui("分组", "Groups")} {groupedPolicies.length}</span>
                   <span className="meta-pill">{ui("规则", "Rules")} {policies.length}</span>
+                  <span className="meta-pill">{ui("敏感路径", "Sensitive Paths")} {effectiveSensitivePathRules.length}</span>
+                  {removedBuiltinSensitivePathRules.length > 0 ? (
+                    <span className="meta-pill meta-pill-highlight">{ui("已移除内置", "Removed Built-ins")} {removedBuiltinSensitivePathRules.length}</span>
+                  ) : null}
                 </div>
               </div>
+
+              <section className="sensitive-path-panel" aria-label={ui("敏感路径策略", "Sensitive path strategy")}>
+                <div className="sensitive-path-head">
+                  <div>
+                    <span className="eyebrow">{ui("敏感路径注册表", "Sensitive Path Registry")}</span>
+                    <h3>{ui("哪些路径会被视为敏感", "Which paths are treated as sensitive")}</h3>
+                    <p className="sensitive-path-intro">
+                      {ui(
+                        "路径会先在这里映射成资产标签，再由下面的规则决定提醒、审批或拦截。内置项可删除，自定义项可随时补充。",
+                        "Paths are mapped to asset labels here first, then the rules below decide whether to warn, challenge, or block. Built-ins can be removed and custom entries can be added at any time."
+                      )}
+                    </p>
+                  </div>
+                  <div className="rule-meta">
+                    <span className="meta-pill">{ui("自定义", "Custom")} {customSensitivePathRules.length}</span>
+                    <span className="meta-pill">{ui("生效", "Effective")} {effectiveSensitivePathRules.length}</span>
+                  </div>
+                </div>
+
+                <div className="sensitive-path-toolbar">
+                  <label className="sensitive-path-field">
+                    <span>{ui("敏感标签", "Sensitive label")}</span>
+                    <select value={newSensitivePathLabel} onChange={(event) => setNewSensitivePathLabel(event.target.value)}>
+                      {SENSITIVE_PATH_LABEL_OPTIONS.map((label) => (
+                        <option key={label} value={label}>{sensitivePathLabel(label)}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="sensitive-path-field">
+                    <span>{ui("匹配方式", "Match type")}</span>
+                    <select value={newSensitivePathMatchType} onChange={(event) => setNewSensitivePathMatchType(event.target.value)}>
+                      {SENSITIVE_PATH_MATCH_TYPE_OPTIONS.map((matchType) => (
+                        <option key={matchType} value={matchType}>{sensitivePathMatchTypeLabel(matchType)}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="sensitive-path-field sensitive-path-field-wide">
+                    <span>{ui("路径模式", "Path pattern")}</span>
+                    <input
+                      type="text"
+                      value={newSensitivePathPattern}
+                      placeholder={ui("~/Downloads/** 或 ^/srv/secrets(?:/|$)", "~/Downloads/** or ^/srv/secrets(?:/|$)")}
+                      onChange={(event) => setNewSensitivePathPattern(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && canAddSensitivePath) {
+                          event.preventDefault();
+                          addSensitivePathRule();
+                        }
+                      }}
+                    />
+                  </label>
+
+                  <button className="primary" type="button" disabled={!canAddSensitivePath} onClick={addSensitivePathRule}>
+                    {ui("添加路径", "Add Path")}
+                  </button>
+                </div>
+
+                <div className="sensitive-path-note">
+                  {ui(
+                    "支持前缀、glob 和正则。删除内置项只会取消这条路径到敏感标签的映射，不会直接修改规则定义本身。",
+                    "Supports prefix, glob, and regex. Removing a built-in only disables that path-to-label mapping and does not rewrite the rule definitions themselves."
+                  )}
+                </div>
+
+                {groupedSensitivePathRules.length === 0 ? (
+                  <div className="chart-empty">{ui("当前没有生效的敏感路径。", "There are no active sensitive path entries.")}</div>
+                ) : (
+                  <div className="sensitive-path-groups">
+                    {groupedSensitivePathRules.map(([label, rules]) => {
+                      const linkedRules = toArray(sensitivePathRuleCountsByLabel.get(label));
+                      return (
+                        <section key={label} className="sensitive-path-group">
+                          <div className="sensitive-path-group-head">
+                            <div>
+                              <h4>{sensitivePathLabel(label)}</h4>
+                              <p>
+                                {linkedRules.length > 0
+                                  ? ui(`关联规则 ${linkedRules.length} 条`, `${linkedRules.length} related rules`)
+                                  : ui("当前没有规则直接引用这个标签", "No rules reference this label directly")}
+                              </p>
+                            </div>
+                            <span className="meta-pill">{ui("条目", "Entries")} {rules.length}</span>
+                          </div>
+
+                          <div className="sensitive-path-list">
+                            {rules.map((rule) => (
+                              <article key={rule.id} className="sensitive-path-item">
+                                <div className="sensitive-path-item-main">
+                                  <div className="sensitive-path-item-pattern">{rule.pattern}</div>
+                                  <div className="sensitive-path-item-tags">
+                                    <span className="tag meta-tag">{sensitivePathMatchTypeLabel(rule.match_type)}</span>
+                                    <span className="tag meta-tag">{rule.source === "builtin" ? ui("内置", "Built-in") : ui("自定义", "Custom")}</span>
+                                  </div>
+                                </div>
+                                <button className="ghost small" type="button" onClick={() => removeSensitivePathRule(rule)}>
+                                  {ui("删除", "Remove")}
+                                </button>
+                              </article>
+                            ))}
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {removedBuiltinSensitivePathRules.length > 0 ? (
+                  <section className="sensitive-path-removed">
+                    <div className="sensitive-path-group-head">
+                      <div>
+                        <h4>{ui("已移除的内置项", "Removed built-ins")}</h4>
+                        <p>{ui("这些路径暂时不会再被判定成敏感路径。", "These paths are temporarily excluded from sensitive path detection.")}</p>
+                      </div>
+                      <span className="meta-pill">{ui("已移除", "Removed")} {removedBuiltinSensitivePathRules.length}</span>
+                    </div>
+                    <div className="sensitive-path-list">
+                      {removedBuiltinSensitivePathRules.map((rule) => (
+                        <article key={rule.id} className="sensitive-path-item muted">
+                          <div className="sensitive-path-item-main">
+                            <div className="sensitive-path-item-pattern">{rule.pattern}</div>
+                            <div className="sensitive-path-item-tags">
+                              <span className="tag meta-tag">{sensitivePathLabel(rule.asset_label)}</span>
+                              <span className="tag meta-tag">{sensitivePathMatchTypeLabel(rule.match_type)}</span>
+                            </div>
+                          </div>
+                          <button className="ghost small" type="button" onClick={() => restoreSensitivePathRule(rule)}>
+                            {ui("恢复", "Restore")}
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </section>
 
               <div className={`rules-layout ${isRuleSideVisible ? "with-side" : ""}`}>
                 <div className="rules" ref={rulesColumnRef}>

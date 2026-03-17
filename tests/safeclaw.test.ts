@@ -45,10 +45,10 @@ function createDecisionContext(
       trace_id: "trace-1",
       actor_id: "employee",
       workspace: "payments",
-      policy_version: "2026-03-15",
+      policy_version: "2026-03-17",
       untrusted: false,
       tags: [],
-      created_at: "2026-03-15T00:00:00.000Z",
+      created_at: "2026-03-17T00:00:00.000Z",
       ...securityOverrides
     },
     ...overrides
@@ -64,7 +64,7 @@ function findRule(config: SafeClawConfig, ruleId: string) {
 test("config loader reads default YAML and keeps policies", () => {
   const config = createConfig();
   assert.equal(config.version, "1.0");
-  assert.equal(config.policies.length, 16);
+  assert.equal(config.policies.length, 17);
   assert.equal(config.hooks.before_tool_call.fail_mode, "close");
   assert.equal(config.dlp.patterns[0].name, "email");
   assert.equal(config.policies[0]?.title, "高危命令模式默认拦截");
@@ -132,6 +132,23 @@ test("DLP engine masks and removes configured findings", () => {
   assert.equal(sanitized.nested, "[REDACTED]");
 });
 
+test("sensitive directory enumeration rule covers filesystem list and search operations", () => {
+  const config = createConfig();
+  const rule = findRule(config, "sensitive-directory-enumeration-challenge");
+
+  assert.deepEqual(rule.match.tool_group, ["filesystem"]);
+  assert.deepEqual(rule.match.operation, ["list", "search"]);
+  assert.deepEqual(rule.match.asset_labels, [
+    "credential",
+    "personal_content",
+    "download_staging",
+    "browser_profile",
+    "browser_secret_store",
+    "communication_store",
+  ]);
+  assert.equal(rule.match.path_glob, undefined);
+});
+
 test("event emitter retries failed webhook sends", async () => {
   const sent: SecurityDecisionEvent[] = [];
   let attempts = 0;
@@ -185,9 +202,9 @@ test("default policy matrix covers every configured rule", async (t) => {
       resource_paths: ["/Users/liuzhuangm4/Desktop/demo.txt"]
     },
     "sensitive-directory-enumeration-challenge": {
-      tool_name: "filesystem.list",
+      tool_name: "filesystem.search",
       tool_group: "filesystem",
-      operation: "list",
+      operation: "search",
       resource_scope: "workspace_outside",
       resource_paths: ["/Users/liuzhuangm4/Downloads"]
     },
@@ -197,6 +214,13 @@ test("default policy matrix covers every configured rule", async (t) => {
       operation: "read",
       resource_scope: "workspace_outside",
       resource_paths: ["/Users/liuzhuangm4/.ssh/id_rsa"]
+    },
+    "communication-store-access-challenge": {
+      tool_name: "filesystem.read",
+      tool_group: "filesystem",
+      operation: "read",
+      resource_scope: "workspace_outside",
+      resource_paths: ["/Users/liuzhuangm4/Library/Messages/chat.db"]
     },
     "public-network-egress-challenge": {
       tool_name: "network.http",
@@ -249,10 +273,11 @@ test("default policy matrix covers every configured rule", async (t) => {
       tool_args_summary: "screenshot of internal console"
     },
     "browser-credential-block": {
-      tool_name: "browser.read",
-      tool_group: "browser",
+      tool_name: "filesystem.read",
+      tool_group: "filesystem",
       operation: "read",
-      data_labels: ["browser_secret"]
+      resource_scope: "workspace_outside",
+      resource_paths: ["/Users/liuzhuangm4/Library/Application Support/Google/Chrome/Default/Cookies"]
     },
     "business-system-bulk-read-block": {
       tool_name: "crm.export",
@@ -361,6 +386,120 @@ test("plugin challenges filesystem listing", async () => {
   });
   assert.equal(result.decision, "challenge");
   assert.deepEqual(result.reason_codes, ["SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL"]);
+});
+
+test("plugin challenges filesystem search in sensitive directories", async () => {
+  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-search" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "filesystem.search",
+    tool_group: "filesystem",
+    operation: "search",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/Users/liuzhuangm4/Downloads"],
+    tool_args_summary: "rg -n invoice /Users/liuzhuangm4/Downloads"
+  });
+  assert.equal(result.decision, "challenge");
+  assert.deepEqual(result.reason_codes, ["SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL"]);
+});
+
+test("plugin allows search when built-in sensitive path mapping is removed", async () => {
+  const config = structuredClone(createConfig());
+  config.sensitivity.path_rules = config.sensitivity.path_rules.filter(
+    (rule) => rule.id !== "download-staging-downloads-directory",
+  );
+  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-search-removed-sensitive-path" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "filesystem.search",
+    tool_group: "filesystem",
+    operation: "search",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/tmp/workspace/Downloads"],
+    tool_args_summary: "find /tmp/workspace/Downloads -maxdepth 1 -type f",
+  });
+  assert.equal(result.decision, "allow");
+  assert.deepEqual(result.reason_codes, ["NO_MATCH_DEFAULT_ALLOW"]);
+});
+
+test("plugin uses custom sensitive path mappings for credential approval", async () => {
+  const config = structuredClone(createConfig());
+  config.sensitivity.path_rules = [
+    ...config.sensitivity.path_rules,
+    {
+      id: "custom-credential-share",
+      asset_label: "credential",
+      match_type: "prefix",
+      pattern: "/srv/custom-secrets",
+      source: "custom"
+    }
+  ];
+  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-search-custom-sensitive-path" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "filesystem.read",
+    tool_group: "filesystem",
+    operation: "read",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/srv/custom-secrets/app.env"],
+  });
+  assert.equal(result.decision, "challenge");
+  assert.deepEqual(result.reason_codes, ["CREDENTIAL_PATH_ACCESS_REQUIRES_APPROVAL"]);
+});
+
+test("plugin challenges filesystem search in personal content directories", async () => {
+  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-personal-search" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "filesystem.search",
+    tool_group: "filesystem",
+    operation: "search",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/Users/liuzhuangm4/Documents"],
+    tool_args_summary: "find /Users/liuzhuangm4/Documents -maxdepth 1 -type f",
+  });
+  assert.equal(result.decision, "challenge");
+  assert.deepEqual(result.reason_codes, ["SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL"]);
+});
+
+test("plugin challenges filesystem reads from communication stores", async () => {
+  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-comm" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "filesystem.read",
+    tool_group: "filesystem",
+    operation: "read",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/Users/liuzhuangm4/Library/Messages/chat.db"],
+  });
+  assert.equal(result.decision, "challenge");
+  assert.deepEqual(result.reason_codes, ["COMMUNICATION_STORE_ACCESS_REQUIRES_APPROVAL"]);
+});
+
+test("plugin blocks filesystem reads of browser secret stores", async () => {
+  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-browser" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "filesystem.read",
+    tool_group: "filesystem",
+    operation: "read",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/Users/liuzhuangm4/Library/Application Support/Google/Chrome/Default/Cookies"],
+  });
+  assert.equal(result.decision, "block");
+  assert.deepEqual(result.reason_codes, ["BROWSER_SECRET_ACCESS_BLOCK"]);
 });
 
 test("persist strict blocks sensitive transcript writes", async () => {

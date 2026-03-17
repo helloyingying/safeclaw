@@ -2,7 +2,7 @@ import os from "node:os";
 import { isIP } from "node:net";
 import path from "node:path";
 
-import type { ResourceScope } from "../../types.ts";
+import type { ResourceScope, SensitivePathRule } from "../../types.ts";
 import type {
   ResourceContext,
   ToolContext,
@@ -10,7 +10,14 @@ import type {
   LabelContext,
   VolumeContext
 } from "../models/resource_context.ts";
+import {
+  extractEmbeddedPathCandidates,
+  hasEmbeddedPathHint,
+  isPathLikeCandidate,
+  resolvePathCandidate,
+} from "./path_candidate_inference.ts";
 import { inferShellFilesystemSemantic } from "./shell_filesystem_inference.ts";
+import { inferSensitivityLabels } from "./sensitivity_label_inference.ts";
 
 const HOME_DIR = os.homedir();
 const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
@@ -19,7 +26,6 @@ const URL_KEY_PATTERN = /(url|uri|endpoint|host|domain|upload|webhook|callback|p
 const SYSTEM_PATH_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/private/etc", "/System", "/Library"];
 const DEFAULT_MESSAGES_DB_PATH = path.join(HOME_DIR, "Library/Messages/chat.db");
 const MESSAGE_DB_PATH_PATTERN = /(?:~\/Library\/Messages\/chat\.db|\/Users\/[^/\s"'`;]+\/Library\/Messages\/chat\.db)/i;
-const OTP_PATTERN = /otp|one[- ]time|verification code|验证码|passcode|login (?:code|notification|alert)|登录提醒/i;
 const PERSONAL_STORAGE_DOMAINS = [
   "dropbox.com",
   "drive.google.com",
@@ -103,28 +109,12 @@ export class ContextInferenceService {
     toolGroup: string | undefined,
     resourcePaths: string[],
     toolArgsSummary: string | undefined,
+    sensitivePathRules?: SensitivePathRule[],
   ): LabelContext {
-    const corpus = [...resourcePaths, toolArgsSummary ?? ""].join(" ").toLowerCase();
-    const assetLabels = new Set<string>();
-    const dataLabels = new Set<string>();
-
-    this.addLabel(assetLabels, /finance|invoice|billing|payroll|ledger/.test(corpus), "financial");
-    this.addLabel(dataLabels, /finance|invoice|billing|payroll|ledger/.test(corpus), "financial");
-    this.addLabel(assetLabels, /customer|client|crm|contact/.test(corpus), "customer_data");
-    this.addLabel(dataLabels, /customer|client|crm|contact/.test(corpus), "customer_data");
-    this.addLabel(assetLabels, /hr|personnel|resume|employee|salary/.test(corpus), "hr");
-    this.addLabel(dataLabels, /hr|personnel|resume|employee|salary/.test(corpus), "pii");
-    this.addLabel(assetLabels, /\.env\b|\.npmrc\b|\.pypirc\b|\.ssh\b|id_rsa\b|kubeconfig\b|aws\/credentials\b/.test(corpus), "credential");
-    this.addLabel(dataLabels, /token|secret|password|bearer|cookie|session|jwt|private key|id_rsa/.test(corpus), "secret");
-    this.addLabel(dataLabels, OTP_PATTERN.test(corpus), "otp");
-    this.addLabel(assetLabels, /\.github\/workflows\/|dockerfile\b|terraform|\.tf\b|k8s|kubernetes|deployment\.ya?ml|secret\.ya?ml|iam/.test(corpus), "control_plane");
-    this.addLabel(dataLabels, toolGroup === "email" || toolGroup === "sms", "communications");
-    this.addLabel(dataLabels, toolGroup === "album", "media");
-    this.addLabel(dataLabels, toolGroup === "browser", "browser_secret");
-
+    const inferred = inferSensitivityLabels(toolGroup, resourcePaths, toolArgsSummary, sensitivePathRules);
     return {
-      assetLabels: [...assetLabels],
-      dataLabels: [...dataLabels],
+      assetLabels: inferred.assetLabels,
+      dataLabels: inferred.dataLabels,
     };
   }
 
@@ -188,8 +178,8 @@ export class ContextInferenceService {
       const trimmed = value.trim();
       if (trimmed && this.isPathLike(trimmed, keyHint)) {
         output.push(trimmed);
-      } else if (trimmed && (COMMAND_KEY_PATTERN.test(keyHint) || trimmed.includes("~/") || trimmed.includes("/"))) {
-        for (const candidate of this.extractEmbeddedPathCandidates(trimmed)) {
+      } else if (trimmed && (COMMAND_KEY_PATTERN.test(keyHint) || hasEmbeddedPathHint(trimmed))) {
+        for (const candidate of extractEmbeddedPathCandidates(trimmed)) {
           output.push(candidate);
           if (output.length >= 24) {
             break;
@@ -226,44 +216,11 @@ export class ContextInferenceService {
     if (PATH_KEY_PATTERN.test(keyHint)) {
       return true;
     }
-    return (
-      value.startsWith("/") ||
-      value.startsWith("~/") ||
-      value.startsWith("./") ||
-      value.startsWith("../")
-    );
-  }
-
-  private extractEmbeddedPathCandidates(value: string): string[] {
-    const matches = value.match(/(?:^|[\s"'=])((?:~\/|\/|\.\/|\.\.\/)[^\s"'`;|&<>]+)/g) ?? [];
-    return matches
-      .map((match) => match.trim().replace(/^["'=]+/, ""))
-      .map((match) => {
-        const pathMatch = match.match(/(?:~\/|\/|\.\/|\.\.\/)[^\s"'`;|&<>]+/);
-        return pathMatch ? pathMatch[0] : "";
-      })
-      .filter(Boolean);
+    return isPathLikeCandidate(value);
   }
 
   private resolvePathCandidate(candidate: string, workspaceDir?: string): string | undefined {
-    if (!candidate) {
-      return undefined;
-    }
-
-    let normalized = candidate;
-    if (normalized.startsWith("~/")) {
-      normalized = path.join(HOME_DIR, normalized.slice(2));
-    } else if (normalized === "~") {
-      normalized = HOME_DIR;
-    }
-
-    if (path.isAbsolute(normalized)) {
-      return path.normalize(normalized);
-    }
-    if (!workspaceDir) {
-      return undefined;
-    }
-    return path.normalize(path.resolve(workspaceDir, normalized));
+    return resolvePathCandidate(candidate, workspaceDir);
   }
 
   private classifyResolvedResourcePaths(
@@ -541,11 +498,5 @@ export class ContextInferenceService {
       return "search";
     }
     return "read";
-  }
-
-  private addLabel(labels: Set<string>, condition: boolean, label: string): void {
-    if (condition) {
-      labels.add(label);
-    }
   }
 }

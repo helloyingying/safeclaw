@@ -9,6 +9,7 @@ import type {
   SafeClawConfig,
   Severity,
 } from "../types.ts";
+import { normalizeSensitivePathRules } from "../domain/services/sensitive_path_registry.ts";
 
 const DEFAULT_HOOKS: Record<HookName, HookControls> = {
   before_prompt_build: { enabled: true, timeout_ms: 50, fail_mode: "open" },
@@ -187,6 +188,10 @@ export function validateConfig(raw: Record<string, unknown>): SafeClawConfig {
     throw new Error("DLP config must define patterns and on_dlp_hit.");
   }
   const webhookUrl = config.event_sink?.webhook_url;
+  const rawSensitivity =
+    raw.sensitivity && typeof raw.sensitivity === "object" && !Array.isArray(raw.sensitivity)
+      ? (raw.sensitivity as Record<string, unknown>)
+      : undefined;
 
   return {
     version: config.version,
@@ -198,6 +203,9 @@ export function validateConfig(raw: Record<string, unknown>): SafeClawConfig {
     },
     hooks,
     policies: normalizedPolicies,
+    sensitivity: {
+      path_rules: normalizeSensitivePathRules(rawSensitivity?.path_rules, "builtin")
+    },
     dlp: {
       on_dlp_hit: dlp.on_dlp_hit,
       patterns: dlp.patterns

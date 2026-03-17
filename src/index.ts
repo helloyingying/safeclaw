@@ -192,6 +192,7 @@ export function createSafeClawPlugin(options: SafeClawPluginOptions = {}): Plugi
               current.ruleEngine,
               current.decisionEngine,
               approvals,
+              current.config.sensitivity.path_rules,
             );
           },
           { eventEmitter, configManager, now },

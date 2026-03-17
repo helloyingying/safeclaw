@@ -17,6 +17,8 @@ export type ReasonCode = string;
 export type ResourceScope = "none" | "workspace_inside" | "workspace_outside" | "system";
 export type Severity = "low" | "medium" | "high" | "critical";
 export type AccountPolicyMode = "apply_rules" | "default_allow";
+export type SensitivePathMatchType = "prefix" | "glob" | "regex";
+export type SensitivePathSource = "builtin" | "custom";
 export type ControlDomain =
   | "execution_control"
   | "data_access"
@@ -172,6 +174,23 @@ export interface DlpPatternConfig {
   flags?: string;
 }
 
+export interface SensitivePathRule {
+  id: string;
+  asset_label: string;
+  match_type: SensitivePathMatchType;
+  pattern: string;
+  source?: SensitivePathSource;
+}
+
+export interface SensitivePathConfig {
+  path_rules: SensitivePathRule[];
+}
+
+export interface SensitivePathStrategyOverride {
+  disabled_builtin_ids?: string[];
+  custom_path_rules?: SensitivePathRule[];
+}
+
 export interface DlpFinding {
   pattern_name: string;
   type: PatternType;
@@ -221,6 +240,7 @@ export interface SafeClawConfig {
   };
   hooks: Record<HookName, HookControls>;
   policies: PolicyRule[];
+  sensitivity: SensitivePathConfig;
   dlp: DlpConfig;
   event_sink: EventSinkConfig;
 }

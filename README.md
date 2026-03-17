@@ -13,6 +13,7 @@ LLM agents can execute powerful tools. SafeClaw provides a policy guardrail laye
 - Runtime policy enforcement for OpenClaw hooks (`before_tool_call`, `after_tool_call`, etc.)
 - Rule-first security model (`allow`, `warn`, `challenge`, `block`)
 - Challenge approval workflow with command-based admin handling
+- Dynamic sensitive-path registry that maps paths to asset labels before rule evaluation
 - Sensitive data scanning and sanitization (DLP)
 - Admin dashboard for strategy and account policy operations
 - Decision events for audit and observability
@@ -23,6 +24,7 @@ LLM agents can execute powerful tools. SafeClaw provides a policy guardrail laye
 SafeClaw follows a layered architecture:
 
 - `domain`: policy, approval, context inference, formatting
+- `domain/services/sensitive_path_registry.ts`: built-in + runtime-overridden sensitive path mappings
 - `engine`: rule matching, decisioning, DLP scanning
 - `config`: base YAML + SQLite runtime override
 - `admin`: dashboard backend + frontend
@@ -98,8 +100,14 @@ Main panels:
 
 - Overview: posture and trend signals
 - Decisions: recent decision events and reasons
-- Policies: grouped rule strategy controls
+- Policies: grouped rule strategy controls plus sensitive-path registry management
 - Accounts: admin approver account selection and mode settings
+
+Sensitive path registry behavior:
+
+- Built-in path patterns cover credentials, personal content, download staging, browser profiles, browser secret stores, and communication stores.
+- Registry entries are persisted in SQLite runtime strategy overrides together with rule decisions.
+- Built-in entries can be disabled from the dashboard, and custom path rules can be added without editing the base YAML.
 
 ## Documentation
 

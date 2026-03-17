@@ -89,3 +89,54 @@ test("live config resolver applies sqlite strategy changes on next read", () => 
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("live config resolver applies sensitive path strategy overrides on next read", () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "safeclaw-live-config-sensitive-paths-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "safeclaw.db");
+  let resolver: LiveConfigResolver | undefined;
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    resolver = new LiveConfigResolver({ configPath, dbPath });
+
+    const initial = resolver.getSnapshot();
+    assert.equal(
+      initial.config.sensitivity.path_rules.some((rule) => rule.id === "download-staging-downloads-directory"),
+      true,
+    );
+
+    const writer = new StrategyStore(dbPath);
+    try {
+      writer.writeOverride({
+        sensitivity: {
+          disabled_builtin_ids: ["download-staging-downloads-directory"],
+          custom_path_rules: [
+            {
+              id: "custom-sensitive-staging",
+              asset_label: "download_staging",
+              match_type: "prefix",
+              pattern: "/srv/staging",
+              source: "custom"
+            }
+          ]
+        }
+      });
+    } finally {
+      writer.close();
+    }
+
+    const updated = resolver.getSnapshot();
+    assert.equal(
+      updated.config.sensitivity.path_rules.some((rule) => rule.id === "download-staging-downloads-directory"),
+      false,
+    );
+    assert.equal(
+      updated.config.sensitivity.path_rules.some((rule) => rule.id === "custom-sensitive-staging"),
+      true,
+    );
+  } finally {
+    resolver?.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

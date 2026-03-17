@@ -4,10 +4,12 @@ import type {
   DecisionContext,
   GuardComputation,
   SecurityContext,
+  SensitivePathRule,
 } from "../types.ts";
 import type { ApprovalFsm } from "../engine/approval_fsm.ts";
 import type { DecisionEngine } from "../engine/decision_engine.ts";
 import type { RuleEngine } from "../engine/rule_engine.ts";
+import { inferSensitivityLabels } from "../domain/services/sensitivity_label_inference.ts";
 
 function buildSecurityContext(
   input: BeforeToolCallInput,
@@ -27,13 +29,13 @@ function buildSecurityContext(
 }
 
 function invalidApprovalResult(
-  input: BeforeToolCallInput,
+  mutatedPayload: BeforeToolCallInput,
   securityContext: SecurityContext,
   approval: ApprovalRecord,
   reasonCodes: string[],
 ): GuardComputation<BeforeToolCallInput> {
   return {
-    mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
+    mutated_payload: mutatedPayload,
     decision: "block",
     decision_source: "approval",
     reason_codes: reasonCodes,
@@ -90,8 +92,23 @@ export function runPolicyGuard(
   ruleEngine: RuleEngine,
   decisionEngine: DecisionEngine,
   approvals: ApprovalFsm,
-  ): GuardComputation<BeforeToolCallInput> {
+  sensitivePathRules: SensitivePathRule[] = [],
+): GuardComputation<BeforeToolCallInput> {
   const securityContext = buildSecurityContext(input, policyVersion, traceId, nowIso);
+  const inferredLabels = inferSensitivityLabels(
+    input.tool_group,
+    input.resource_paths ?? [],
+    input.tool_args_summary,
+    sensitivePathRules,
+  );
+  const assetLabels = [...new Set([...(input.asset_labels ?? []), ...inferredLabels.assetLabels])];
+  const dataLabels = [...new Set([...(input.data_labels ?? []), ...inferredLabels.dataLabels])];
+  const mutatedPayload = {
+    ...input,
+    asset_labels: assetLabels,
+    data_labels: dataLabels,
+    security_context: securityContext,
+  } as BeforeToolCallInput;
   const context: DecisionContext = {
     actor_id: input.actor_id,
     scope: input.scope,
@@ -102,8 +119,8 @@ export function runPolicyGuard(
     resource_scope: input.resource_scope ?? "none",
     resource_paths: [...(input.resource_paths ?? [])],
     ...(input.file_type !== undefined ? { file_type: input.file_type } : {}),
-    asset_labels: [...new Set(input.asset_labels ?? [])],
-    data_labels: [...new Set(input.data_labels ?? [])],
+    asset_labels: assetLabels,
+    data_labels: dataLabels,
     trust_level: input.trust_level ?? (securityContext.untrusted ? "untrusted" : "trusted"),
     ...(input.destination_type !== undefined ? { destination_type: input.destination_type } : {}),
     ...(input.dest_domain !== undefined ? { dest_domain: input.dest_domain } : {}),
@@ -118,13 +135,13 @@ export function runPolicyGuard(
     if (approval?.status === "approved") {
       const replayViolations = validateApprovedReplay(approval, context);
       if (replayViolations.length > 0) {
-        return invalidApprovalResult(input, securityContext, approval, replayViolations);
+        return invalidApprovalResult(mutatedPayload, securityContext, approval, replayViolations);
       }
       if (approval.approval_requirements?.single_use === true) {
         approvals.markApprovalUsed(approval.approval_id);
       }
       const result: GuardComputation<BeforeToolCallInput> = {
-        mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
+        mutated_payload: mutatedPayload,
         decision: "allow",
         decision_source: "approval",
         reason_codes: ["APPROVAL_GRANTED"],
@@ -136,7 +153,7 @@ export function runPolicyGuard(
     }
     if (approval && approval.status !== "pending") {
       const result: GuardComputation<BeforeToolCallInput> = {
-        mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
+        mutated_payload: mutatedPayload,
         decision: "block",
         decision_source: "approval",
         reason_codes: [`APPROVAL_${approval.status.toUpperCase()}`],
@@ -163,7 +180,7 @@ export function runPolicyGuard(
   }
 
   const result: GuardComputation<BeforeToolCallInput> = {
-    mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
+    mutated_payload: mutatedPayload,
     decision: outcome.decision,
     decision_source: outcome.decision_source,
     reason_codes: outcome.reason_codes,

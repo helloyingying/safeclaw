@@ -1,6 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 
-import type { AccountPolicyRecord, DlpConfig, PolicyRule, SafeClawConfig } from "../types.ts";
+import {
+  applySensitivePathStrategyOverride,
+  hydrateSensitivePathConfig,
+  normalizeSensitivePathStrategyOverride,
+} from "../domain/services/sensitive_path_registry.ts";
+import type {
+  AccountPolicyRecord,
+  DlpConfig,
+  PolicyRule,
+  SafeClawConfig,
+  SensitivePathStrategyOverride,
+} from "../types.ts";
 import { validateConfig } from "./validator.ts";
 
 export type RuntimeOverride = {
@@ -10,6 +21,7 @@ export type RuntimeOverride = {
   defaults?: Partial<SafeClawConfig["defaults"]> | undefined;
   policies?: PolicyRule[] | undefined;
   account_policies?: AccountPolicyRecord[] | undefined;
+  sensitivity?: SensitivePathStrategyOverride | undefined;
   dlp?: (Partial<Omit<DlpConfig, "patterns">> & { patterns?: DlpConfig["patterns"]; }) | undefined;
 };
 
@@ -29,6 +41,7 @@ export function readRuntimeOverride(overridePath: string): RuntimeOverride | und
 }
 
 export function applyRuntimeOverride(base: SafeClawConfig, override: RuntimeOverride): SafeClawConfig {
+  const baseSensitivity = hydrateSensitivePathConfig(base.sensitivity);
   const merged: SafeClawConfig = {
     ...base,
     environment: override.environment ?? base.environment,
@@ -42,7 +55,8 @@ export function applyRuntimeOverride(base: SafeClawConfig, override: RuntimeOver
       ...(override.dlp ?? {}),
       patterns: override.dlp?.patterns ?? base.dlp.patterns
     },
-    policies: override.policies ?? base.policies
+    policies: override.policies ?? base.policies,
+    sensitivity: applySensitivePathStrategyOverride(baseSensitivity, normalizeSensitivePathStrategyOverride(override.sensitivity))
   };
   return validateConfig(merged as unknown as Record<string, unknown>);
 }

@@ -26,6 +26,10 @@
 - Rule panel:
   - rules are grouped by `group` (for example `filesystem`, `email`, `album`).
   - each rule exposes a strategy action selector (`allow`, `warn`, `challenge`, `block`).
+  - the same panel now includes a sensitive-path registry section ahead of grouped rules.
+  - sensitive paths are resolved into asset labels first, then the downstream rules decide `warn/challenge/block`.
+  - built-in path mappings can be removed from UI, and removed built-ins can be restored later.
+  - custom path mappings can be added with `prefix`, `glob`, or `regex` matching.
   - rule technical IDs are hidden behind readable names when available.
   - dashboard no longer exposes per-rule enable switches; rule editing is action-first.
 - Unsaved-change protection: auto-refresh will not overwrite local edits.
@@ -39,9 +43,27 @@
 - The panel writes overrides to SQLite (`runtime/safeclaw.db`) via `PUT /api/strategy`.
 - Editable fields from UI:
   - full `policies` array, mainly `decision` per rule.
+  - `sensitivity.custom_path_rules`
+  - `sensitivity.disabled_builtin_ids`
 - Save validation:
   - `policies` must be a JSON array.
   - each rule must have `rule_id`, `priority`, and a valid `decision`.
+  - custom sensitive path rules must have `id`, `asset_label`, `match_type`, and `pattern`.
+
+## Sensitive Path Registry
+- Purpose:
+  - centralize which filesystem paths are considered sensitive before policy rules evaluate asset labels.
+- Built-in categories:
+  - credential stores
+  - personal content
+  - download staging
+  - browser profiles
+  - browser secret stores
+  - communication stores
+- Runtime behavior:
+  - base mappings come from config schema defaults / built-in registry.
+  - dashboard changes are persisted in SQLite runtime overrides and hot-applied on next decision.
+  - disabling a built-in mapping removes that path-to-label inference without rewriting policy definitions.
 
 ## Runtime Status
 - Data source: `runtime/safeclaw-status.json` via `GET /api/status`.
