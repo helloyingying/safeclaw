@@ -118,6 +118,8 @@ const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
 const APPROVAL_NOTIFICATION_HISTORY_LIMIT = 12;
 const SECURITYCLAW_PROTECTED_STORAGE_RULE_ID = "internal:securityclaw-protected-storage";
 const SECURITYCLAW_PROTECTED_STORAGE_REASON = "SECURITYCLAW_STATE_STORAGE_PROTECTED";
+const OPENCLAW_CONTEXT_READ_RULE_ID = "internal:openclaw-context-read";
+const OPENCLAW_CONTEXT_READ_REASON = "OPENCLAW_CONTEXT_READ_ALLOW";
 const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
 const COMMAND_KEY_PATTERN = /(command|cmd|script|query|sql)/i;
 const URL_KEY_PATTERN = /(url|uri|endpoint|host|domain|upload|webhook|callback|proxy|origin|destination|dest)/i;
@@ -152,6 +154,13 @@ const CHANNEL_LOOKUP_ALIASES: Record<string, string[]> = {
   feishu: ["lark"],
   lark: ["feishu"],
 };
+const OPENCLAW_WORKSPACE_BOOTSTRAP_FILES = new Set([
+  "SOUL.md",
+  "USER.md",
+  "MEMORY.md",
+  "IDENTITY.md",
+  "BOOTSTRAP.md",
+]);
 const getChannelPluginCompat = (OpenClawCompat as Record<string, unknown>).getChannelPlugin as
   | ((id: string) => unknown)
   | undefined;
@@ -1691,6 +1700,29 @@ async function notifyApprovalTargets(
   });
 }
 
+async function notifyApprovalTargetsOnce(
+  api: OpenClawPluginApi,
+  targets: ChatApprovalTarget[],
+  record: StoredApprovalRecord,
+  inflight: Map<string, Promise<ApprovalNotificationResult>>,
+): Promise<ApprovalNotificationResult> {
+  const pending = inflight.get(record.approval_id);
+  if (pending) {
+    return pending;
+  }
+
+  const current = (async () => {
+    try {
+      return await notifyApprovalTargets(api, targets, record);
+    } finally {
+      inflight.delete(record.approval_id);
+    }
+  })();
+
+  inflight.set(record.approval_id, current);
+  return current;
+}
+
 async function notifyWarnTargets(
   api: OpenClawPluginApi,
   targets: ChatApprovalTarget[],
@@ -1788,6 +1820,80 @@ function evaluateProtectedStorageAccess(
     decisionSource: "default",
     reasonCodes: [SECURITYCLAW_PROTECTED_STORAGE_REASON],
     rules: SECURITYCLAW_PROTECTED_STORAGE_RULE_ID,
+  };
+}
+
+function isOpenClawSkillSupportPath(candidate: string): boolean {
+  const normalized = path.normalize(candidate);
+  const openClawHome = path.join(HOME_DIR, ".openclaw");
+  const bundledSkillSegment = `${path.sep}node_modules${path.sep}`;
+
+  if (isPathInside(path.join(openClawHome, "skills"), normalized)) {
+    return true;
+  }
+
+  const extensionsRoot = path.join(openClawHome, "extensions");
+  if (isPathInside(extensionsRoot, normalized) && normalized.includes(`${path.sep}skills${path.sep}`)) {
+    return true;
+  }
+
+  return normalized.includes(`${bundledSkillSegment}openclaw${path.sep}skills${path.sep}`) ||
+    normalized.includes(`${bundledSkillSegment}openclaw-lark${path.sep}skills${path.sep}`) ||
+    normalized.includes(`${bundledSkillSegment}@larksuite${path.sep}openclaw-lark${path.sep}skills${path.sep}`);
+}
+
+function isOpenClawWorkspaceBootstrapPath(candidate: string, workspaceDir?: string): boolean {
+  if (!workspaceDir) {
+    return false;
+  }
+
+  const normalizedWorkspace = path.normalize(workspaceDir);
+  const normalizedCandidate = path.normalize(candidate);
+  if (!isPathInside(normalizedWorkspace, normalizedCandidate)) {
+    return false;
+  }
+
+  const relative = path.relative(normalizedWorkspace, normalizedCandidate);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return false;
+  }
+
+  const segments = relative.split(path.sep);
+  if (segments.length === 1) {
+    return OPENCLAW_WORKSPACE_BOOTSTRAP_FILES.has(segments[0]);
+  }
+
+  return segments[0] === "memory" && normalizedCandidate.endsWith(".md");
+}
+
+function evaluateOpenClawContextReadAccess(
+  decisionContext: DecisionContext,
+  workspaceDir?: string,
+): {
+  decision: Decision;
+  decisionSource: DecisionSource;
+  reasonCodes: string[];
+  rules: string;
+} | undefined {
+  if (decisionContext.tool_group !== "filesystem" || decisionContext.operation !== "read") {
+    return undefined;
+  }
+  if (decisionContext.resource_paths.length === 0) {
+    return undefined;
+  }
+
+  const allContextPaths = decisionContext.resource_paths.every((candidate) =>
+    isOpenClawSkillSupportPath(candidate) || isOpenClawWorkspaceBootstrapPath(candidate, workspaceDir)
+  );
+  if (!allContextPaths) {
+    return undefined;
+  }
+
+  return {
+    decision: "allow",
+    decisionSource: "default",
+    reasonCodes: [OPENCLAW_CONTEXT_READ_REASON],
+    rules: OPENCLAW_CONTEXT_READ_RULE_ID,
   };
 }
 
@@ -2127,6 +2233,7 @@ const plugin = {
       return mergeApprovalBridgeConfig(deriveApprovalBridgeFromAdminPolicies(current.accountPolicyEngine));
     }
     const approvalStore = new ChatApprovalStore(dbPath);
+    const inflightApprovalNotifications = new Map<string, Promise<ApprovalNotificationResult>>();
     const warnNotificationSentAt = new Map<string, number>();
     const initialApprovalBridge = resolveApprovalBridge(runtime);
     if (initialApprovalBridge.enabled) {
@@ -2339,16 +2446,17 @@ const plugin = {
         const effectiveToolName = decisionContext.tool_name ?? normalizedToolName ?? "unknown-tool";
         const approvalSubject = resolveApprovalSubject(hookContext);
         const accountPolicy = current.accountPolicyEngine.getPolicy(approvalSubject);
+        const openClawContextRead = evaluateOpenClawContextReadAccess(decisionContext, hookContext.workspaceDir);
         const protectedStorageAccess = evaluateProtectedStorageAccess(normalizedToolName, decisionContext, resolved);
-        let rules = protectedStorageAccess?.rules ?? "-";
-        let effectiveDecision = protectedStorageAccess?.decision ?? "allow";
-        let effectiveDecisionSource = protectedStorageAccess?.decisionSource ?? "default";
-        let effectiveReasonCodes = [...(protectedStorageAccess?.reasonCodes ?? ["ALLOW"])];
+        let rules = openClawContextRead?.rules ?? protectedStorageAccess?.rules ?? "-";
+        let effectiveDecision = openClawContextRead?.decision ?? protectedStorageAccess?.decision ?? "allow";
+        let effectiveDecisionSource = openClawContextRead?.decisionSource ?? protectedStorageAccess?.decisionSource ?? "default";
+        let effectiveReasonCodes = [...(openClawContextRead?.reasonCodes ?? protectedStorageAccess?.reasonCodes ?? ["ALLOW"])];
         let accountOverride: ReturnType<AccountPolicyEngine["evaluate"]> | undefined;
         let approvalBlockReason: string | undefined;
         let approvalRequestKey: string | undefined;
 
-        if (!protectedStorageAccess) {
+        if (!openClawContextRead && !protectedStorageAccess) {
           const outcome = current.policyPipeline.evaluate(decisionContext, current.config.file_rules);
           const ruleIds = matchedPolicyRuleIds(outcome);
           rules = ruleIds.length > 0 ? ruleIds.join(",") : "-";
@@ -2405,7 +2513,12 @@ const plugin = {
               }
 
               if (approvalBridge.targets.length > 0 && shouldResendPendingApproval(pending)) {
-                notificationResult = await notifyApprovalTargets(api, approvalBridge.targets, pending);
+                notificationResult = await notifyApprovalTargetsOnce(
+                  api,
+                  approvalBridge.targets,
+                  pending,
+                  inflightApprovalNotifications,
+                );
                 if (notificationResult.notifications.length > 0) {
                   pending =
                     approvalStore.updateNotifications(

@@ -353,6 +353,135 @@ test("chat approval bridge auto-enables from admin account policies without plug
   }
 });
 
+test("concurrent identical approval challenges send one approval notification", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-dedupe-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    assert.ok(beforeToolCall);
+
+    const event = {
+      toolName: "filesystem.list",
+      params: { path: "/Users/demo/.ssh" },
+    };
+    const ctx = {
+      agentId: "main",
+      sessionId: "session-1",
+      sessionKey: "telegram:chat-42",
+      workspaceDir: "/tmp/workspace",
+      channelId: "telegram",
+    };
+
+    const results = await Promise.all([
+      beforeToolCall(event, { ...ctx, runId: "run-1" }),
+      beforeToolCall(event, { ...ctx, runId: "run-2" }),
+      beforeToolCall(event, { ...ctx, runId: "run-3" }),
+      beforeToolCall(event, { ...ctx, runId: "run-4" }),
+    ]);
+
+    assert.equal(harness.sentMessages.length, 1);
+    assert.equal(harness.getTelegramSendAttempts(), 1);
+
+    const approvalIds = new Set(results.map((result) => extractApprovalId(result?.blockReason)));
+    assert.equal(approvalIds.size, 1);
+    assert.ok(approvalIds.has(extractApprovalId(harness.sentMessages[0]?.text)));
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("platform context reads stay local while user-triggered external access still sends one approval", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-context-read-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+  const workspaceDir = path.join(os.homedir(), ".openclaw", "workspace");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    assert.ok(beforeToolCall);
+
+    const contextRead = await beforeToolCall(
+      {
+        toolName: "read",
+        params: {
+          file_path: path.join(
+            os.homedir(),
+            ".openclaw",
+            "extensions",
+            "openclaw-lark",
+            "skills",
+            "feishu-channel-rules",
+            "SKILL.md",
+          ),
+        },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-context-read",
+        sessionKey: "telegram:chat-42",
+        runId: "run-context-read",
+        workspaceDir,
+        channelId: "telegram",
+      },
+    );
+
+    assert.equal(contextRead, undefined);
+    assert.equal(harness.sentMessages.length, 0);
+
+    const externalAccess = await beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: "find ~/.ssh -maxdepth 1 -type f -exec basename {} \\; | sort",
+          workdir: workspaceDir,
+          yieldMs: 1000,
+          timeout: 10,
+        },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-context-read",
+        sessionKey: "telegram:chat-42",
+        runId: "run-user-request",
+        workspaceDir,
+        channelId: "telegram",
+      },
+    );
+
+    assert.deepEqual(externalAccess?.block, true);
+    assert.equal(harness.sentMessages.length, 1);
+    assert.equal(harness.getTelegramSendAttempts(), 1);
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("chat approval bridge supports command-only approvals on non-button channels", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-command-only-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
