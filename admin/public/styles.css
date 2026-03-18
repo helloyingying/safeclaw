@@ -230,7 +230,7 @@ button.ghost {
   color: var(--brand);
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
@@ -260,11 +260,14 @@ button.ghost {
 }
 
 .workspace-top {
-  padding-top: 22px;
+  padding-top: 28px;
 }
 
 .workspace-title {
   min-width: 0;
+  display: grid;
+  gap: 14px;
+  align-content: start;
 }
 
 .toolbar-controls {
@@ -351,14 +354,18 @@ button.ghost {
 }
 
 .card-head {
-  margin-bottom: 14px;
+  margin-bottom: 0;
 }
 
 .workspace-title h1 {
-  margin: 4px 0 10px;
-  font-size: clamp(22px, 3vw, 32px);
-  line-height: 1.1;
+  margin: 0;
+  font-size: clamp(36px, 5vw, 52px);
+  line-height: 0.98;
   letter-spacing: -0.03em;
+}
+
+.workspace-title .tablist {
+  margin-top: 2px;
 }
 
 .workspace-heading {
@@ -372,7 +379,16 @@ button.ghost {
 .card-head h2,
 .card-head h3 {
   margin: 0;
+}
+
+.card-head h2 {
+  font-size: clamp(28px, 3vw, 34px);
+  line-height: 1.08;
+}
+
+.card-head h3 {
   font-size: 24px;
+  line-height: 1.15;
 }
 
 .status-inline {
@@ -477,13 +493,13 @@ button.ghost {
 }
 
 .card-head-compact {
-  margin-bottom: 20px;
+  margin-bottom: 0;
 }
 
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 18px;
   align-items: stretch;
 }
 
@@ -492,10 +508,9 @@ button.ghost {
 }
 
 .overview-charts {
-  margin-top: 14px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 18px;
 }
 
 .panel-card {
@@ -503,6 +518,23 @@ button.ghost {
   border-radius: var(--radius-lg);
   border: 1px solid var(--panel-border);
   background: var(--bg-elevated);
+}
+
+.dashboard-panel {
+  display: grid;
+  gap: 24px;
+  background: linear-gradient(180deg, var(--surface-chart-top) 0%, var(--surface-chart-bottom) 100%);
+  border-color: var(--surface-chart-border);
+  box-shadow: var(--shadow-soft);
+}
+
+.overview-shell {
+  gap: 24px;
+}
+
+.panel-card > .card-head {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
 }
 
 .stats {
@@ -626,6 +658,8 @@ button.ghost {
   justify-content: space-between;
   align-items: flex-start;
   gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .overview-skill-head h3 {
@@ -747,6 +781,8 @@ button.ghost {
   align-items: flex-end;
   gap: 12px;
   flex-wrap: wrap;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .chart-head h3 {
@@ -1026,7 +1062,7 @@ button.ghost {
 
 .insight-head h3 {
   margin: 8px 0 0;
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1.2;
 }
 
@@ -1034,6 +1070,11 @@ button.ghost {
   margin: 10px 0 0;
   color: var(--muted);
   line-height: 1.65;
+}
+
+.insight-head {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .insight-list {
@@ -1662,12 +1703,6 @@ tbody tr:hover {
   gap: 24px;
 }
 
-.strategy-panel > .card-head,
-.skill-policy-panel > .card-head {
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
-}
-
 .rule-group {
   display: grid;
   gap: 10px;
@@ -2028,7 +2063,7 @@ tbody tr:hover {
 
 .accounts-panel {
   display: grid;
-  gap: 18px;
+  gap: 24px;
 }
 
 .accounts-intro {
@@ -2164,7 +2199,7 @@ tbody tr:hover {
 
 .skills-panel {
   display: grid;
-  gap: 18px;
+  gap: 24px;
 }
 
 .skills-metrics {
@@ -2200,7 +2235,9 @@ tbody tr:hover {
   justify-content: space-between;
   align-items: flex-start;
   gap: 14px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .skills-toolbar {
@@ -2342,6 +2379,8 @@ tbody tr:hover {
   justify-content: space-between;
   align-items: flex-start;
   gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .skill-detail-actions {
@@ -2455,6 +2494,8 @@ tbody tr:hover {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
 }
 
 .skill-section h4 {
@@ -2548,6 +2589,8 @@ tbody tr:hover {
   display: grid;
   gap: 6px;
   max-width: 820px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
 }
 
 .skill-policy-section-head h4 {
@@ -2785,7 +2828,7 @@ tbody tr:hover {
   }
 
   .workspace-title h1 {
-    font-size: 26px;
+    font-size: 34px;
   }
 
   .stats {
@@ -2849,7 +2892,7 @@ tbody tr:hover {
 
 @media (max-width: 560px) {
   .workspace-title h1 {
-    font-size: 22px;
+    font-size: 28px;
   }
 
   .distribution-row {

@@ -39,6 +39,7 @@ const ADMIN_DEFAULT_LOCALE = resolveSecurityClawLocale(
 const ADMIN_DEFAULT_THEME_PREFERENCE = "system";
 const DARK_COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 const ADMIN_THEME_OPTIONS = new Set(["system", "light", "dark"]);
+const ADMIN_BRAND_TEXT = "SecurityClaw Admin";
 let activeLocale = ADMIN_DEFAULT_LOCALE;
 
 function ui(zhText, enText) {
@@ -115,7 +116,7 @@ const TAB_ITEMS = [
     id: "overview"
   },
   {
-    id: "events"
+    id: "accounts"
   },
   {
     id: "rules"
@@ -124,16 +125,16 @@ const TAB_ITEMS = [
     id: "skills"
   },
   {
-    id: "accounts"
+    id: "events"
   }
 ];
 
 function tabLabel(tabId) {
   if (tabId === "overview") return ui("概览", "Overview");
-  if (tabId === "events") return ui("决策记录", "Decisions");
-  if (tabId === "rules") return ui("规则策略", "Policies");
-  if (tabId === "skills") return ui("Skill 拦截", "Skill Interception");
-  if (tabId === "accounts") return ui("账号策略", "Accounts");
+  if (tabId === "accounts") return ui("账号", "Accounts");
+  if (tabId === "rules") return ui("策略", "Strategy");
+  if (tabId === "skills") return ui("Skill", "Skill");
+  if (tabId === "events") return ui("拦截记录", "Interceptions");
   return tabId;
 }
 
@@ -1838,6 +1839,12 @@ function App() {
   }, [locale]);
 
   useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.title = `${ADMIN_BRAND_TEXT} · ${tabLabel(activeTab)}`;
+    }
+  }, [activeTab, locale]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return undefined;
     }
@@ -2868,12 +2875,13 @@ function App() {
   const selectedSkill = skillDetailPayload?.skill || skillItems.find((item) => item.skill_id === selectedSkillId) || null;
   const selectedSkillFindings = toArray(skillDetailPayload?.findings || selectedSkill?.findings);
   const selectedSkillActivity = toArray(skillDetailPayload?.activity);
+  const accountCount = displayAccounts.length;
   const tabCounts = {
     overview: stats.total,
     events: stats.total,
     rules: policies.length,
     skills: skillOverviewStats.total,
-    accounts: accountPolicies.length
+    accounts: accountCount
   };
   const recentBlockCount = decisions.filter((item) => item.decision === "block").length;
   const recentChallengeCount = decisions.filter((item) => item.decision === "challenge").length;
@@ -3163,64 +3171,6 @@ function App() {
     );
   }
 
-  function renderClassifierSection() {
-    return (
-      <section className="sensitive-path-panel" aria-label={ui("资源分类器", "Resource classifiers")}>
-        <div className="sensitive-path-head">
-          <div>
-            <span className="eyebrow">{ui("Classifiers", "Classifiers")}</span>
-            <h3>{ui("资源分类器继续驱动风险判断", "Classifiers still drive contextual risk decisions")}</h3>
-            <p className="sensitive-path-intro">
-              {ui(
-                "敏感路径和内建分类器不是目录例外，它们只是给调用打标签，供附加限制继续判断。",
-                "Sensitive paths and built-in classifiers are not directory overrides. They label resources so additional restrictions can keep making context-aware decisions."
-              )}
-            </p>
-          </div>
-          <div className="rule-meta">
-            <span className="meta-pill">{ui("自定义敏感路径", "Custom Sensitive Paths")} {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length}</span>
-            <span className="meta-pill">{ui("禁用内建分类器", "Disabled Built-ins")} {toArray(strategyModel?.classifiers?.disabled_builtin_ids).length}</span>
-          </div>
-        </div>
-
-        <div className="rule-group">
-          <h4 className="rule-group-title">{ui("资源分类器", "Resource Classifiers")}</h4>
-          {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length === 0 &&
-          toArray(strategyModel?.classifiers?.disabled_builtin_ids).length === 0 ? (
-            <div className="chart-empty">
-              {ui("当前没有自定义敏感路径或被禁用的内建分类器。", "No custom sensitive paths or disabled built-in classifiers.")}
-            </div>
-          ) : (
-            <div className="sensitive-path-list">
-              {toArray(strategyModel?.classifiers?.custom_sensitive_paths).map((rule) => (
-                <article key={rule.id} className="sensitive-path-item configured">
-                  <div className="sensitive-path-item-main">
-                    <div className="sensitive-path-item-pattern">{rule.pattern}</div>
-                    <div className="sensitive-path-item-tags">
-                      <span className="tag meta-tag">{rule.asset_label}</span>
-                      <span className="tag meta-tag">{rule.match_type}</span>
-                      <span className="tag allow">{ui("自定义", "Custom")}</span>
-                    </div>
-                  </div>
-                </article>
-              ))}
-              {toArray(strategyModel?.classifiers?.disabled_builtin_ids).map((id) => (
-                <article key={id} className="sensitive-path-item configured">
-                  <div className="sensitive-path-item-main">
-                    <div className="sensitive-path-item-pattern">{id}</div>
-                    <div className="sensitive-path-item-tags">
-                      <span className="tag warn">{ui("已禁用内建规则", "Built-in Disabled")}</span>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-    );
-  }
-
   return (
     <div className="app">
       <section className="workspace card">
@@ -3228,7 +3178,7 @@ function App() {
           <div className="workspace-title">
             <div className="workspace-kicker">
               <img src="/favicon.svg" alt="" className="workspace-favicon" aria-hidden="true" />
-              SecurityClaw Admin
+              {ADMIN_BRAND_TEXT}
             </div>
             <h1>{ui("管理后台", "Admin Dashboard")}</h1>
             <div className="tablist" role="tablist" aria-label={ui("后台模块页签", "Dashboard tabs")}>
@@ -3297,69 +3247,70 @@ function App() {
             role="tabpanel"
             aria-labelledby="tab-overview"
           >
-            <div className="card-head">
-              <h2>{ui("概览", "Overview")}</h2>
-            </div>
-	            <div className="overview-grid">
-	              <div className="panel-card">
-	                <div className="stats">
-                  <OverviewStatCard
-                    label={ui("决策记录", "Decision Records")}
-                    value={stats.total}
-                    onClick={() => openDecisionRecords("all")}
-                  />
-                  <OverviewStatCard
-                    label={ui("放行", "Allow")}
-                    value={stats.allow}
-                    tone="good"
-                    onClick={() => openDecisionRecords("allow")}
-                  />
-                  <OverviewStatCard
-                    label={ui("提醒", "Warn")}
-                    value={stats.warn}
-                    tone="warn"
-                    onClick={() => openDecisionRecords("warn")}
-                  />
-                  <OverviewStatCard
-                    label={ui("需确认", "Needs Approval")}
-                    value={stats.challenge}
-                    tone="warn"
-                    onClick={() => openDecisionRecords("challenge")}
-                  />
-                  <OverviewStatCard
-                    label={ui("拦截", "Block")}
-                    value={stats.block}
-                    tone="bad"
-                    onClick={() => openDecisionRecords("block")}
-                  />
-                </div>
+            <div className="panel-card overview-shell dashboard-panel">
+              <div className="card-head">
+                <h2>{ui("概览", "Overview")}</h2>
               </div>
-
-              <aside className="panel-card insight-card">
-                <div className="insight-head">
-                  <span className="eyebrow">{ui("当前态势", "Current Posture")}</span>
-                  <h3>{postureTitle}</h3>
-                  <p>{postureDescription}</p>
+              <div className="overview-grid">
+                <div className="panel-card">
+                  <div className="stats">
+                    <OverviewStatCard
+                      label={ui("决策记录", "Decision Records")}
+                      value={stats.total}
+                      onClick={() => openDecisionRecords("all")}
+                    />
+                    <OverviewStatCard
+                      label={ui("放行", "Allow")}
+                      value={stats.allow}
+                      tone="good"
+                      onClick={() => openDecisionRecords("allow")}
+                    />
+                    <OverviewStatCard
+                      label={ui("提醒", "Warn")}
+                      value={stats.warn}
+                      tone="warn"
+                      onClick={() => openDecisionRecords("warn")}
+                    />
+                    <OverviewStatCard
+                      label={ui("需确认", "Needs Approval")}
+                      value={stats.challenge}
+                      tone="warn"
+                      onClick={() => openDecisionRecords("challenge")}
+                    />
+                    <OverviewStatCard
+                      label={ui("拦截", "Block")}
+                      value={stats.block}
+                      tone="bad"
+                      onClick={() => openDecisionRecords("block")}
+                    />
+                  </div>
                 </div>
-	                <div className="insight-list">
-	                  <div className="insight-item">
-	                    <span>{ui("需确认占比", "Approval Ratio")}</span>
-                    <strong>{formatPercent(stats.challenge, stats.total)}</strong>
+
+                <aside className="panel-card insight-card">
+                  <div className="insight-head">
+                    <span className="eyebrow">{ui("当前态势", "Current Posture")}</span>
+                    <h3>{postureTitle}</h3>
+                    <p>{postureDescription}</p>
                   </div>
-                  <div className="insight-item">
-                    <span>{ui("拦截占比", "Block Ratio")}</span>
-                    <strong>{formatPercent(stats.block, stats.total)}</strong>
+                  <div className="insight-list">
+                    <div className="insight-item">
+                      <span>{ui("需确认占比", "Approval Ratio")}</span>
+                      <strong>{formatPercent(stats.challenge, stats.total)}</strong>
+                    </div>
+                    <div className="insight-item">
+                      <span>{ui("拦截占比", "Block Ratio")}</span>
+                      <strong>{formatPercent(stats.block, stats.total)}</strong>
+                    </div>
+                    <div className="insight-item">
+                      <span>{ui("规则分组", "Rule Groups")}</span>
+                      <strong>{groupedPolicies.length}</strong>
+                    </div>
+                    <div className="insight-item">
+                      <span>{ui("生效规则", "Active Rules")}</span>
+                      <strong>{policies.length}</strong>
+                    </div>
                   </div>
-                  <div className="insight-item">
-                    <span>{ui("规则分组", "Rule Groups")}</span>
-                    <strong>{groupedPolicies.length}</strong>
-                  </div>
-                  <div className="insight-item">
-                    <span>{ui("生效规则", "Active Rules")}</span>
-                    <strong>{policies.length}</strong>
-	                  </div>
-	                </div>
-	              </aside>
+                </aside>
 
                 <article className="panel-card overview-skill-card">
                   <div className="overview-skill-head">
@@ -3435,98 +3386,99 @@ function App() {
                     </div>
                   )}
                 </article>
-	            </div>
+              </div>
 
-            <div className="overview-charts">
-              <DistributionChart
-                title={ui("消息来源分布", "Message Source Distribution")}
-                subtitle="actor + scope"
-                items={messageSourceDistribution}
-                total={analyticsSamples.length}
-                emptyText={ui("暂无消息来源数据", "No source data yet")}
-                theme={theme}
-              />
+              <div className="overview-charts">
+                <DistributionChart
+                  title={ui("消息来源分布", "Message Source Distribution")}
+                  subtitle="actor + scope"
+                  items={messageSourceDistribution}
+                  total={analyticsSamples.length}
+                  emptyText={ui("暂无消息来源数据", "No source data yet")}
+                  theme={theme}
+                />
 
-              <DistributionChart
-                title={ui("决策来源分布", "Decision Source Distribution")}
-                subtitle="rule / default / approval / account"
-                items={decisionSourceDistribution}
-                total={analyticsSamples.length}
-                emptyText={ui("暂无决策来源数据", "No decision source data yet")}
-                theme={theme}
-              />
+                <DistributionChart
+                  title={ui("决策来源分布", "Decision Source Distribution")}
+                  subtitle="rule / default / approval / account"
+                  items={decisionSourceDistribution}
+                  total={analyticsSamples.length}
+                  emptyText={ui("暂无决策来源数据", "No decision source data yet")}
+                  theme={theme}
+                />
 
-              <DistributionChart
-                title={ui("拦截策略命中 Top", "Top Policy Hits")}
-                subtitle={strategySource.length > 0 ? ui("按规则命中次数排序", "Sorted by hit count") : ui("暂无风险样本", "No risk samples")}
-                items={strategyHitDistribution}
-                total={strategyHitTotal}
-                emptyText={ui("暂无策略命中记录", "No policy hit records")}
-                theme={theme}
-              />
+                <DistributionChart
+                  title={ui("拦截策略命中 Top", "Top Policy Hits")}
+                  subtitle={strategySource.length > 0 ? ui("按规则命中次数排序", "Sorted by hit count") : ui("暂无风险样本", "No risk samples")}
+                  items={strategyHitDistribution}
+                  total={strategyHitTotal}
+                  emptyText={ui("暂无策略命中记录", "No policy hit records")}
+                  theme={theme}
+                />
 
-              <DistributionChart
-                title={ui("工具调用分布", "Tool Call Distribution")}
-                subtitle={ui("按最近样本聚合", "Aggregated from recent samples")}
-                items={toolDistribution}
-                total={analyticsSamples.length}
-                emptyText={ui("暂无工具调用记录", "No tool call records")}
-                theme={theme}
-              />
+                <DistributionChart
+                  title={ui("工具调用分布", "Tool Call Distribution")}
+                  subtitle={ui("按最近样本聚合", "Aggregated from recent samples")}
+                  items={toolDistribution}
+                  total={analyticsSamples.length}
+                  emptyText={ui("暂无工具调用记录", "No tool call records")}
+                  theme={theme}
+                />
 
-              <article className="panel-card chart-card trend-card">
-                <div className="chart-head">
-                  <h3>{ui("24 小时趋势", "24h Trend")}</h3>
-                  <span className="chart-subtitle">{trendRangeLabel}{ui("（", " (")}{trendSeries.bucketHours}h {ui("/ 桶）", "per bucket)")}</span>
-                </div>
-                <div className="chart-surface">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <LineChart data={trendData} margin={{ top: 12, right: 24, left: 4, bottom: 0 }}>
-                      <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
-                      <XAxis
-                        dataKey="time"
-                        tick={{ fill: chartTheme.tick, fontSize: 12 }}
-                        tickFormatter={(value, index) => (index % trendTickStep === 0 ? value : "")}
-                        axisLine={{ stroke: chartTheme.axis }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        allowDecimals={false}
-                        tick={{ fill: chartTheme.tick, fontSize: 12 }}
-                        axisLine={{ stroke: chartTheme.axis }}
-                        tickLine={false}
-                      />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Legend />
-                      <Line
-                        type="monotone"
-                        dataKey="total"
-                        name={ui("总请求", "Total Requests")}
-                        stroke={chartTheme.total}
-                        strokeWidth={2.5}
-                        dot={{ r: 2 }}
-                        activeDot={{ r: 4 }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="risk"
-                        name={ui("风险请求", "Risk Requests")}
-                        stroke={chartTheme.risk}
-                        strokeWidth={2.5}
-                        dot={{ r: 2 }}
-                        activeDot={{ r: 4 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="trend-meta">
-                  <div className="trend-legend">
-                    <span className="trend-chip total">{ui("总请求", "Total")} {trendTotalCount}</span>
-                    <span className="trend-chip risk">{ui("风险请求", "Risk")} {trendRiskCount}</span>
+                <article className="panel-card chart-card trend-card">
+                  <div className="chart-head">
+                    <h3>{ui("24 小时趋势", "24h Trend")}</h3>
+                    <span className="chart-subtitle">{trendRangeLabel}{ui("（", " (")}{trendSeries.bucketHours}h {ui("/ 桶）", "per bucket)")}</span>
                   </div>
-                  <span className="trend-peak">{ui("峰值", "Peak")} {trendPeak}</span>
-                </div>
-              </article>
+                  <div className="chart-surface">
+                    <ResponsiveContainer width="100%" height={260}>
+                      <LineChart data={trendData} margin={{ top: 12, right: 24, left: 4, bottom: 0 }}>
+                        <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="time"
+                          tick={{ fill: chartTheme.tick, fontSize: 12 }}
+                          tickFormatter={(value, index) => (index % trendTickStep === 0 ? value : "")}
+                          axisLine={{ stroke: chartTheme.axis }}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          allowDecimals={false}
+                          tick={{ fill: chartTheme.tick, fontSize: 12 }}
+                          axisLine={{ stroke: chartTheme.axis }}
+                          tickLine={false}
+                        />
+                        <Tooltip content={<ChartTooltip />} />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="total"
+                          name={ui("总请求", "Total Requests")}
+                          stroke={chartTheme.total}
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          activeDot={{ r: 4 }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="risk"
+                          name={ui("风险请求", "Risk Requests")}
+                          stroke={chartTheme.risk}
+                          strokeWidth={2.5}
+                          dot={{ r: 2 }}
+                          activeDot={{ r: 4 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="trend-meta">
+                    <div className="trend-legend">
+                      <span className="trend-chip total">{ui("总请求", "Total")} {trendTotalCount}</span>
+                      <span className="trend-chip risk">{ui("风险请求", "Risk")} {trendRiskCount}</span>
+                    </div>
+                    <span className="trend-peak">{ui("峰值", "Peak")} {trendPeak}</span>
+                  </div>
+                </article>
+              </div>
             </div>
           </section>
         ) : null}
@@ -3538,9 +3490,9 @@ function App() {
             role="tabpanel"
             aria-labelledby="tab-events"
           >
-            <div className="panel-card">
+            <div className="panel-card dashboard-panel">
               <div className="card-head card-head-compact">
-                <h2>{ui("决策记录", "Decisions")}</h2>
+                <h2>{ui("拦截记录", "Interceptions")}</h2>
                 <div className="header-actions">
                   {hasActiveDecisionFilter ? (
                     <span className="meta-pill meta-pill-highlight">
@@ -3689,7 +3641,7 @@ function App() {
             role="tabpanel"
             aria-labelledby="tab-rules"
           >
-            <div className="panel-card strategy-panel">
+            <div className="panel-card strategy-panel dashboard-panel">
               <div className="card-head">
                 <h2>{ui("策略", "Strategy")}</h2>
                 <div className="rule-meta">
@@ -3810,7 +3762,6 @@ function App() {
               </section>
 
               {!hasFilesystemCapability ? renderFilesystemOverridesSection(false) : null}
-              {renderClassifierSection()}
             </div>
           </section>
         ) : null}
@@ -3822,10 +3773,10 @@ function App() {
             role="tabpanel"
             aria-labelledby="tab-skills"
           >
-            <div className="panel-card skills-panel">
+            <div className="panel-card skills-panel dashboard-panel">
               <div className="card-head">
                 <div>
-                  <h2>{ui("Skill 拦截", "Skill Interception")}</h2>
+                  <h2>{ui("Skill", "Skill")}</h2>
                   <p className="skills-intro">
                     {ui(
                       "后台会自动发现本地已安装 skills，给出风险等级、内容是否发生未声明变更，以及人工处置入口。低风险默认无感，高风险行为集中在详情和策略区处理。",
@@ -4395,10 +4346,10 @@ function App() {
             role="tabpanel"
             aria-labelledby="tab-accounts"
           >
-            <div className="panel-card accounts-panel">
+            <div className="panel-card accounts-panel dashboard-panel">
               <div className="card-head">
                 <div>
-                  <h2>{ui("账号策略", "Account Policies")}</h2>
+                  <h2>{ui("账号", "Accounts")}</h2>
                   <p className="accounts-intro">
                     {ui(
                       "设置账号模式和管理员。默认管理员为 main。",
@@ -4407,13 +4358,12 @@ function App() {
                   </p>
                 </div>
                 <div className="rule-meta">
-                  <span className="meta-pill">{ui("会话", "Sessions")} {displayAccounts.length}</span>
-                  <span className="meta-pill">{ui("配置", "Overrides")} {accountPolicies.length}</span>
+                  <span className="meta-pill">{ui("账号", "Accounts")} {accountCount}</span>
                 </div>
               </div>
 
-              {displayAccounts.length === 0 ? (
-                <div className="chart-empty">{ui("还没有会话。", "No sessions yet.")}</div>
+              {accountCount === 0 ? (
+                <div className="chart-empty">{ui("还没有账号。", "No accounts yet.")}</div>
               ) : (
                 <div className="account-list">
                   {displayAccounts.map((account) => (
