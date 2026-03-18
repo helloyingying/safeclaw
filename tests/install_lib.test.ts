@@ -14,6 +14,17 @@ test("resolveInstallTarget prefers explicit archive path", () => {
   );
 });
 
+test("resolveInstallTarget prefers explicit local path over npm metadata", () => {
+  assert.equal(
+    resolveInstallTarget({
+      packageName: "securityclaw",
+      packageVersion: "0.1.0",
+      localPath: "/tmp/securityclaw",
+    }),
+    "/tmp/securityclaw",
+  );
+});
+
 test("resolveInstallTarget pins package name and version for npm installs", () => {
   assert.equal(
     resolveInstallTarget({
@@ -38,6 +49,20 @@ test("buildInstallPlan includes restart and status by default", () => {
   );
 });
 
+test("buildInstallPlan supports linked local path installs", () => {
+  assert.deepEqual(
+    buildInstallPlan({
+      localPath: "/tmp/securityclaw",
+      link: true,
+      verify: false,
+    }),
+    [
+      ["openclaw", "plugins", "install", "--link", "/tmp/securityclaw"],
+      ["openclaw", "gateway", "restart"],
+    ],
+  );
+});
+
 test("parseInstallArgs accepts archive and dry-run flags", () => {
   assert.deepEqual(
     parseInstallArgs(["--archive", "/tmp/securityclaw.tgz", "--dry-run", "--no-status"]),
@@ -48,4 +73,28 @@ test("parseInstallArgs accepts archive and dry-run flags", () => {
       verify: false,
     },
   );
+});
+
+test("parseInstallArgs accepts linked local path installs", () => {
+  assert.deepEqual(
+    parseInstallArgs(["--path", "/tmp/securityclaw", "--link", "--no-restart"]),
+    {
+      dryRun: false,
+      link: true,
+      localPath: "/tmp/securityclaw",
+      restart: false,
+      verify: true,
+    },
+  );
+});
+
+test("parseInstallArgs rejects conflicting explicit targets", () => {
+  assert.throws(
+    () => parseInstallArgs(["--path", "/tmp/securityclaw", "--archive", "/tmp/securityclaw.tgz"]),
+    /Choose only one of --archive, --path, or --npm-spec/,
+  );
+});
+
+test("parseInstallArgs rejects --link without --path", () => {
+  assert.throws(() => parseInstallArgs(["--link"]), /--link requires --path/);
 });

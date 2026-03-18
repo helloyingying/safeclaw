@@ -7,6 +7,7 @@
 - [产品需求文档](./PRD.md)
 - [技术方案](./TECHNICAL_SOLUTION.md)
 - [架构文档](./ARCHITECTURE.md)
+- [策略模块重构提案](./STRATEGY_TOOL_DRIVEN_REFACTOR.md)
 - [Skill 拦截方案](./SKILL_INTERCEPTION_SOLUTION.md)
 
 ## 安装与运维

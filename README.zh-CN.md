@@ -51,7 +51,13 @@ SECURITYCLAW_VERSION=0.0.3 curl -fsSL https://raw.githubusercontent.com/znary/se
 npm install
 ```
 
-把当前工作区构建安装到 OpenClaw：
+开发阶段请先把当前工作区写入 OpenClaw 的 `plugins.load.paths`，这样后续 restart 加载的就是当前仓库源码，而不是复制产物或 npm 安装副本：
+
+```bash
+npm run openclaw:dev:install
+```
+
+如果你要验证打包归档安装行为，而不是实时开发目录，再执行：
 
 ```bash
 npm run openclaw:install

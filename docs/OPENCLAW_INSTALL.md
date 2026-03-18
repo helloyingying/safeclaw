@@ -8,11 +8,35 @@
 - Plugin config changes require a gateway restart.
 
 ## Recommended Install Path
-Prefer a versioned plugin archive installed through `openclaw plugins install` over `plugins.load.paths`.
-This keeps the installed plugin under `~/.openclaw/extensions/securityclaw/` instead of loading the live development workspace directly.
+For local development, prefer writing the current repository root into `plugins.load.paths`.
+This keeps OpenClaw pointed at the live workspace path instead of an older copied/npm-installed snapshot, and it avoids the conflict where `openclaw plugins install --link` can fail against an existing copied install.
 
-## One-Line Local Install
+For release validation, use the packaged archive install path so you test the same artifact shape that end users receive.
+
+## One-Line Local Dev Install
 From the SecurityClaw repo root:
+
+```bash
+npm run openclaw:dev:install
+```
+
+This command will:
+
+1. Resolve the current repository root dynamically
+2. Write that path into the active OpenClaw config `plugins.load.paths`
+3. Update the plugin install record to `source: "path"`
+4. Restart the gateway
+5. Verify gateway status
+
+Preview the exact commands without making changes:
+
+```bash
+npm run openclaw:dev:install -- --dry-run
+```
+
+## One-Line Packaged Install
+
+If you need to validate the packaged plugin tarball instead of the live workspace:
 
 ```bash
 npm run openclaw:install
@@ -20,12 +44,12 @@ npm run openclaw:install
 
 This command will:
 
-1. Build a versioned archive at `dist/znary-securityclaw-<version>.tgz`
+1. Build a versioned archive at `dist/securityclaw-<version>.tgz`
 2. Install it with `openclaw plugins install`
 3. Restart the gateway
 4. Verify gateway status
 
-Preview the exact commands without making changes:
+Preview the exact packaged-install commands without making changes:
 
 ```bash
 npm run openclaw:install -- --dry-run
@@ -82,11 +106,13 @@ If you need to inspect the resulting config manually, it should look like this:
 In most cases, `securityclaw` does not need any explicit config block at all. Keep only `adminPort` when you want to override the default dashboard port.
 
 ## Install Steps
-1. Run `npm run openclaw:install`.
-2. Run `openclaw plugins list` and confirm `securityclaw` shows as `loaded`.
-3. Open `http://127.0.0.1:4780` if you want the local dashboard.
+1. For active development, run `npm run openclaw:dev:install`.
+2. If you are validating the packaged artifact, run `npm run openclaw:install` instead.
+3. Run `openclaw plugins list` and confirm `securityclaw` shows as `loaded`.
+4. Open `http://127.0.0.1:4780` if you want the local dashboard.
 
 ## Operational Notes
+- For this repository, do not rely on raw `openclaw gateway restart` as the primary dev reload path. Use `npm run openclaw:dev:install` so OpenClaw refreshes `plugins.load.paths` to the current repo before restarting.
 - `config.configPath` is optional. If unset, SecurityClaw uses the packaged default policy file.
 - SecurityClaw stores SQLite under OpenClaw state: `~/.openclaw/extensions/securityclaw/data/securityclaw.db`.
 - `config.overridePath` is only a legacy migration input (read-once import into SQLite), not an active persistence target.

@@ -7,6 +7,7 @@
 - [PRD](./PRD.md)
 - [Technical Solution](./TECHNICAL_SOLUTION.md)
 - [Architecture](./ARCHITECTURE.md)
+- [Strategy Refactor Proposal](./STRATEGY_TOOL_DRIVEN_REFACTOR.en.md)
 - [Skill Interception Solution](./SKILL_INTERCEPTION_SOLUTION.md)
 
 ## Setup and Operations

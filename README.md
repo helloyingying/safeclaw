@@ -51,7 +51,13 @@ Clone the repository, then install dependencies:
 npm install
 ```
 
-Install the current workspace build into OpenClaw:
+For development, wire the current workspace into OpenClaw's `plugins.load.paths` so restarts always load the live repo instead of a copied/npm-installed snapshot:
+
+```bash
+npm run openclaw:dev:install
+```
+
+If you need to validate the packaged archive behavior instead of the live workspace, install the current workspace build as a tarball:
 
 ```bash
 npm run openclaw:install

@@ -15,6 +15,8 @@
 
 ## OpenClaw Restart
 - If a change requires OpenClaw gateway/plugin reload to take effect, perform the restart yourself instead of asking the user to do it manually.
-- Use `openclaw gateway restart` as the default restart command unless the environment clearly requires another OpenClaw service command.
+- For local SecurityClaw development, run `npm run openclaw:dev:install` before any `openclaw gateway restart`, or use that command as the restart path directly. It dynamically refreshes `plugins.load.paths` to the current repo root so reloads do not keep using an older copied/npm-installed plugin snapshot.
+- Do not assume an existing install under `~/.openclaw/extensions/securityclaw` is acceptable for development reloads; refresh the dev load path first.
+- Use `openclaw gateway restart` as the default restart command only after the dev load-path requirement above is satisfied, unless the environment clearly requires another OpenClaw service command.
 - After a required restart, verify the service with `openclaw gateway status` or an equally direct OpenClaw health check before marking the task done.
 - Do not mark a restart-dependent task complete if the restart or verification step is still pending; report the concrete blocker instead.

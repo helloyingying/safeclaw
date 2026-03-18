@@ -18,12 +18,15 @@ function printUsage() {
 
 Usage:
   securityclaw install [--dry-run] [--no-restart] [--no-status]
+  securityclaw install --path <plugin-dir>
+  securityclaw install --path <plugin-dir> --link
   securityclaw install --archive <path-to-tgz>
   securityclaw install --npm-spec <package@version>
 
 Examples:
   npx securityclaw install
   npx securityclaw install --dry-run
+  node ./bin/securityclaw.mjs install --path . --link
 `);
 }
 

@@ -8,6 +8,8 @@
 ## Config Operations
 - Edit the local YAML file and redeploy or call `plugin.config.reload()` from the host process.
 - If reload validation fails, the plugin keeps `last_known_good`.
+- For local repo-based debugging, use `npm run openclaw:dev:install` instead of a bare `openclaw gateway restart` so the gateway reloads the current workspace path first.
+- Reserve `npm run openclaw:install` for packaged artifact verification, not the default edit-refresh loop.
 
 ## Challenge Approvals
 - Monitor challenge decisions from `SecurityDecisionEvent`.

@@ -46,6 +46,7 @@
     "admin:build": "node ./scripts/build-admin.mjs",
     "prepack": "npm test && npm run admin:build",
     "pack:plugin": "node ./scripts/pack-plugin.mjs",
+    "openclaw:dev:install": "node ./scripts/install-openclaw-plugin-dev.mjs",
     "openclaw:install": "node ./scripts/install-openclaw-plugin.mjs",
     "release:check": "node ./scripts/release-preflight.mjs",
     "release:dry-run": "npm run release:check && npm publish --dry-run --access public"

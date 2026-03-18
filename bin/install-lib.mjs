@@ -4,6 +4,11 @@ export function resolveInstallTarget(options = {}) {
     return archivePath;
   }
 
+  const localPath = typeof options.localPath === "string" ? options.localPath.trim() : "";
+  if (localPath) {
+    return localPath;
+  }
+
   const npmSpec = typeof options.npmSpec === "string" ? options.npmSpec.trim() : "";
   if (npmSpec) {
     return npmSpec;
@@ -25,9 +30,16 @@ export function buildInstallPlan(options = {}) {
   const installTarget = resolveInstallTarget(options);
   const restart = options.restart !== false;
   const verify = options.verify !== false;
+  const link = options.link === true;
+  const installArgs = [
+    "plugins",
+    "install",
+    ...(link ? ["--link"] : []),
+    installTarget,
+  ];
 
   return [
-    [openclawBin, "plugins", "install", installTarget],
+    [openclawBin, ...installArgs],
     ...(restart ? [[openclawBin, "gateway", "restart"]] : []),
     ...(verify ? [[openclawBin, "gateway", "status"]] : []),
   ];
@@ -54,6 +66,10 @@ export function parseInstallArgs(argv = []) {
       options.verify = false;
       continue;
     }
+    if (token === "--link") {
+      options.link = true;
+      continue;
+    }
     if (token === "--archive") {
       const value = argv[index + 1];
       if (!value) {
@@ -72,6 +88,15 @@ export function parseInstallArgs(argv = []) {
       index += 1;
       continue;
     }
+    if (token === "--path") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --path");
+      }
+      options.localPath = value;
+      index += 1;
+      continue;
+    }
     if (token === "--openclaw-bin") {
       const value = argv[index + 1];
       if (!value) {
@@ -82,6 +107,24 @@ export function parseInstallArgs(argv = []) {
       continue;
     }
     throw new Error(`Unknown install option: ${token}`);
+  }
+
+  const explicitTargets = ["archivePath", "localPath", "npmSpec"].filter((key) => {
+    const value = options[key];
+    return typeof value === "string" && value.trim();
+  });
+
+  if (explicitTargets.length > 1) {
+    throw new Error("Choose only one of --archive, --path, or --npm-spec");
+  }
+
+  if (options.link) {
+    if (!options.localPath) {
+      throw new Error("--link requires --path");
+    }
+    if (options.archivePath || options.npmSpec) {
+      throw new Error("--link only works with --path");
+    }
   }
 
   return options;
