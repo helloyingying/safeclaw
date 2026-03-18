@@ -130,7 +130,7 @@ export function runPolicyGuard(
     volume: { ...(input.volume ?? {}) },
     security_context: securityContext
   };
-  const matchedFileRule = matchFileRule(context.resource_paths, fileRules);
+  const matchedFileRule = matchFileRule(context.resource_paths, fileRules, context.operation);
   const fileRuleReasonCodes = matchedFileRule
     ? matchedFileRule.reason_codes?.length
       ? [...matchedFileRule.reason_codes]

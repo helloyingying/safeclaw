@@ -22,6 +22,7 @@ test("strategy store persists override in sqlite", () => {
         id: "user-downloads-allow",
         directory: "/Users/liuzhuangm4/Downloads",
         decision: "allow",
+        operations: ["read"],
         reason_codes: ["USER_FILE_RULE_ALLOW"]
       }
     ];
@@ -52,6 +53,7 @@ test("strategy store persists override in sqlite", () => {
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
     assert.equal(store.readOverride()?.account_policies?.[0]?.subject, "telegram:chat-42");
     assert.equal(store.readOverride()?.strategy?.exceptions.directory_overrides?.[0]?.id, "user-downloads-allow");
+    assert.deepEqual(store.readOverride()?.strategy?.exceptions.directory_overrides?.[0]?.operations, ["read"]);
     assert.equal(store.readOverride()?.strategy?.classifiers.disabled_builtin_ids?.[0], "download-staging-downloads-directory");
     assert.equal(store.readOverride()?.strategy?.classifiers.custom_sensitive_paths?.[0]?.id, "custom-sensitive-share");
 

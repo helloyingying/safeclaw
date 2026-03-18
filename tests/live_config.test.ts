@@ -120,6 +120,7 @@ test("live config resolver applies sensitive path strategy overrides on next rea
           id: "user-downloads-allow",
           directory: "/Users/liuzhuangm4/Downloads",
           decision: "allow",
+          operations: ["read"],
           reason_codes: ["USER_FILE_RULE_ALLOW"]
         }
       ];
@@ -150,6 +151,10 @@ test("live config resolver applies sensitive path strategy overrides on next rea
       true,
     );
     assert.equal(updated.config.file_rules.some((rule) => rule.id === "user-downloads-allow"), true);
+    assert.deepEqual(
+      updated.config.file_rules.find((rule) => rule.id === "user-downloads-allow")?.operations,
+      ["read"],
+    );
   } finally {
     resolver?.close();
     rmSync(tempDir, { recursive: true, force: true });

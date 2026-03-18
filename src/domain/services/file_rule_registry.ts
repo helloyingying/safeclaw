@@ -1,9 +1,11 @@
 import os from "node:os";
 import path from "node:path";
 
-import type { Decision, FileRule } from "../../types.ts";
+import type { Decision, FileRule, FileRuleOperation } from "../../types.ts";
 
 const VALID_DECISIONS = new Set<Decision>(["allow", "warn", "challenge", "block"]);
+const FILE_RULE_OPERATION_ORDER: FileRuleOperation[] = ["read", "list", "search", "write", "delete", "archive", "execute"];
+const FILE_RULE_OPERATION_INDEX = new Map(FILE_RULE_OPERATION_ORDER.map((value, index) => [value, index]));
 
 function trimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -55,6 +57,37 @@ function normalizeDecision(value: unknown): Decision | undefined {
   return VALID_DECISIONS.has(value as Decision) ? (value as Decision) : undefined;
 }
 
+function normalizeOperation(value: unknown): FileRuleOperation | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized ? (normalized as FileRuleOperation) : undefined;
+}
+
+function compareOperations(left: FileRuleOperation, right: FileRuleOperation): number {
+  const leftIndex = FILE_RULE_OPERATION_INDEX.get(left) ?? Number.MAX_SAFE_INTEGER;
+  const rightIndex = FILE_RULE_OPERATION_INDEX.get(right) ?? Number.MAX_SAFE_INTEGER;
+  if (leftIndex !== rightIndex) {
+    return leftIndex - rightIndex;
+  }
+  return left.localeCompare(right);
+}
+
+function normalizeOperations(value: unknown): FileRuleOperation[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const normalized = Array.from(
+    new Set(
+      value
+        .map((entry) => normalizeOperation(entry))
+        .filter((entry): entry is FileRuleOperation => Boolean(entry)),
+    ),
+  ).sort(compareOperations);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function normalizeReasonCodes(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -65,11 +98,23 @@ function normalizeReasonCodes(value: unknown): string[] | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function operationKey(operations: readonly FileRuleOperation[] | undefined): string {
+  return operations?.length ? operations.join("|") : "*";
+}
+
+function dedupeKey(rule: Pick<FileRule, "directory" | "operations">): string {
+  return `${normalizedPathForCompare(rule.directory)}::${operationKey(rule.operations)}`;
+}
+
 function sortRules(rules: FileRule[]): FileRule[] {
   return [...rules].sort((left, right) => {
     const byDirectory = normalizedPathForCompare(left.directory).localeCompare(normalizedPathForCompare(right.directory));
     if (byDirectory !== 0) {
       return byDirectory;
+    }
+    const byOperations = operationKey(left.operations).localeCompare(operationKey(right.operations));
+    if (byOperations !== 0) {
+      return byOperations;
     }
     return left.id.localeCompare(right.id);
   });
@@ -96,6 +141,7 @@ export function normalizeFileRule(value: unknown): FileRule | undefined {
   const id = trimmedString(record.id);
   const directory = trimmedString(record.directory);
   const decision = normalizeDecision(record.decision);
+  const operations = normalizeOperations(record.operations);
   const reasonCodes = normalizeReasonCodes(record.reason_codes);
   const updatedAt = trimmedString(record.updated_at);
   const normalizedDirectory = directory ? normalizeDirectoryPath(directory) : undefined;
@@ -107,6 +153,7 @@ export function normalizeFileRule(value: unknown): FileRule | undefined {
     id,
     directory: normalizedDirectory,
     decision,
+    ...(operations ? { operations } : {}),
     ...(reasonCodes ? { reason_codes: reasonCodes } : {}),
     ...(updatedAt ? { updated_at: updatedAt } : {}),
   };
@@ -122,16 +169,17 @@ export function normalizeFileRules(value: unknown): FileRule[] {
     if (!normalized) {
       return;
     }
-    dedupedByDirectory.set(normalizedPathForCompare(normalized.directory), normalized);
+    dedupedByDirectory.set(dedupeKey(normalized), normalized);
   });
   return sortRules(Array.from(dedupedByDirectory.values()));
 }
 
-export function matchFileRule(resourcePaths: string[], rules: FileRule[]): FileRule | undefined {
+export function matchFileRule(resourcePaths: string[], rules: FileRule[], operation?: string): FileRule | undefined {
   if (!rules.length || !resourcePaths.length) {
     return undefined;
   }
 
+  const normalizedOperation = normalizeOperation(operation);
   const normalizedPaths = resourcePaths
     .map((entry) => normalizeDirectoryPath(entry))
     .filter((entry): entry is string => Boolean(entry));
@@ -145,9 +193,19 @@ export function matchFileRule(resourcePaths: string[], rules: FileRule[]): FileR
     if (!normalizedDirectory) {
       return;
     }
+    const normalizedOperations = normalizeOperations(rule.operations);
+    if (normalizedOperations?.length) {
+      if (!normalizedOperation || !normalizedOperations.includes(normalizedOperation)) {
+        return;
+      }
+    }
     const matched = normalizedPaths.some((candidate) => isPathInsideDirectory(normalizedDirectory, candidate));
     if (matched) {
-      matches.push({ ...rule, directory: normalizedDirectory });
+      matches.push({
+        ...rule,
+        directory: normalizedDirectory,
+        ...(normalizedOperations ? { operations: normalizedOperations } : {}),
+      });
     }
   });
 
@@ -161,9 +219,18 @@ export function matchFileRule(resourcePaths: string[], rules: FileRule[]): FileR
     if (rightDepth !== leftDepth) {
       return rightDepth - leftDepth;
     }
+    const leftSpecificity = left.operations?.length ?? Number.MAX_SAFE_INTEGER;
+    const rightSpecificity = right.operations?.length ?? Number.MAX_SAFE_INTEGER;
+    if (leftSpecificity !== rightSpecificity) {
+      return leftSpecificity - rightSpecificity;
+    }
     const byDirectory = normalizedPathForCompare(left.directory).localeCompare(normalizedPathForCompare(right.directory));
     if (byDirectory !== 0) {
       return byDirectory;
+    }
+    const byOperations = operationKey(left.operations).localeCompare(operationKey(right.operations));
+    if (byOperations !== 0) {
+      return byOperations;
     }
     return left.id.localeCompare(right.id);
   });

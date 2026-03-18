@@ -19,6 +19,15 @@ export type Severity = "low" | "medium" | "high" | "critical";
 export type AccountPolicyMode = "apply_rules" | "default_allow";
 export type SensitivePathMatchType = "prefix" | "glob" | "regex";
 export type SensitivePathSource = "builtin" | "custom";
+export type FileRuleOperation =
+  | "read"
+  | "search"
+  | "list"
+  | "write"
+  | "delete"
+  | "archive"
+  | "execute"
+  | (string & {});
 export type ControlDomain =
   | "execution_control"
   | "data_access"
@@ -195,6 +204,7 @@ export interface FileRule {
   id: string;
   directory: string;
   decision: Decision;
+  operations?: FileRuleOperation[];
   reason_codes?: ReasonCode[];
   updated_at?: string;
 }

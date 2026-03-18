@@ -25,7 +25,7 @@ export class PolicyPipeline {
   }
 
   evaluate(context: DecisionContext, fileRules: FileRule[] = this.config.file_rules): PolicyPipelineOutcome {
-    const matchedFileRule = matchFileRule(context.resource_paths, fileRules);
+    const matchedFileRule = matchFileRule(context.resource_paths, fileRules, context.operation);
     if (matchedFileRule) {
       return {
         decision: matchedFileRule.decision,

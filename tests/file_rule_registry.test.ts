@@ -28,6 +28,28 @@ test("matchFileRule prefers the most specific directory", () => {
   assert.equal(match?.decision, "allow");
 });
 
+test("matchFileRule prefers operation-scoped overrides over generic directory overrides", () => {
+  const rules = normalizeFileRules([
+    { id: "generic", directory: "/Users/liuzhuangm4/Documents/private", decision: "challenge" },
+    { id: "read-only", directory: "/Users/liuzhuangm4/Documents/private", decision: "allow", operations: ["read"] },
+  ]);
+
+  const readMatch = matchFileRule(
+    ["/Users/liuzhuangm4/Documents/private/notes.txt"],
+    rules,
+    "read",
+  );
+  const writeMatch = matchFileRule(
+    ["/Users/liuzhuangm4/Documents/private/notes.txt"],
+    rules,
+    "write",
+  );
+
+  assert.equal(readMatch?.id, "read-only");
+  assert.deepEqual(readMatch?.operations, ["read"]);
+  assert.equal(writeMatch?.id, "generic");
+});
+
 test("defaultFileRuleReasonCode maps decisions", () => {
   assert.equal(defaultFileRuleReasonCode("allow"), "USER_FILE_RULE_ALLOW");
   assert.equal(defaultFileRuleReasonCode("warn"), "USER_FILE_RULE_WARN");

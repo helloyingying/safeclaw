@@ -523,7 +523,7 @@ test("gateway blocks filesystem reads of browser secret stores", async () => {
   }
 });
 
-test("gateway file rules with allow bypass downstream filesystem blocks", async () => {
+test("gateway directory overrides can be scoped to read-only access", async () => {
   const harness = await createBeforeToolCallHook();
   try {
     const writer = new StrategyStore(harness.dbPath);
@@ -534,6 +534,7 @@ test("gateway file rules with allow bypass downstream filesystem blocks", async 
           id: "user-browser-allow",
           directory: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome",
           decision: "allow",
+          operations: ["read"],
           reason_codes: ["USER_FILE_RULE_ALLOW"],
         }
       ];
@@ -555,6 +556,19 @@ test("gateway file rules with allow bypass downstream filesystem blocks", async 
     );
 
     assert.equal(blocked, undefined);
+
+    const stillBlocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.write",
+        params: {
+          path: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome/Default/Cookies",
+          content: "overwrite",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(stillBlocked?.block, true);
   } finally {
     harness.cleanup();
   }

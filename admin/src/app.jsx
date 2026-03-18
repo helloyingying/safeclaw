@@ -170,7 +170,7 @@ const CHART_THEME = {
 
 const DECISION_SOURCE_TEXT = {
   rule: { "zh-CN": "规则命中", en: "Rule match" },
-  file_rule: { "zh-CN": "文件规则", en: "File rule" },
+  file_rule: { "zh-CN": "目录例外", en: "Directory override" },
   default: { "zh-CN": "默认放行", en: "Default allow" },
   approval: { "zh-CN": "审批放行", en: "Approval grant" },
   account: { "zh-CN": "账号策略", en: "Account policy" }
@@ -194,7 +194,7 @@ const CONTROL_DOMAIN_TEXT = {
   data_egress: { "zh-CN": "数据外发", en: "Data Egress" },
   credential_protection: { "zh-CN": "凭据保护", en: "Credential Protection" },
   change_control: { "zh-CN": "变更控制", en: "Change Control" },
-  approval_exception: { "zh-CN": "审批例外", en: "Approval Exception" }
+  approval_exception: { "zh-CN": "紧急例外", en: "Emergency Exception" }
 };
 
 const SEVERITY_TEXT = {
@@ -294,9 +294,13 @@ const OPERATION_TEXT = {
   list: { "zh-CN": "枚举", en: "List" },
   write: { "zh-CN": "写入", en: "Write" },
   delete: { "zh-CN": "删除", en: "Delete" },
+  archive: { "zh-CN": "归档", en: "Archive" },
+  execute: { "zh-CN": "执行", en: "Execute" },
   modify: { "zh-CN": "修改", en: "Modify" },
   export: { "zh-CN": "导出", en: "Export" }
 };
+
+const FILE_RULE_OPERATION_OPTIONS = ["read", "list", "search", "write", "delete", "archive", "execute"];
 
 const TOOL_GROUP_TEXT = {
   execution: { "zh-CN": "执行命令", en: "Command Execution" },
@@ -311,18 +315,69 @@ const TOOL_GROUP_TEXT = {
 };
 
 const CAPABILITY_TEXT = {
-  runtime: { "zh-CN": "Runtime", en: "Runtime" },
-  filesystem: { "zh-CN": "Filesystem", en: "Filesystem" },
-  network: { "zh-CN": "Network", en: "Network" },
-  browser: { "zh-CN": "Browser", en: "Browser" },
-  messaging: { "zh-CN": "Messaging", en: "Messaging" },
-  archive: { "zh-CN": "Archive", en: "Archive" },
-  media: { "zh-CN": "Media", en: "Media" },
-  business: { "zh-CN": "Business", en: "Business" },
-  automation: { "zh-CN": "Automation", en: "Automation" },
-  memory: { "zh-CN": "Memory", en: "Memory" },
-  nodes: { "zh-CN": "Nodes", en: "Nodes" },
-  sessions: { "zh-CN": "Sessions", en: "Sessions" }
+  runtime: { "zh-CN": "命令执行与环境", en: "Execution & Runtime" },
+  filesystem: { "zh-CN": "文件系统", en: "Filesystem" },
+  network: { "zh-CN": "网络与外发", en: "Network & Egress" },
+  browser: { "zh-CN": "浏览器数据", en: "Browser Data" },
+  messaging: { "zh-CN": "消息与通信", en: "Messaging" },
+  archive: { "zh-CN": "归档与导出", en: "Archive & Export" },
+  media: { "zh-CN": "媒体与相册", en: "Media & Photos" },
+  business: { "zh-CN": "业务系统", en: "Business Systems" },
+  automation: { "zh-CN": "自动化任务", en: "Automation" },
+  memory: { "zh-CN": "记忆与知识库", en: "Memory & Knowledge" },
+  nodes: { "zh-CN": "节点与代理协作", en: "Nodes & Agent Coordination" },
+  sessions: { "zh-CN": "会话控制", en: "Session Control" }
+};
+
+const CAPABILITY_DESCRIPTION_TEXT = {
+  runtime: {
+    "zh-CN": "控制 shell / exec 一类命令执行，以及对宿主环境的直接影响。",
+    en: "Controls shell-style execution and other actions that directly affect the host runtime environment."
+  },
+  filesystem: {
+    "zh-CN": "控制读取、搜索、写入、删除、归档和执行文件等文件系统操作。",
+    en: "Controls file reads, searches, writes, deletes, archive actions, and file execution behavior."
+  },
+  network: {
+    "zh-CN": "控制访问外部网络、调用 API，以及把数据发送到外部地址。",
+    en: "Controls outbound network access, API calls, and sending data to external destinations."
+  },
+  browser: {
+    "zh-CN": "控制读取浏览器 Cookie、凭据、历史记录和站点数据。",
+    en: "Controls access to browser cookies, credentials, history, and site data."
+  },
+  messaging: {
+    "zh-CN": "控制读取或导出邮件、短信等通信内容。",
+    en: "Controls reading or exporting email, SMS, and other communication content."
+  },
+  archive: {
+    "zh-CN": "控制压缩、打包、归档和导出行为。",
+    en: "Controls compression, packaging, archiving, and export actions."
+  },
+  media: {
+    "zh-CN": "控制访问相册、图片、音视频和 OCR 类媒体资料。",
+    en: "Controls access to photos, screenshots, audio, video, and OCR-oriented media."
+  },
+  business: {
+    "zh-CN": "控制 CRM、ERP、工单、财务等业务系统访问。",
+    en: "Controls access to CRM, ERP, ticketing, finance, and other business systems."
+  },
+  automation: {
+    "zh-CN": "控制计划任务、自动触发和无人值守执行。",
+    en: "Controls scheduled jobs, automated triggers, and unattended execution."
+  },
+  memory: {
+    "zh-CN": "控制持久记忆、知识库写入和历史检索。",
+    en: "Controls persistent memory, knowledge-base writes, and historical retrieval."
+  },
+  nodes: {
+    "zh-CN": "控制多节点、多代理之间的调用与协作边界。",
+    en: "Controls cross-node and multi-agent invocation boundaries."
+  },
+  sessions: {
+    "zh-CN": "控制跨会话读取、接管和上下文复用等会话级操作。",
+    en: "Controls cross-session reads, takeovers, and context reuse."
+  }
 };
 
 const DESTINATION_TYPE_TEXT = {
@@ -426,7 +481,7 @@ const RULE_IMPACT_EXAMPLES = {
     tip: "先拆分为小批次、最小字段范围，并走审批或脱敏流程。"
   },
   "break-glass-exception-challenge": {
-    scene: "发起 break-glass 例外请求，绕过常规规则。",
+    scene: "发起紧急例外请求，临时绕过常规规则。",
     result: "系统会要求单次审批并绑定当前 trace 后才放行。",
     tip: "仅在紧急故障处置时使用，并在工单里补齐风险说明。"
   }
@@ -585,12 +640,12 @@ const RULE_TEXT_OVERRIDES = {
   },
   "break-glass-exception-challenge": {
     title: {
-      "zh-CN": "Break-glass 例外放行需单次审批",
-      en: "Break-Glass Exception Requires Single-Use Approval"
+      "zh-CN": "紧急例外请求需单次审批",
+      en: "Emergency Exception Requires Single-Use Approval"
     },
     description: {
-      "zh-CN": "显式请求 break-glass 或策略例外时，要求工单、审批人角色和单次 trace 绑定。",
-      en: "Requires ticket, approver role, and single-use trace binding when requesting break-glass/policy exceptions."
+      "zh-CN": "显式请求紧急例外或策略破例时，要求工单、审批人角色和单次 trace 绑定。",
+      en: "Requires a ticket, approver role, and single-use trace binding when requesting an emergency/policy exception."
     }
   }
 };
@@ -706,9 +761,35 @@ function normalizeDirectoryPathKey(value) {
   return normalized.toLowerCase();
 }
 
+function normalizeFileRuleOperations(operations) {
+  if (!Array.isArray(operations)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      operations
+        .map((entry) => (typeof entry === "string" ? entry.trim().toLowerCase() : ""))
+        .filter((entry) => FILE_RULE_OPERATION_OPTIONS.includes(entry))
+    )
+  ).sort(
+    (left, right) => FILE_RULE_OPERATION_OPTIONS.indexOf(left) - FILE_RULE_OPERATION_OPTIONS.indexOf(right)
+  );
+}
+
+function serializeFileRuleOperations(operations) {
+  const normalized = normalizeFileRuleOperations(operations);
+  return normalized.length ? normalized.join("|") : "*";
+}
+
+function fileRuleIdentityKey(rule) {
+  return `${normalizeDirectoryPathKey(rule?.directory)}::${serializeFileRuleOperations(rule?.operations)}`;
+}
+
 function compareFileRules(left, right) {
   const byDirectory = String(left?.directory || "").localeCompare(String(right?.directory || ""));
   if (byDirectory !== 0) return byDirectory;
+  const byOperations = serializeFileRuleOperations(left?.operations).localeCompare(serializeFileRuleOperations(right?.operations));
+  if (byOperations !== 0) return byOperations;
   return String(left?.id || "").localeCompare(String(right?.id || ""));
 }
 
@@ -726,6 +807,9 @@ function normalizeFileRule(rule) {
     id,
     directory,
     decision,
+    ...(normalizeFileRuleOperations(rule.operations).length
+      ? { operations: normalizeFileRuleOperations(rule.operations) }
+      : {}),
     reason_codes: Array.isArray(rule.reason_codes)
       ? rule.reason_codes.map((entry) => String(entry)).filter(Boolean)
       : undefined
@@ -740,7 +824,7 @@ function normalizeFileRules(rules) {
   rules.forEach((rule) => {
     const normalized = normalizeFileRule(rule);
     if (normalized) {
-      deduped.set(normalizeDirectoryPathKey(normalized.directory), normalized);
+      deduped.set(fileRuleIdentityKey(normalized), normalized);
     }
   });
   return Array.from(deduped.values()).sort(compareFileRules);
@@ -876,12 +960,6 @@ function strategyRuleEntries(strategyModel) {
   );
 }
 
-function strategyApprovalEntries(strategyModel) {
-  return strategyRuleEntries(strategyModel).filter(
-    (entry) => entry.rule?.decision === "challenge" || entry.rule?.approval_requirements
-  );
-}
-
 function normalizeDirectoryPickerEntries(entries) {
   if (!Array.isArray(entries)) {
     return [];
@@ -1010,6 +1088,17 @@ function capabilityLabel(capabilityId) {
   return readLocalized(CAPABILITY_TEXT, capabilityId, capabilityId);
 }
 
+function capabilityDescription(capabilityId) {
+  if (!capabilityId) {
+    return ui("用于承载一组相近能力的默认策略和附加限制。", "Holds the default posture and additional restrictions for a related set of capabilities.");
+  }
+  return readLocalized(
+    CAPABILITY_DESCRIPTION_TEXT,
+    capabilityId,
+    ui("用于承载这组能力的默认策略和附加限制。", "Holds the default posture and additional restrictions for this capability group.")
+  );
+}
+
 function severityLabel(severity) {
   return readLocalized(SEVERITY_TEXT, severity, severity || ui("未分级", "Unrated"));
 }
@@ -1025,17 +1114,6 @@ function policyTitle(policy, index) {
   return policy?.rule_id || ui(`规则 ${index + 1}`, `Rule ${index + 1}`);
 }
 
-function approvalSummary(requirements) {
-  if (!requirements) return "";
-  const parts = [];
-  if (requirements.ticket_required) parts.push(ui("工单必填", "Ticket required"));
-  if (toArray(requirements.approver_roles).length) parts.push(ui(`审批角色: ${formatList(requirements.approver_roles)}`, `Approver roles: ${formatList(requirements.approver_roles)}`));
-  if (requirements.single_use) parts.push(ui("单次放行", "Single use"));
-  if (requirements.trace_binding === "trace") parts.push(ui("绑定当前 trace", "Bound to current trace"));
-  if (typeof requirements.ttl_seconds === "number") parts.push(ui(`有效期 ${requirements.ttl_seconds} 秒`, `TTL ${requirements.ttl_seconds}s`));
-  return parts.join(" · ");
-}
-
 function formatSimpleList(values) {
   return toArray(values).filter(Boolean).join(ui("、", ", "));
 }
@@ -1044,32 +1122,23 @@ function withLabel(value, labels) {
   return readLocalized(labels, value, value);
 }
 
+function fileRuleOperationsSummary(rule) {
+  const operations = normalizeFileRuleOperations(rule?.operations);
+  if (!operations.length) {
+    return ui("全部文件类操作", "All filesystem operations");
+  }
+  return ui(
+    `仅限 ${formatSimpleList(operations.map((value) => withLabel(value, OPERATION_TEXT)))}`,
+    `Only ${formatSimpleList(operations.map((value) => withLabel(value, OPERATION_TEXT)))}`
+  );
+}
+
 function localizedRuleField(ruleId, field) {
   if (!ruleId) return undefined;
   const item = RULE_TEXT_OVERRIDES[ruleId];
   const fieldValue = item?.[field];
   if (!fieldValue) return undefined;
   return fieldValue[activeLocale] || fieldValue.en || fieldValue["zh-CN"];
-}
-
-function approvalImpactSummary(requirements) {
-  if (!requirements) return "";
-  const parts = [];
-  if (requirements.ticket_required) {
-    parts.push(ui("需要填写工单号", "A ticket ID is required"));
-  }
-  const roles = formatSimpleList(requirements.approver_roles);
-  if (roles) {
-    parts.push(ui(`需要 ${roles} 审批`, `Requires approval from ${roles}`));
-  }
-  if (requirements.single_use) {
-    parts.push(ui("每次审批仅可放行一次", "Each approval can be used once"));
-  }
-  if (typeof requirements.ttl_seconds === "number") {
-    const minutes = Math.max(1, Math.round(requirements.ttl_seconds / 60));
-    parts.push(ui(`审批通过后约 ${minutes} 分钟内有效`, `Valid for about ${minutes} minutes after approval`));
-  }
-  return parts.length ? ui(`此外，${parts.join("，")}。`, `In addition, ${parts.join(", ")}.`) : "";
 }
 
 function impactTriggerSummary(policy) {
@@ -1138,8 +1207,7 @@ function userImpactSummary(policy) {
       [DECISION_IMPACT_TEXT.block]: "Execution is stopped immediately and must be replaced with a safer approach.",
     }[base] || "This decision path affects execution behavior and audit posture.",
   );
-  const approval = approvalImpactSummary(policy?.approval_requirements);
-  return `${localizedBase}${approval ? ` ${approval}` : ""}`;
+  return localizedBase;
 }
 
 function fallbackImpactExample(policy, index) {
@@ -1175,7 +1243,7 @@ function assistantDecisionLine(policy) {
     return ui("这个请求风险太高，我不能直接执行。", "This request is too risky to execute directly.");
   }
   if (policy?.decision === "challenge") {
-    return ui("这个请求需要你确认审批后，我才能继续执行。", "I need your approval before I can continue this request.");
+    return ui("这个请求需要管理员确认后，我才能继续执行。", "An administrator needs to approve this request before I can continue.");
   }
   if (policy?.decision === "warn") {
     return ui("这个请求可以继续，但我会先提醒你潜在风险。", "This request can continue, but I need to warn you about potential risk first.");
@@ -1323,6 +1391,34 @@ function buildPageItems(currentPage, totalPages) {
 
 function DecisionTag({ decision }) {
   return <span className={`tag ${decision || "allow"}`}>{decisionLabel(decision)}</span>;
+}
+
+function FileRuleOperationSelector({ operations, onToggle }) {
+  const normalizedOperations = normalizeFileRuleOperations(operations);
+  const appliesToAll = normalizedOperations.length === 0;
+  return (
+    <div className="file-rule-operation-group" role="group" aria-label={ui("适用操作", "Applies to operations")}>
+      <button
+        className={`file-rule-operation-chip ${appliesToAll ? "active" : ""}`}
+        type="button"
+        onClick={() => onToggle("__all__")}
+        aria-pressed={appliesToAll}
+      >
+        {ui("全部", "All")}
+      </button>
+      {FILE_RULE_OPERATION_OPTIONS.map((operation) => (
+        <button
+          key={operation}
+          className={`file-rule-operation-chip ${normalizedOperations.includes(operation) ? "active" : ""}`}
+          type="button"
+          onClick={() => onToggle(operation)}
+          aria-pressed={normalizedOperations.includes(operation)}
+        >
+          {withLabel(operation, OPERATION_TEXT)}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function OverviewStatCard({ label, value, tone, onClick }) {
@@ -1570,6 +1666,7 @@ function App() {
   const [publishedStrategyModel, setPublishedStrategyModel] = useState(() => normalizeStrategyModel(null));
   const [selectedFileDirectory, setSelectedFileDirectory] = useState("");
   const [newFileRuleDecision, setNewFileRuleDecision] = useState("challenge");
+  const [newFileRuleOperations, setNewFileRuleOperations] = useState([]);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [filePickerLoading, setFilePickerLoading] = useState(false);
   const [filePickerError, setFilePickerError] = useState("");
@@ -1577,7 +1674,7 @@ function App() {
   const [filePickerParentPath, setFilePickerParentPath] = useState("");
   const [filePickerRoots, setFilePickerRoots] = useState([]);
   const [filePickerDirectories, setFilePickerDirectories] = useState([]);
-  const [fileRuleDeleteTarget, setFileRuleDeleteTarget] = useState("");
+  const [fileRuleDeleteTarget, setFileRuleDeleteTarget] = useState(null);
   const [accountPolicies, setAccountPolicies] = useState([]);
   const [publishedAccountPolicies, setPublishedAccountPolicies] = useState([]);
   const [availableSessions, setAvailableSessions] = useState([]);
@@ -1616,6 +1713,10 @@ function App() {
   const fileRules = useMemo(() => strategyDirectoryOverrides(strategyModel), [strategyModel]);
   const publishedFileRules = useMemo(() => strategyDirectoryOverrides(publishedStrategyModel), [publishedStrategyModel]);
   const capabilityPolicies = useMemo(() => toArray(strategyModel?.tool_policy?.capabilities), [strategyModel]);
+  const hasFilesystemCapability = useMemo(
+    () => capabilityPolicies.some((capability) => capability?.capability_id === "filesystem"),
+    [capabilityPolicies]
+  );
 
   const hasPendingRuleChanges = useMemo(
     () => JSON.stringify(policies) !== JSON.stringify(publishedPolicies),
@@ -1667,7 +1768,6 @@ function App() {
       })),
     [strategyModel]
   );
-  const approvalEntries = useMemo(() => strategyApprovalEntries(strategyModel), [strategyModel]);
   const eligibleSessions = useMemo(
     () => availableSessions,
     [availableSessions]
@@ -1681,13 +1781,20 @@ function App() {
     [accountPolicies]
   );
   const normalizedFileRules = useMemo(() => normalizeFileRules(fileRules), [fileRules]);
+  const normalizedNewFileRuleOperations = useMemo(
+    () => normalizeFileRuleOperations(newFileRuleOperations),
+    [newFileRuleOperations]
+  );
   const selectedDirectoryRuleExists = useMemo(() => {
     if (!selectedFileDirectory) {
       return false;
     }
-    const selectedKey = normalizeDirectoryPathKey(selectedFileDirectory);
-    return normalizedFileRules.some((rule) => normalizeDirectoryPathKey(rule.directory) === selectedKey);
-  }, [normalizedFileRules, selectedFileDirectory]);
+    const selectedKey = fileRuleIdentityKey({
+      directory: selectedFileDirectory,
+      operations: normalizedNewFileRuleOperations
+    });
+    return normalizedFileRules.some((rule) => fileRuleIdentityKey(rule) === selectedKey);
+  }, [normalizedFileRules, normalizedNewFileRuleOperations, selectedFileDirectory]);
   const skillItems = useMemo(() => toArray(skillListPayload?.items), [skillListPayload]);
   const skillSourceOptions = useMemo(() => toArray(skillListPayload?.source_options), [skillListPayload]);
   const skillOverviewHighlights = useMemo(() => toArray(skillStatusPayload?.highlights), [skillStatusPayload]);
@@ -2560,38 +2667,103 @@ function App() {
     );
   }
 
+  function toggleDraftFileRuleOperation(operation) {
+    setNewFileRuleOperations((current) => {
+      if (operation === "__all__") {
+        return [];
+      }
+      if (!FILE_RULE_OPERATION_OPTIONS.includes(operation)) {
+        return current;
+      }
+      const normalizedCurrent = normalizeFileRuleOperations(current);
+      return normalizedCurrent.includes(operation)
+        ? normalizedCurrent.filter((entry) => entry !== operation)
+        : normalizeFileRuleOperations([...normalizedCurrent, operation]);
+    });
+  }
+
   function removeAccountPolicy(subject) {
     setAccountPolicies((current) => current.filter((account) => account.subject !== subject));
   }
 
-  function setDirectoryFileRuleDecision(directory, decision) {
-    const normalizedDirectory = typeof directory === "string" ? directory.trim() : "";
-    const normalizedDecision = typeof decision === "string" ? decision.trim() : "";
-    if (!normalizedDirectory) {
-      return;
-    }
+  function updateDirectoryFileRule(ruleId, updater) {
     setStrategyModel((currentStrategy) => {
       const normalizedCurrent = strategyDirectoryOverrides(currentStrategy);
-      const key = normalizeDirectoryPathKey(normalizedDirectory);
-      const existing = normalizedCurrent.find((rule) => normalizeDirectoryPathKey(rule.directory) === key);
-      if (!normalizedDecision) {
-        return withStrategyDirectoryOverrides(
-          currentStrategy,
-          normalizedCurrent.filter((rule) => normalizeDirectoryPathKey(rule.directory) !== key)
-        );
-      }
-      if (!DECISION_OPTIONS.includes(normalizedDecision)) {
+      let changed = false;
+      const nextRules = normalizedCurrent.map((rule) => {
+        if (rule.id !== ruleId) {
+          return rule;
+        }
+        const nextRule = normalizeFileRule(updater(rule));
+        if (!nextRule) {
+          return rule;
+        }
+        changed = true;
+        return nextRule;
+      });
+      if (!changed) {
         return currentStrategy;
       }
-      const nextRule = {
-        id: existing?.id || `file-rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        directory: normalizedDirectory,
-        decision: normalizedDecision,
-        reason_codes: [defaultFileRuleReasonCode(normalizedDecision)],
-      };
-      const others = normalizedCurrent.filter((rule) => normalizeDirectoryPathKey(rule.directory) !== key);
-      return withStrategyDirectoryOverrides(currentStrategy, [...others, nextRule]);
+      const nextTarget = nextRules.find((rule) => rule.id === ruleId);
+      if (nextTarget) {
+        const duplicate = nextRules.find(
+          (rule) => rule.id !== ruleId && fileRuleIdentityKey(rule) === fileRuleIdentityKey(nextTarget)
+        );
+        if (duplicate) {
+          setMessage(
+            ui(
+              "同一目录和操作范围已经存在另一条例外，请直接修改那条规则。",
+              "Another override already covers the same directory and operation scope. Edit that one directly."
+            )
+          );
+          return currentStrategy;
+        }
+      }
+      return withStrategyDirectoryOverrides(currentStrategy, nextRules);
     });
+  }
+
+  function setDirectoryFileRuleDecision(ruleId, decision) {
+    const normalizedDecision = typeof decision === "string" ? decision.trim() : "";
+    if (!ruleId || !normalizedDecision || !DECISION_OPTIONS.includes(normalizedDecision)) {
+      return;
+    }
+    updateDirectoryFileRule(ruleId, (rule) => ({
+      ...rule,
+      decision: normalizedDecision,
+      reason_codes: [defaultFileRuleReasonCode(normalizedDecision)]
+    }));
+  }
+
+  function setDirectoryFileRuleOperations(ruleId, operations) {
+    if (!ruleId) {
+      return;
+    }
+    updateDirectoryFileRule(ruleId, (rule) => ({
+      ...rule,
+      ...(normalizeFileRuleOperations(operations).length
+        ? { operations: normalizeFileRuleOperations(operations) }
+        : { operations: undefined })
+    }));
+  }
+
+  function toggleDirectoryFileRuleOperation(ruleId, operation) {
+    const currentRule = normalizedFileRules.find((rule) => rule.id === ruleId);
+    if (!currentRule) {
+      return;
+    }
+    const currentOperations = normalizeFileRuleOperations(currentRule.operations);
+    if (operation === "__all__") {
+      setDirectoryFileRuleOperations(ruleId, []);
+      return;
+    }
+    if (!FILE_RULE_OPERATION_OPTIONS.includes(operation)) {
+      return;
+    }
+    const nextOperations = currentOperations.includes(operation)
+      ? currentOperations.filter((entry) => entry !== operation)
+      : [...currentOperations, operation];
+    setDirectoryFileRuleOperations(ruleId, nextOperations);
   }
 
   function applySelectedFileRule() {
@@ -2607,31 +2779,50 @@ function App() {
       );
       return;
     }
-    setDirectoryFileRuleDecision(selectedFileDirectory, newFileRuleDecision);
+    setStrategyModel((currentStrategy) =>
+      withStrategyDirectoryOverrides(currentStrategy, [
+        ...strategyDirectoryOverrides(currentStrategy),
+        {
+          id: `file-rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          directory: selectedFileDirectory,
+          decision: newFileRuleDecision,
+          ...(normalizedNewFileRuleOperations.length ? { operations: normalizedNewFileRuleOperations } : {}),
+          reason_codes: [defaultFileRuleReasonCode(newFileRuleDecision)]
+        }
+      ])
+    );
   }
 
-  function removeFileRule(directory) {
-    setDirectoryFileRuleDecision(directory, "");
-  }
-
-  function requestRemoveFileRule(directory) {
-    const normalizedDirectory = typeof directory === "string" ? directory.trim() : "";
-    if (!normalizedDirectory) {
+  function removeFileRule(ruleId) {
+    if (!ruleId) {
       return;
     }
-    setFileRuleDeleteTarget(normalizedDirectory);
+    setStrategyModel((currentStrategy) =>
+      withStrategyDirectoryOverrides(
+        currentStrategy,
+        strategyDirectoryOverrides(currentStrategy).filter((rule) => rule.id !== ruleId)
+      )
+    );
+  }
+
+  function requestRemoveFileRule(rule) {
+    const normalizedRule = normalizeFileRule(rule);
+    if (!normalizedRule) {
+      return;
+    }
+    setFileRuleDeleteTarget(normalizedRule);
   }
 
   function cancelRemoveFileRule() {
-    setFileRuleDeleteTarget("");
+    setFileRuleDeleteTarget(null);
   }
 
   function confirmRemoveFileRule() {
-    if (!fileRuleDeleteTarget) {
+    if (!fileRuleDeleteTarget?.id) {
       return;
     }
-    removeFileRule(fileRuleDeleteTarget);
-    setFileRuleDeleteTarget("");
+    removeFileRule(fileRuleDeleteTarget.id);
+    setFileRuleDeleteTarget(null);
   }
 
   function closeDirectoryPicker() {
@@ -2729,6 +2920,281 @@ function App() {
       icon: <ToolbarMonogram text="A" />
     }
   ];
+
+  function renderFilesystemOverridesSection(inline = true) {
+    return (
+      <>
+        <section
+          className={inline ? "sensitive-path-panel sensitive-path-panel-inline" : "sensitive-path-panel"}
+          aria-label={ui("目录例外", "Directory overrides")}
+        >
+          <div className="sensitive-path-head">
+            <div>
+              <span className="eyebrow">{ui("Directory Overrides", "Directory Overrides")}</span>
+              <h3>{ui("目录例外只作用于文件系统", "Directory overrides apply to filesystem only")}</h3>
+              <p className="sensitive-path-intro">
+                {ui(
+                  "目录例外是文件系统域内的覆盖层，不属于某一个具体文件动作。你可以把它收窄到读、枚举、搜索、写入、删除、归档或执行；不选操作时，默认覆盖这个目录下的全部文件类操作。",
+                  "Directory overrides are a filesystem-scoped overlay rather than a child of one specific file action. You can narrow them to read, list, search, write, delete, archive, or execute. Leaving the scope empty applies the override to all filesystem-related operations in that directory."
+                )}
+              </p>
+            </div>
+            <div className="rule-meta">
+              <span className="meta-pill">{ui("目录例外", "Directory Overrides")} {normalizedFileRules.length}</span>
+              <span className="meta-pill">{selectedFileDirectory ? ui("已选择目录", "Directory Selected") : ui("未选择目录", "No Directory Selected")}</span>
+            </div>
+          </div>
+
+          <div className="sensitive-path-toolbar">
+            <button className="ghost" type="button" onClick={openDirectoryPicker}>
+              {ui("选择目录", "Choose Directory")}
+            </button>
+
+            <div className="sensitive-path-selected" title={selectedFileDirectory || undefined}>
+              {selectedFileDirectory || ui("尚未选择目录", "No directory selected yet")}
+            </div>
+
+            <label className="sensitive-path-field file-rule-action-field">
+              <span>{ui("处理方式", "Action")}</span>
+              <select value={newFileRuleDecision} onChange={(event) => setNewFileRuleDecision(event.target.value)}>
+                {DECISION_OPTIONS.map((decisionOption) => (
+                  <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="sensitive-path-field sensitive-path-field-wide">
+              <span>{ui("适用操作", "Applies to operations")}</span>
+              <FileRuleOperationSelector
+                operations={newFileRuleOperations}
+                onToggle={toggleDraftFileRuleOperation}
+              />
+            </label>
+
+            <button
+              className="primary"
+              type="button"
+              disabled={!selectedFileDirectory || selectedDirectoryRuleExists}
+              onClick={applySelectedFileRule}
+            >
+              {ui("添加", "Add")}
+            </button>
+          </div>
+
+          {selectedDirectoryRuleExists ? (
+            <div className="sensitive-path-validation">
+              {ui(
+                "当前目录和操作范围已存在例外。若需调整，请在下方已配置目录例外列表中修改。",
+                "A directory override already exists for the same directory and operation scope. Edit it in the configured list below."
+              )}
+            </div>
+          ) : null}
+
+          <div className="sensitive-path-note">
+            {ui(
+              `目录例外只影响文件系统相关操作，不会改动 ${capabilityLabel("network")}、${capabilityLabel("runtime")} 等其他能力。若命中目录例外，当前目录会优先按这里的处理方式执行；删掉后再回落到默认策略和附加限制。`,
+              `Directory overrides only affect filesystem-related operations and do not change other capabilities such as ${capabilityLabel("network")} or ${capabilityLabel("runtime")}. When an override matches, it takes precedence for that directory; deleting it falls back to the baseline policy and additional restrictions.`
+            )}
+          </div>
+
+          {normalizedFileRules.length === 0 ? (
+            <div className="chart-empty">{ui("当前没有配置目录例外。", "No directory overrides configured yet.")}</div>
+          ) : (
+            <div className="sensitive-path-list">
+              {normalizedFileRules.map((rule) => (
+                <article key={rule.id} className="sensitive-path-item configured">
+                  <div className="sensitive-path-item-main">
+                    <div className="sensitive-path-item-pattern">{rule.directory}</div>
+                    <div className="sensitive-path-item-tags">
+                      <span className={`tag ${rule.decision}`}>{decisionLabel(rule.decision)}</span>
+                      <span className="tag meta-tag">{fileRuleOperationsSummary(rule)}</span>
+                    </div>
+                  </div>
+                  <div className="file-rule-item-actions">
+                    <label className="sensitive-path-field file-rule-action-field">
+                      <span>{ui("处理方式", "Action")}</span>
+                      <select
+                        value={rule.decision}
+                        onChange={(event) => setDirectoryFileRuleDecision(rule.id, event.target.value)}
+                      >
+                        {DECISION_OPTIONS.map((decisionOption) => (
+                          <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="sensitive-path-field sensitive-path-field-wide">
+                      <span>{ui("适用操作", "Applies to operations")}</span>
+                      <FileRuleOperationSelector
+                        operations={rule.operations}
+                        onToggle={(operation) => toggleDirectoryFileRuleOperation(rule.id, operation)}
+                      />
+                    </label>
+                    <button className="ghost small" type="button" onClick={() => requestRemoveFileRule(rule)}>
+                      {ui("删除", "Remove")}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {filePickerOpen ? (
+          <div className="directory-picker-backdrop" role="dialog" aria-modal="true" aria-label={ui("目录选择器", "Directory picker")} onClick={closeDirectoryPicker}>
+            <div className="directory-picker-card" onClick={(event) => event.stopPropagation()}>
+              <div className="directory-picker-head">
+                <h4>{ui("选择目录", "Choose Directory")}</h4>
+                <button className="ghost small" type="button" onClick={closeDirectoryPicker}>
+                  {ui("关闭", "Close")}
+                </button>
+              </div>
+              <div className="directory-picker-toolbar">
+                <button
+                  className="ghost small"
+                  type="button"
+                  disabled={!filePickerParentPath || filePickerLoading}
+                  onClick={() => void loadDirectoryPicker(filePickerParentPath)}
+                >
+                  {ui("上级目录", "Up")}
+                </button>
+                <div className="directory-picker-current">{filePickerCurrentPath || "-"}</div>
+                <button className="primary small" type="button" disabled={!filePickerCurrentPath} onClick={chooseCurrentDirectory}>
+                  {ui("选择当前目录", "Select Current Directory")}
+                </button>
+              </div>
+
+              {filePickerRoots.length > 0 ? (
+                <div className="directory-picker-roots">
+                  {filePickerRoots.map((root) => (
+                    <button
+                      key={root}
+                      className="ghost small"
+                      type="button"
+                      onClick={() => void loadDirectoryPicker(root)}
+                      disabled={filePickerLoading}
+                    >
+                      {root}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {filePickerError ? <div className="sensitive-path-validation">{filePickerError}</div> : null}
+
+              <div className="directory-picker-list">
+                {filePickerLoading ? (
+                  <div className="chart-empty">{ui("目录加载中...", "Loading directories...")}</div>
+                ) : filePickerDirectories.length === 0 ? (
+                  <div className="chart-empty">{ui("当前目录没有可进入的子目录。", "No child directories in current path.")}</div>
+                ) : (
+                  filePickerDirectories.map((entry) => (
+                    <button
+                      key={entry.path}
+                      className="directory-picker-item"
+                      type="button"
+                      onClick={() => void loadDirectoryPicker(entry.path)}
+                    >
+                      <span className="directory-picker-item-name">{entry.name}</span>
+                      <span className="directory-picker-item-path">{entry.path}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {fileRuleDeleteTarget ? (
+          <div
+            className="confirm-dialog-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label={ui("删除确认", "Delete confirmation")}
+            onClick={cancelRemoveFileRule}
+          >
+            <div className="confirm-dialog-card" onClick={(event) => event.stopPropagation()}>
+              <h4>{ui("确认删除这条目录例外？", "Delete this directory override?")}</h4>
+              <p className="confirm-dialog-text">
+                {ui(
+                  "删除后，这个目录会回落到文件系统默认策略和附加限制继续判断。",
+                  "After deletion, this directory falls back to the filesystem baseline and additional restrictions."
+                )}
+              </p>
+              <div className="confirm-dialog-path">{fileRuleDeleteTarget.directory}</div>
+              <div className="confirm-dialog-text">{fileRuleOperationsSummary(fileRuleDeleteTarget)}</div>
+              <div className="confirm-dialog-actions">
+                <button className="ghost small" type="button" onClick={cancelRemoveFileRule}>
+                  {ui("取消", "Cancel")}
+                </button>
+                <button className="primary small" type="button" onClick={confirmRemoveFileRule}>
+                  {ui("确认删除", "Delete")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  function renderClassifierSection() {
+    return (
+      <section className="sensitive-path-panel" aria-label={ui("资源分类器", "Resource classifiers")}>
+        <div className="sensitive-path-head">
+          <div>
+            <span className="eyebrow">{ui("Classifiers", "Classifiers")}</span>
+            <h3>{ui("资源分类器继续驱动风险判断", "Classifiers still drive contextual risk decisions")}</h3>
+            <p className="sensitive-path-intro">
+              {ui(
+                "敏感路径和内建分类器不是目录例外，它们只是给调用打标签，供附加限制继续判断。",
+                "Sensitive paths and built-in classifiers are not directory overrides. They label resources so additional restrictions can keep making context-aware decisions."
+              )}
+            </p>
+          </div>
+          <div className="rule-meta">
+            <span className="meta-pill">{ui("自定义敏感路径", "Custom Sensitive Paths")} {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length}</span>
+            <span className="meta-pill">{ui("禁用内建分类器", "Disabled Built-ins")} {toArray(strategyModel?.classifiers?.disabled_builtin_ids).length}</span>
+          </div>
+        </div>
+
+        <div className="rule-group">
+          <h4 className="rule-group-title">{ui("资源分类器", "Resource Classifiers")}</h4>
+          {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length === 0 &&
+          toArray(strategyModel?.classifiers?.disabled_builtin_ids).length === 0 ? (
+            <div className="chart-empty">
+              {ui("当前没有自定义敏感路径或被禁用的内建分类器。", "No custom sensitive paths or disabled built-in classifiers.")}
+            </div>
+          ) : (
+            <div className="sensitive-path-list">
+              {toArray(strategyModel?.classifiers?.custom_sensitive_paths).map((rule) => (
+                <article key={rule.id} className="sensitive-path-item configured">
+                  <div className="sensitive-path-item-main">
+                    <div className="sensitive-path-item-pattern">{rule.pattern}</div>
+                    <div className="sensitive-path-item-tags">
+                      <span className="tag meta-tag">{rule.asset_label}</span>
+                      <span className="tag meta-tag">{rule.match_type}</span>
+                      <span className="tag allow">{ui("自定义", "Custom")}</span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+              {toArray(strategyModel?.classifiers?.disabled_builtin_ids).map((id) => (
+                <article key={id} className="sensitive-path-item configured">
+                  <div className="sensitive-path-item-main">
+                    <div className="sensitive-path-item-pattern">{id}</div>
+                    <div className="sensitive-path-item-tags">
+                      <span className="tag warn">{ui("已禁用内建规则", "Built-in Disabled")}</span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div className="app">
       <section className="workspace card">
@@ -3202,7 +3668,7 @@ function App() {
                 <h2>{ui("策略", "Strategy")}</h2>
                 <div className="rule-meta">
                   <span className="meta-pill">{ui("能力", "Capabilities")} {capabilityPolicies.length}</span>
-                  <span className="meta-pill">{ui("上下文护栏", "Guardrails")} {policies.length}</span>
+                  <span className="meta-pill">{ui("附加限制", "Additional Restrictions")} {policies.length}</span>
                   <span className="meta-pill">{ui("目录例外", "Directory Overrides")} {normalizedFileRules.length}</span>
                 </div>
               </div>
@@ -3211,18 +3677,18 @@ function App() {
                 <div className="card-head">
                   <div>
                     <span className="eyebrow">{ui("Access", "Access")}</span>
-                    <h3>{ui("先看 capability，再看上下文护栏", "Capability first, then contextual guardrails")}</h3>
+                    <h3>{ui("先看能力默认策略，再看附加限制", "Capability baseline first, then additional restrictions")}</h3>
                     <p className="sensitive-path-intro">
                       {ui(
-                        "策略页现在围绕 capability 组织。先定义默认态度，再查看哪些上下文会升级为提醒、审批或拦截。",
-                        "The strategy tab is now organized around capabilities. Define the baseline posture first, then inspect which contexts escalate to warn, challenge, or block."
+                        "先定义每类能力的默认处理方式，再看哪些风险条件会升级成提醒、确认或拦截。需要管理员确认的规则会在执行时生成审批单，策略页不再展示工单、角色、trace 绑定这类内部审批字段。",
+                        "Define the default posture for each capability first, then inspect which risk conditions escalate to warn, challenge, or block. Rules that need admin approval will still generate approval requests at runtime, but this page no longer exposes internal fields such as ticket, role, or trace binding."
                       )}
                     </p>
                   </div>
                 </div>
 
                 {capabilityPolicies.length === 0 ? (
-                  <div className="chart-empty">{ui("暂无 capability 配置。", "No capability policies configured.")}</div>
+                  <div className="chart-empty">{ui("暂无能力配置。", "No capability policies configured.")}</div>
                 ) : (
                   capabilityPolicies.map((capability) => (
                     <section key={capability.capability_id} className="rule-group">
@@ -3230,9 +3696,12 @@ function App() {
                         <div>
                           <div className="rule-title">{capabilityLabel(capability.capability_id)}</div>
                           <div className="rule-desc">
+                            {capabilityDescription(capability.capability_id)}
+                          </div>
+                          <div className="rule-desc">
                             {ui(
-                              `默认态度是“${decisionLabel(capability.default_decision)}”，当前叠加 ${toArray(capability.rules).length} 条上下文护栏。`,
-                              `Default posture is "${decisionLabel(capability.default_decision)}" with ${toArray(capability.rules).length} contextual guardrails layered on top.`
+                              `默认策略是“${decisionLabel(capability.default_decision)}”，当前叠加 ${toArray(capability.rules).length} 条附加限制。`,
+                              `Default posture is "${decisionLabel(capability.default_decision)}" with ${toArray(capability.rules).length} additional restrictions layered on top.`
                             )}
                           </div>
                         </div>
@@ -3261,7 +3730,7 @@ function App() {
                       </div>
 
                       {toArray(capability.rules).length === 0 ? (
-                        <div className="chart-empty">{ui("当前 capability 没有额外上下文护栏。", "No extra contextual guardrails for this capability.")}</div>
+                        <div className="chart-empty">{ui("当前能力下没有额外附加限制。", "No additional restrictions for this capability.")}</div>
                       ) : (
                         <div className="rules">
                           {toArray(capability.rules).map((rule, index) => (
@@ -3295,275 +3764,15 @@ function App() {
                           ))}
                         </div>
                       )}
+
+                      {capability.capability_id === "filesystem" ? renderFilesystemOverridesSection(true) : null}
                     </section>
                   ))
                 )}
               </section>
 
-              <section className="sensitive-path-panel" aria-label={ui("例外", "Exceptions")}>
-                <div className="sensitive-path-head">
-                  <div>
-                    <span className="eyebrow">{ui("Exceptions", "Exceptions")}</span>
-                    <h3>{ui("目录例外和资源分类器", "Directory overrides and resource classifiers")}</h3>
-                    <p className="sensitive-path-intro">
-                      {ui(
-                        "目录例外单独成层，不再与 capability 基线混在一起。敏感路径仍然驱动上下文分类，但这里以分类器形式展示。",
-                        "Directory overrides now live in their own layer instead of mixing with the capability baseline. Sensitive paths still drive contextual classification, but are shown here as classifiers."
-                      )}
-                    </p>
-                  </div>
-                  <div className="rule-meta">
-                    <span className="meta-pill">{ui("目录例外", "Directory Overrides")} {normalizedFileRules.length}</span>
-                    <span className="meta-pill">{ui("自定义敏感路径", "Custom Sensitive Paths")} {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length}</span>
-                    <span className="meta-pill">{ui("禁用内建分类器", "Disabled Built-ins")} {toArray(strategyModel?.classifiers?.disabled_builtin_ids).length}</span>
-                    <span className="meta-pill">{selectedFileDirectory ? ui("已选择目录", "Directory Selected") : ui("未选择目录", "No Directory Selected")}</span>
-                  </div>
-                </div>
-
-                <div className="sensitive-path-toolbar">
-                  <button className="ghost" type="button" onClick={openDirectoryPicker}>
-                    {ui("选择目录", "Choose Directory")}
-                  </button>
-
-                  <div className="sensitive-path-selected" title={selectedFileDirectory || undefined}>
-                    {selectedFileDirectory || ui("尚未选择目录", "No directory selected yet")}
-                  </div>
-
-                  <label className="sensitive-path-field file-rule-action-field">
-                    <span>{ui("处理方式", "Action")}</span>
-                    <select value={newFileRuleDecision} onChange={(event) => setNewFileRuleDecision(event.target.value)}>
-                      {DECISION_OPTIONS.map((decisionOption) => (
-                        <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <button
-                    className="primary"
-                    type="button"
-                    disabled={!selectedFileDirectory || selectedDirectoryRuleExists}
-                    onClick={applySelectedFileRule}
-                  >
-                    {ui("添加", "Add")}
-                  </button>
-                </div>
-
-                {selectedDirectoryRuleExists ? (
-                  <div className="sensitive-path-validation">
-                    {ui(
-                      "当前目录已存在例外。若需调整，请在下方已配置目录例外列表中修改。",
-                      "A directory override already exists. Edit it in the configured list below."
-                    )}
-                  </div>
-                ) : null}
-
-                <div className="sensitive-path-note">
-                  {ui(
-                    "目录例外只覆盖目录层，不会替代 capability 护栏。若目录设为 allow，后续规则不再继续拦截该目录。",
-                    "Directory overrides only cover the directory layer and do not replace capability guardrails. If a directory is set to allow, downstream rules stop blocking that directory."
-                  )}
-                </div>
-
-                {normalizedFileRules.length === 0 ? (
-                  <div className="chart-empty">{ui("当前没有配置目录例外。", "No directory overrides configured yet.")}</div>
-                ) : (
-                  <div className="sensitive-path-list">
-                    {normalizedFileRules.map((rule) => (
-                      <article key={rule.id} className="sensitive-path-item configured">
-                        <div className="sensitive-path-item-main">
-                          <div className="sensitive-path-item-pattern">{rule.directory}</div>
-                          <div className="sensitive-path-item-tags">
-                            <span className={`tag ${rule.decision}`}>{decisionLabel(rule.decision)}</span>
-                          </div>
-                        </div>
-                        <div className="file-rule-item-actions">
-                          <label className="sensitive-path-field file-rule-action-field">
-                            <span>{ui("处理方式", "Action")}</span>
-                            <select
-                              value={rule.decision}
-                              onChange={(event) => setDirectoryFileRuleDecision(rule.directory, event.target.value)}
-                            >
-                              {DECISION_OPTIONS.map((decisionOption) => (
-                                <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <button className="ghost small" type="button" onClick={() => requestRemoveFileRule(rule.directory)}>
-                            {ui("删除", "Remove")}
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-
-                <div className="rule-group">
-                  <h4 className="rule-group-title">{ui("资源分类器", "Resource Classifiers")}</h4>
-                  {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length === 0 &&
-                  toArray(strategyModel?.classifiers?.disabled_builtin_ids).length === 0 ? (
-                    <div className="chart-empty">
-                      {ui("当前没有自定义敏感路径或被禁用的内建分类器。", "No custom sensitive paths or disabled built-in classifiers.")}
-                    </div>
-                  ) : (
-                    <div className="sensitive-path-list">
-                      {toArray(strategyModel?.classifiers?.custom_sensitive_paths).map((rule) => (
-                        <article key={rule.id} className="sensitive-path-item configured">
-                          <div className="sensitive-path-item-main">
-                            <div className="sensitive-path-item-pattern">{rule.pattern}</div>
-                            <div className="sensitive-path-item-tags">
-                              <span className="tag meta-tag">{rule.asset_label}</span>
-                              <span className="tag meta-tag">{rule.match_type}</span>
-                              <span className="tag allow">{ui("自定义", "Custom")}</span>
-                            </div>
-                          </div>
-                        </article>
-                      ))}
-                      {toArray(strategyModel?.classifiers?.disabled_builtin_ids).map((id) => (
-                        <article key={id} className="sensitive-path-item configured">
-                          <div className="sensitive-path-item-main">
-                            <div className="sensitive-path-item-pattern">{id}</div>
-                            <div className="sensitive-path-item-tags">
-                              <span className="tag warn">{ui("已禁用内建规则", "Built-in Disabled")}</span>
-                            </div>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {filePickerOpen ? (
-                  <div className="directory-picker-backdrop" role="dialog" aria-modal="true" aria-label={ui("目录选择器", "Directory picker")} onClick={closeDirectoryPicker}>
-                    <div className="directory-picker-card" onClick={(event) => event.stopPropagation()}>
-                      <div className="directory-picker-head">
-                        <h4>{ui("选择目录", "Choose Directory")}</h4>
-                        <button className="ghost small" type="button" onClick={closeDirectoryPicker}>
-                          {ui("关闭", "Close")}
-                        </button>
-                      </div>
-                      <div className="directory-picker-toolbar">
-                        <button
-                          className="ghost small"
-                          type="button"
-                          disabled={!filePickerParentPath || filePickerLoading}
-                          onClick={() => void loadDirectoryPicker(filePickerParentPath)}
-                        >
-                          {ui("上级目录", "Up")}
-                        </button>
-                        <div className="directory-picker-current">{filePickerCurrentPath || "-"}</div>
-                        <button className="primary small" type="button" disabled={!filePickerCurrentPath} onClick={chooseCurrentDirectory}>
-                          {ui("选择当前目录", "Select Current Directory")}
-                        </button>
-                      </div>
-
-                      {filePickerRoots.length > 0 ? (
-                        <div className="directory-picker-roots">
-                          {filePickerRoots.map((root) => (
-                            <button
-                              key={root}
-                              className="ghost small"
-                              type="button"
-                              onClick={() => void loadDirectoryPicker(root)}
-                              disabled={filePickerLoading}
-                            >
-                              {root}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-
-                      {filePickerError ? <div className="sensitive-path-validation">{filePickerError}</div> : null}
-
-                      <div className="directory-picker-list">
-                        {filePickerLoading ? (
-                          <div className="chart-empty">{ui("目录加载中...", "Loading directories...")}</div>
-                        ) : filePickerDirectories.length === 0 ? (
-                          <div className="chart-empty">{ui("当前目录没有可进入的子目录。", "No child directories in current path.")}</div>
-                        ) : (
-                          filePickerDirectories.map((entry) => (
-                            <button
-                              key={entry.path}
-                              className="directory-picker-item"
-                              type="button"
-                              onClick={() => void loadDirectoryPicker(entry.path)}
-                            >
-                              <span className="directory-picker-item-name">{entry.name}</span>
-                              <span className="directory-picker-item-path">{entry.path}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
-                {fileRuleDeleteTarget ? (
-                  <div
-                    className="confirm-dialog-backdrop"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label={ui("删除确认", "Delete confirmation")}
-                    onClick={cancelRemoveFileRule}
-                  >
-                    <div className="confirm-dialog-card" onClick={(event) => event.stopPropagation()}>
-                      <h4>{ui("确认删除这条目录例外？", "Delete this directory override?")}</h4>
-                      <p className="confirm-dialog-text">
-                        {ui("删除后该目录会回落到 capability 与上下文护栏继续判断。", "After deletion, the directory falls back to capability and contextual guardrails.")}
-                      </p>
-                      <div className="confirm-dialog-path">{fileRuleDeleteTarget}</div>
-                      <div className="confirm-dialog-actions">
-                        <button className="ghost small" type="button" onClick={cancelRemoveFileRule}>
-                          {ui("取消", "Cancel")}
-                        </button>
-                        <button className="primary small" type="button" onClick={confirmRemoveFileRule}>
-                          {ui("确认删除", "Delete")}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-
-              <section className="rule-group" aria-label={ui("审批", "Approvals")}>
-                <div className="card-head">
-                  <div>
-                    <span className="eyebrow">{ui("Approvals", "Approvals")}</span>
-                    <h3>{ui("审批要求和 break-glass 入口", "Approval requirements and break-glass flow")}</h3>
-                    <p className="sensitive-path-intro">
-                      {ui(
-                        "这里只列出 challenge 类护栏，方便快速查看工单要求、审批角色、TTL 和单次放行限制。",
-                        "This section isolates challenge guardrails so you can quickly inspect ticket requirements, approver roles, TTL, and single-use constraints."
-                      )}
-                    </p>
-                  </div>
-                  <div className="rule-meta">
-                    <span className="meta-pill">{ui("审批护栏", "Challenge Guardrails")} {approvalEntries.length}</span>
-                    <span className="meta-pill">{ui("账号例外", "Account Overrides")} {accountPolicies.length}</span>
-                  </div>
-                </div>
-
-                {approvalEntries.length === 0 ? (
-                  <div className="chart-empty">{ui("当前没有需要审批的上下文护栏。", "No approval-requiring guardrails configured.")}</div>
-                ) : (
-                  <div className="rules">
-                    {approvalEntries.map((entry) => (
-                      <article key={entry.key} className="rule">
-                        <div className="rule-head">
-                          <div className="rule-title">{policyTitle({ ...entry.rule, match: entry.rule.context }, entry.index)}</div>
-                          <div className="rule-head-side">
-                            <DecisionTag decision={entry.rule.decision} />
-                            <span className="tag meta-tag">{capabilityLabel(entry.capability?.capability_id)}</span>
-                          </div>
-                        </div>
-                        <div className="rule-desc">{ruleDescription({ ...entry.rule, match: entry.rule.context })}</div>
-                        <div className="rule-desc">
-                          {approvalSummary(entry.rule.approval_requirements) || ui("未额外声明审批元数据。", "No extra approval metadata declared.")}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
+              {!hasFilesystemCapability ? renderFilesystemOverridesSection(false) : null}
+              {renderClassifierSection()}
             </div>
           </section>
         ) : null}

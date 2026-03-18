@@ -1275,6 +1275,11 @@ tbody tr:hover {
   gap: 16px;
 }
 
+.sensitive-path-panel-inline {
+  margin-bottom: 0;
+  background: var(--bg-subtle);
+}
+
 .sensitive-path-head {
   display: flex;
   justify-content: space-between;
@@ -1298,7 +1303,7 @@ tbody tr:hover {
 
 .sensitive-path-toolbar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(220px, 320px) auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(180px, 240px) minmax(240px, 1fr) auto;
   gap: 12px;
   align-items: end;
 }
@@ -1349,6 +1354,35 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.file-rule-operation-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-rule-operation-chip {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.file-rule-operation-chip:hover {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.file-rule-operation-chip.active {
+  color: var(--ink);
+  border-color: var(--brand-soft-strong);
+  background: linear-gradient(135deg, var(--brand-soft-strong) 0%, var(--brand-soft) 100%);
+  box-shadow: var(--shadow-subtle);
 }
 
 .sensitive-path-validation {
@@ -1403,7 +1437,7 @@ tbody tr:hover {
   background: var(--bg-subtle);
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
 }
 
@@ -1439,7 +1473,7 @@ tbody tr:hover {
 
 .file-rule-item-actions {
   display: grid;
-  grid-template-columns: minmax(160px, 260px) auto;
+  grid-template-columns: minmax(160px, 220px) minmax(220px, 1fr) auto;
   align-items: end;
   gap: 10px;
   min-width: 0;
@@ -1860,6 +1894,16 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.rule-helper {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .pagination {
