@@ -166,7 +166,7 @@ type SkillInterceptAggregateRow = {
   last_intercept_at: string | null;
 };
 
-type SkillListFilters = {
+export type SkillListFilters = {
   risk?: string | null;
   state?: string | null;
   source?: string | null;
@@ -180,7 +180,7 @@ type SkillSnapshot = {
   roots: SkillRootDescriptor[];
 };
 
-type SkillStatusPayload = {
+export type SkillStatusPayload = {
   stats: {
     total: number;
     high_critical: number;
@@ -195,7 +195,7 @@ type SkillStatusPayload = {
   generated_at: string;
 };
 
-type SkillListPayload = {
+export type SkillListPayload = {
   items: SkillSummary[];
   total: number;
   counts: {
@@ -217,7 +217,7 @@ type SkillListPayload = {
   policy: SkillPolicyConfig;
 };
 
-type SkillDetailPayload = {
+export type SkillDetailPayload = {
   skill: SkillSummary;
   findings: SkillFinding[];
   activity: SkillActivity[];

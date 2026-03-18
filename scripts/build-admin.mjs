@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 
 await build({
-  entryPoints: ["admin/src/app.jsx"],
+  entryPoints: ["admin/src/app.tsx"],
   outfile: "admin/public/app.js",
   bundle: true,
   format: "esm",

@@ -34,7 +34,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 function resolvePaths(overrides: Partial<AdminBuildPaths> = {}): AdminBuildPaths {
   return {
     sourceDir: overrides.sourceDir ?? path.resolve(ROOT, "admin/src"),
-    entryPoint: overrides.entryPoint ?? path.resolve(ROOT, "admin/src/app.jsx"),
+    entryPoint: overrides.entryPoint ?? path.resolve(ROOT, "admin/src/app.tsx"),
     outfile: overrides.outfile ?? path.resolve(ROOT, "admin/public/app.js")
   };
 }

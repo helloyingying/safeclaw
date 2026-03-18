@@ -13,7 +13,8 @@
   },
   "include": [
     "index.ts",
-    "admin/src/**/*.jsx",
+    "admin/src/**/*.ts",
+    "admin/src/**/*.tsx",
     "src/**/*.ts",
     "tests/**/*.ts"
   ]

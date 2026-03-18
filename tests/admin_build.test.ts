@@ -10,7 +10,7 @@ test("admin build helper rebuilds stale bundle and skips fresh output", async ()
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-admin-build-"));
   const sourceDir = path.join(tempDir, "admin/src");
   const publicDir = path.join(tempDir, "admin/public");
-  const entryPoint = path.join(sourceDir, "app.jsx");
+  const entryPoint = path.join(sourceDir, "app.tsx");
   const outfile = path.join(publicDir, "app.js");
 
   try {
@@ -50,7 +50,7 @@ test("admin build helper skips rebuild when packaged bundle exists without sourc
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-admin-build-packaged-"));
   const sourceDir = path.join(tempDir, "admin/src");
   const publicDir = path.join(tempDir, "admin/public");
-  const entryPoint = path.join(sourceDir, "app.jsx");
+  const entryPoint = path.join(sourceDir, "app.tsx");
   const outfile = path.join(publicDir, "app.js");
 
   try {
