@@ -6,10 +6,12 @@ import { createRequire } from "node:module";
 import type { AdminRuntime } from "./server_types.ts";
 import type { ClawGuardConfigSnapshot } from "./claw_guard_types.ts";
 import type { RunProcessSyncResult } from "../runtime/process_runner.ts";
+import { HardeningCache } from "./hardening_cache.ts";
 
 type OpenClawConfigClientDeps = {
   runCli?: (args: string[], timeoutMs?: number) => RunProcessSyncResult | Promise<RunProcessSyncResult>;
   loadLocalConfig?: () => Promise<unknown>;
+  hardeningCache?: HardeningCache;
 };
 
 type ReadConfigSnapshotOptions = {
@@ -22,6 +24,7 @@ const OPENCLAW_ENTRY = requireFromHere.resolve("openclaw");
 const OPENCLAW_CLI_ENTRY = path.resolve(path.dirname(OPENCLAW_ENTRY), "../openclaw.mjs");
 const DEFAULT_RPC_TIMEOUT_MS = 15000;
 const FAST_RPC_TIMEOUT_MS = 8000;
+const FAST_RPC_GRACE_MS = 1200;
 const OPENCLAW_CLI_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   OPENCLAW_HIDE_BANNER: "1",
@@ -88,6 +91,12 @@ function summarizeCliFailure(raw: string): string {
 
 function formatReadOnlyFallbackReason(error: unknown): string {
   return `Gateway RPC is unavailable. Read-only fallback is active. ${String(error)}`;
+}
+
+function waitFor(ms: number): Promise<"timeout"> {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve("timeout"), ms);
+  });
 }
 
 function extractCliJson(result: RunProcessSyncResult): unknown {
@@ -198,7 +207,7 @@ export class OpenClawConfigClient {
   private async readRpcSnapshot(timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<ClawGuardConfigSnapshot> {
     const payload = asRecord(await this.parseCliJson(["gateway", "call", "config.get", "--params", "{}", "--json"], timeoutMs));
     const config = asRecord(payload.config || payload.resolved || payload.parsed);
-    return {
+    const snapshot: ClawGuardConfigSnapshot = {
       config,
       ...(typeof payload.path === "string" ? { configPath: payload.path } : {}),
       source: "gateway-rpc",
@@ -209,11 +218,13 @@ export class OpenClawConfigClient {
         ? {}
         : { writeReason: "Gateway config hash is unavailable, so patch writes are disabled." }),
     };
+    this.deps.hardeningCache?.rememberSnapshot(snapshot);
+    return snapshot;
   }
 
   private async readLocalSnapshot(writeReason?: string): Promise<ClawGuardConfigSnapshot> {
     const config = asRecord(await this.loadLocalConfig());
-    return {
+    const snapshot: ClawGuardConfigSnapshot = {
       config,
       configPath: path.join(this.runtime.openClawHome, "openclaw.json"),
       source: "local-file",
@@ -221,22 +232,36 @@ export class OpenClawConfigClient {
       writeSupported: false,
       ...(writeReason ? { writeReason } : {}),
     };
+    this.deps.hardeningCache?.rememberSnapshot(snapshot);
+    return snapshot;
   }
 
   async readConfigSnapshot(options: ReadConfigSnapshotOptions = {}): Promise<ClawGuardConfigSnapshot> {
     const { fast = false, requireWritable = false } = options;
 
     if (fast && !requireWritable) {
+      const cachedSnapshot = this.deps.hardeningCache?.getFastSnapshot();
+      if (cachedSnapshot) {
+        return cachedSnapshot;
+      }
+
       try {
         const localSnapshot = await this.readLocalSnapshot();
-        try {
-          return await this.readRpcSnapshot(FAST_RPC_TIMEOUT_MS);
-        } catch (error) {
+        const rpcAttempt = this.readRpcSnapshot(FAST_RPC_TIMEOUT_MS)
+          .then((snapshot) => ({ kind: "rpc" as const, snapshot }))
+          .catch((error) => ({ kind: "rpc-error" as const, error }));
+        const raced = await Promise.race([rpcAttempt, waitFor(FAST_RPC_GRACE_MS)]);
+        if (raced !== "timeout") {
+          if (raced.kind === "rpc") {
+            return raced.snapshot;
+          }
           return {
             ...localSnapshot,
-            writeReason: formatReadOnlyFallbackReason(error),
+            writeReason: formatReadOnlyFallbackReason(raced.error),
           };
         }
+        this.deps.hardeningCache?.scheduleRpcRefresh(() => this.readRpcSnapshot(FAST_RPC_TIMEOUT_MS));
+        return localSnapshot;
       } catch {
         return this.readRpcSnapshot(FAST_RPC_TIMEOUT_MS);
       }

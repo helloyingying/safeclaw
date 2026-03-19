@@ -128,3 +128,59 @@ test("claw guard detector only reports browser sandbox when browser config exist
   );
   assert.equal(withBrowser.findings.some((item) => item.id === "browser_sandbox_missing"), true);
 });
+
+test("claw guard detector moves exempted findings into the exempted section and keeps related groups", () => {
+  const result = buildClawGuardFindings(
+    createSnapshot({
+      gateway: {
+        bind: "loopback",
+        auth: {
+          mode: "token",
+          token: "__OPENCLAW_REDACTED__",
+        },
+      },
+      channels: {
+        telegram: {
+          enabled: true,
+          dmPolicy: "pairing",
+          groupPolicy: "open",
+          groups: {
+            "*": {
+              requireMention: false,
+            },
+          },
+        },
+      },
+      plugins: {
+        entries: {
+          securityclaw: {
+            config: {
+              hardeningExemptions: [
+                {
+                  findingId: "group_policy_too_open::telegram",
+                  createdAt: "2026-03-19T08:00:00.000Z",
+                  updatedAt: "2026-03-19T08:00:00.000Z",
+                  reason: "accepted risk",
+                },
+              ],
+            },
+          },
+        },
+      },
+    }),
+    "en",
+  );
+
+  assert.equal(result.findings.some((item) => item.id === "group_policy_too_open::telegram"), false);
+  assert.equal(result.exempted.length, 1);
+  assert.equal(result.exempted[0]?.id, "group_policy_too_open::telegram");
+  assert.equal(result.exempted[0]?.exemption.findingId, "group_policy_too_open::telegram");
+  assert.equal(result.exempted[0]?.exemption.reason, "accepted risk");
+
+  const telegramGroup = result.groups.find((group) => group.id === "channel::telegram");
+  assert.ok(telegramGroup);
+  assert.deepEqual(telegramGroup?.childFindingIds.sort(), [
+    "group_missing_allowlist::telegram",
+    "group_missing_require_mention::telegram",
+  ]);
+});

@@ -1,10 +1,15 @@
 export type ClawGuardSeverity = "critical" | "high" | "medium" | "low";
 export type ClawGuardRepairKind = "direct" | "guided" | "read_only";
 export type ClawGuardConfigSource = "gateway-rpc" | "local-file";
+export type ClawGuardFindingRelationType = "related" | "choice_resolves";
+export type ClawGuardFindingGroupKind = "gateway" | "channel" | "sandbox";
+export type ClawGuardFindingScopeType = "global" | "channel";
 
 export type ClawGuardFinding = {
   id: string;
   ruleId: string;
+  scopeType: ClawGuardFindingScopeType;
+  scopeId?: string;
   severity: ClawGuardSeverity;
   title: string;
   summary: string;
@@ -15,6 +20,38 @@ export type ClawGuardFinding = {
   repairChoices: ClawGuardRepairChoice[];
   defaultOptions?: Record<string, unknown>;
   restartRequired: boolean;
+  groupId: string;
+  relations: ClawGuardFindingRelation[];
+};
+
+export type ClawGuardFindingRelation = {
+  type: ClawGuardFindingRelationType;
+  targetFindingId: string;
+  choiceId?: string;
+};
+
+export type ClawGuardFindingGroup = {
+  id: string;
+  kind: ClawGuardFindingGroupKind;
+  scopeType: ClawGuardFindingScopeType;
+  scopeId?: string;
+  title: string;
+  summary: string;
+  severity: ClawGuardSeverity;
+  configPaths: string[];
+  childFindingIds: string[];
+  recommendedFindingId?: string;
+};
+
+export type ClawGuardExemptionRecord = {
+  findingId: string;
+  reason?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ClawGuardExemptedFinding = ClawGuardFinding & {
+  exemption: ClawGuardExemptionRecord;
 };
 
 export type ClawGuardRepairChoice = {
@@ -38,6 +75,7 @@ export type ClawGuardSummary = {
   direct_fix_count: number;
   restart_required_count: number;
   passed_count: number;
+  exempted_count: number;
 };
 
 export type ClawGuardStatusPayload = {
@@ -49,7 +87,9 @@ export type ClawGuardStatusPayload = {
   write_reason?: string;
   error?: string;
   summary: ClawGuardSummary;
+  groups: ClawGuardFindingGroup[];
   findings: ClawGuardFinding[];
+  exempted: ClawGuardExemptedFinding[];
   passed: ClawGuardPassedItem[];
 };
 
@@ -74,6 +114,13 @@ export type ClawGuardApplyPayload = {
   message: string;
   restart_required: boolean;
   finding_id: string;
+};
+
+export type ClawGuardExemptionPayload = {
+  ok: boolean;
+  message: string;
+  finding_id: string;
+  exempted: boolean;
 };
 
 export type ClawGuardConfigSnapshot = {
@@ -102,4 +149,3 @@ export type ClawGuardFixPlan = {
   canApply: boolean;
   applyDisabledReason?: string;
 };
-

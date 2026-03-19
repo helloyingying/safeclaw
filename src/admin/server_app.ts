@@ -2,6 +2,8 @@ import http from "node:http";
 
 import { StrategyStore } from "../config/strategy_store.ts";
 import { SkillInterceptionStore } from "./skill_interception_store.ts";
+import { HardeningCache } from "./hardening_cache.ts";
+import { PluginSecurityStore } from "./plugin_security_store.ts";
 import { handleApi, serveStatic } from "./server_router.ts";
 import { reclaimAdminPort, resolveRuntime } from "./server_runtime.ts";
 import type {
@@ -32,6 +34,8 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
   const skillStore = new SkillInterceptionStore(runtime.dbPath, {
     openClawHome: runtime.openClawHome,
   });
+  const pluginStore = new PluginSecurityStore(runtime);
+  const hardeningCache = new HardeningCache();
   let strategyStoreClosed = false;
   let skillStoreClosed = false;
 
@@ -69,7 +73,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     const server = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       if (url.pathname.startsWith("/api/")) {
-        handleApi(req, res, url, { runtime, strategyStore, skillStore });
+        handleApi(req, res, url, { runtime, strategyStore, skillStore, pluginStore, hardeningCache });
         return;
       }
       serveStatic(req, res, url);

@@ -15,7 +15,14 @@ import { SkillInterceptionStore } from "./skill_interception_store.ts";
 import { readUtf8File } from "./file_reader.ts";
 import { readDecisionsPage } from "./decision_history.ts";
 import { buildClawGuardFindings } from "./claw_guard_detector.ts";
+import {
+  buildClawGuardExemptionsPatch,
+  readClawGuardExemptions,
+  removeClawGuardExemption,
+  upsertClawGuardExemption,
+} from "./claw_guard_exemptions.ts";
 import { buildClawGuardFixPlan, toClawGuardPreviewPayload } from "./claw_guard_fix_planner.ts";
+import { HardeningCache } from "./hardening_cache.ts";
 import {
   listDirectoryBrowseRoots,
   listDirectoryChildren,
@@ -23,6 +30,7 @@ import {
   normalizeBrowsePath,
 } from "./file_rule_directory_browser.ts";
 import { OpenClawConfigClient } from "./openclaw_config_client.ts";
+import { PluginSecurityStore } from "./plugin_security_store.ts";
 import {
   localize,
   readBody,
@@ -45,6 +53,8 @@ type AdminRouteDependencies = {
   runtime: AdminRuntime;
   strategyStore: StrategyStore;
   skillStore: SkillInterceptionStore;
+  pluginStore: PluginSecurityStore;
+  hardeningCache: HardeningCache;
 };
 
 function sendServerError(res: http.ServerResponse, error: unknown): void {
@@ -61,7 +71,7 @@ export function handleApi(
   url: URL,
   dependencies: AdminRouteDependencies,
 ): void {
-  const { runtime, strategyStore, skillStore } = dependencies;
+  const { runtime, strategyStore, skillStore, pluginStore, hardeningCache } = dependencies;
   const locale = resolveRequestLocale(req, url);
 
   if (req.method === "GET" && url.pathname === "/api/status") {
@@ -94,9 +104,11 @@ export function handleApi(
 
   if (req.method === "GET" && url.pathname === "/api/hardening/status") {
     void (async () => {
-      const client = new OpenClawConfigClient(runtime);
+      const client = new OpenClawConfigClient(runtime, { hardeningCache });
       try {
-        const snapshot = await client.readConfigSnapshot({ fast: true });
+        const snapshot = await client.readConfigSnapshot({
+          fast: url.searchParams.get("mode") !== "full",
+        });
         const result = buildClawGuardFindings(snapshot, locale);
         sendJson(res, 200, {
           scanned_at: new Date().toISOString(),
@@ -109,9 +121,12 @@ export function handleApi(
             risk_count: result.findings.length,
             direct_fix_count: result.findings.filter((item) => item.repairKind === "direct").length,
             restart_required_count: result.findings.filter((item) => item.restartRequired).length,
+            exempted_count: result.exempted.length,
             passed_count: result.passed.length,
           },
+          groups: result.groups,
           findings: result.findings,
+          exempted: result.exempted,
           passed: result.passed,
         });
       } catch (error) {
@@ -128,11 +143,65 @@ export function handleApi(
             risk_count: 0,
             direct_fix_count: 0,
             restart_required_count: 0,
+            exempted_count: 0,
             passed_count: 0,
           },
+          groups: [],
           findings: [],
+          exempted: [],
           passed: [],
         });
+      }
+    })();
+    return;
+  }
+
+  const hardeningExemptionRouteMatch = url.pathname.match(/^\/api\/hardening\/findings\/([^/]+?)\/(exempt|unexempt)$/);
+  if (req.method === "POST" && hardeningExemptionRouteMatch) {
+    void (async () => {
+      try {
+        const findingId = decodeURIComponent(hardeningExemptionRouteMatch[1]);
+        const action = hardeningExemptionRouteMatch[2];
+        const body = await readBody(req);
+        const note = typeof body.note === "string" ? body.note.trim() : undefined;
+        const client = new OpenClawConfigClient(runtime, { hardeningCache });
+        const snapshot = await client.readConfigSnapshot({ requireWritable: true });
+        const result = buildClawGuardFindings(snapshot, locale);
+        const finding = result.findings.find((item) => item.id === findingId)
+          || result.exempted.find((item) => item.id === findingId);
+
+        if (action === "exempt" && !finding) {
+          sendJson(res, 404, {
+            ok: false,
+            error: localize(locale, "当前没有找到可豁免的风险项。", "No finding is available to exempt right now."),
+          });
+          return;
+        }
+
+        const currentExemptions = readClawGuardExemptions(snapshot.config);
+        const nextExemptions = action === "exempt"
+          ? upsertClawGuardExemption(currentExemptions, {
+              findingId,
+              ...(note ? { reason: note } : {}),
+            })
+          : removeClawGuardExemption(currentExemptions, findingId);
+
+        await client.applyPatch({
+          patch: buildClawGuardExemptionsPatch(nextExemptions),
+          baseHash: snapshot.baseHash!,
+          note: `securityclaw-hardening:${findingId}:${action}`,
+        });
+        hardeningCache.clearAll();
+        sendJson(res, 200, {
+          ok: true,
+          message: action === "exempt"
+            ? localize(locale, "该风险点已移入豁免分类。", "This finding has been moved into the exempted section.")
+            : localize(locale, "该风险点已从豁免分类恢复。", "This finding has been restored from the exempted section."),
+          finding_id: findingId,
+          exempted: action === "exempt",
+        });
+      } catch (error) {
+        sendClientError(res, error);
       }
     })();
     return;
@@ -145,16 +214,22 @@ export function handleApi(
 
     void (async () => {
       try {
-        const client = new OpenClawConfigClient(runtime);
-        const snapshot = await client.readConfigSnapshot({
-          fast: action === "preview",
-          requireWritable: action === "apply",
-        });
+        const client = new OpenClawConfigClient(runtime, { hardeningCache });
         const body = await readBody(req);
         const options =
           body.options && typeof body.options === "object" && !Array.isArray(body.options)
             ? (body.options as Record<string, unknown>)
             : undefined;
+        const snapshot = action === "preview"
+          ? (hardeningCache.getFastSnapshot() || await client.readConfigSnapshot({ fast: true }))
+          : await client.readConfigSnapshot({ requireWritable: true });
+        if (action === "preview") {
+          const cachedPreview = hardeningCache.getPreview(snapshot, findingId, options);
+          if (cachedPreview) {
+            sendJson(res, 200, cachedPreview);
+            return;
+          }
+        }
         const plan = buildClawGuardFixPlan({
           snapshot,
           findingId,
@@ -163,7 +238,9 @@ export function handleApi(
         });
 
         if (action === "preview") {
-          sendJson(res, 200, toClawGuardPreviewPayload(plan));
+          const payload = toClawGuardPreviewPayload(plan);
+          hardeningCache.rememberPreview(snapshot, findingId, options, payload);
+          sendJson(res, 200, payload);
           return;
         }
 
@@ -185,6 +262,7 @@ export function handleApi(
           baseHash: snapshot.baseHash,
           note: `securityclaw-hardening:${findingId}`,
         });
+        hardeningCache.clearAll();
 
         sendJson(res, 200, {
           ok: true,
@@ -224,6 +302,54 @@ export function handleApi(
     } catch (error) {
       sendServerError(res, error);
     }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/plugins/status") {
+    void (async () => {
+      try {
+        sendJson(res, 200, await pluginStore.getStatus());
+      } catch (error) {
+        sendServerError(res, error);
+      }
+    })();
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/plugins") {
+    void (async () => {
+      try {
+        sendJson(
+          res,
+          200,
+          await pluginStore.listPlugins({
+            risk: url.searchParams.get("risk"),
+            state: url.searchParams.get("state"),
+            source: url.searchParams.get("source"),
+          }),
+        );
+      } catch (error) {
+        sendServerError(res, error);
+      }
+    })();
+    return;
+  }
+
+  const pluginRouteMatch = url.pathname.match(/^\/api\/plugins\/([^/]+?)$/);
+  if (req.method === "GET" && pluginRouteMatch) {
+    void (async () => {
+      try {
+        const pluginId = decodeURIComponent(pluginRouteMatch[1]);
+        const detail = await pluginStore.getPlugin(pluginId);
+        if (!detail) {
+          sendJson(res, 404, { error: "plugin not found" });
+          return;
+        }
+        sendJson(res, 200, detail);
+      } catch (error) {
+        sendServerError(res, error);
+      }
+    })();
     return;
   }
 

@@ -8,11 +8,21 @@ import type {
 } from "../../src/admin/dashboard_url_state.ts";
 import type {
   ClawGuardApplyPayload,
+  ClawGuardExemptionPayload,
   ClawGuardFinding,
   ClawGuardPreviewPayload,
   ClawGuardStatusPayload,
 } from "../../src/admin/claw_guard_types.ts";
 import type { OpenClawChatSession } from "../../src/admin/openclaw_session_catalog.ts";
+import type {
+  PluginDetailPayload,
+  PluginInstallSource,
+  PluginListPayload,
+  PluginRiskTier,
+  PluginState,
+  PluginStatusPayload,
+  PluginSummary,
+} from "../../src/admin/plugin_security_store.ts";
 import type {
   SkillDetailPayload,
   SkillLifecycleState,
@@ -79,6 +89,13 @@ import {
   SKILL_SEVERITY_TEXT,
   SKILL_SOURCE_TEXT,
   SKILL_STATE_TEXT,
+  PLUGIN_REASON_TEXT,
+  PLUGIN_RISK_FILTER_OPTIONS,
+  PLUGIN_RISK_TIER_TEXT,
+  PLUGIN_SCOPE_TEXT,
+  PLUGIN_SOURCE_TEXT,
+  PLUGIN_STATE_FILTER_OPTIONS,
+  PLUGIN_STATE_TEXT,
   TAB_ITEMS,
   CAPABILITY_DESCRIPTION_TEXT,
   CAPABILITY_TEXT,
@@ -111,6 +128,7 @@ import {
   OverviewPanel,
 } from "./dashboard_panels.tsx";
 import { HardeningPanel } from "./dashboard_hardening_panel.tsx";
+import { PluginsPanel } from "./dashboard_plugins_panel.tsx";
 import { RulesPanel } from "./dashboard_rules_panel.tsx";
 import { SkillsPanel } from "./dashboard_skills_panel.tsx";
 import type { FilesystemOverridesSectionProps } from "./filesystem_overrides_section.tsx";
@@ -179,9 +197,14 @@ type LoadSkillDataOptions = {
   syncPolicy?: boolean;
 };
 
+type LoadPluginDataOptions = {
+  silent?: boolean;
+};
+
 type LoadHardeningOptions = {
   silent?: boolean;
   keepLoading?: boolean;
+  mode?: "fast" | "full";
 };
 
 type NavigateDashboardInput = Partial<AdminDashboardUrlState>;
@@ -191,6 +214,9 @@ type SkillStateFilterValue = "all" | SkillLifecycleState;
 type SkillSourceFilterValue = "all" | SkillSource;
 type SkillDriftFilterValue = "all" | "drifted" | "steady";
 type SkillInterceptFilterValue = "all" | "recent";
+type PluginRiskFilterValue = "all" | PluginRiskTier;
+type PluginStateFilterValue = "all" | PluginState;
+type PluginSourceFilterValue = "all" | PluginInstallSource;
 
 type SkillConfirmAction = {
   kind: "quarantine" | "trust";
@@ -237,6 +263,14 @@ type LocaleControl = {
   icon: React.ReactNode;
 };
 
+type StoredStatusCache<T> = {
+  savedAt: number;
+  payload: T;
+};
+
+const HARDENING_STATUS_CACHE_KEY = "securityclaw.admin.hardening.status-cache";
+const HARDENING_STATUS_CACHE_TTL_MS = 10 * 60 * 1000;
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
@@ -247,11 +281,63 @@ function toArray<T>(value: readonly T[] | T[] | unknown): T[] {
   return Array.isArray(value) ? Array.from(value) : [];
 }
 
+function safeParseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function readBrowserStorageJson<T>(storage: "localStorage" | "sessionStorage", key: string, fallback: T): T {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  try {
+    return safeParseJson(window[storage].getItem(key), fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+function writeBrowserStorageJson<T>(storage: "localStorage" | "sessionStorage", key: string, value: T): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window[storage].setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage write failures.
+  }
+}
+
+function serializePreviewOptions(options?: Record<string, unknown>): string {
+  if (!options) {
+    return "";
+  }
+  return JSON.stringify(
+    Object.keys(options)
+      .sort()
+      .map((key) => [key, options[key]]),
+  );
+}
+
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return "-";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return String(iso);
   return date.toLocaleString(getActiveAdminLocale() === "zh-CN" ? "zh-CN" : "en-US", { hour12: false });
+}
+
+function hardeningStatusHasActiveFinding(status: ClawGuardStatusPayload | null, findingId: string): boolean {
+  return toArray<ClawGuardFinding>(status?.findings).some((item) => item.id === findingId);
+}
+
+function hardeningStatusHasExemptedFinding(status: ClawGuardStatusPayload | null, findingId: string): boolean {
+  return toArray<ClawGuardFinding>(status?.exempted).some((item) => item.id === findingId);
 }
 
 function decisionLabel(decision: string | null | undefined): string {
@@ -952,6 +1038,36 @@ function skillInterceptFilterLabel(value: SkillInterceptFilterValue): string {
   return ui("24 小时内有需确认 / 拦截", "Challenge / Block in Last 24h");
 }
 
+function pluginRiskLabel(value: string | null | undefined): string {
+  return readLocalized(PLUGIN_RISK_TIER_TEXT, value, value || "-");
+}
+
+function pluginStateLabel(value: string | null | undefined): string {
+  return readLocalized(PLUGIN_STATE_TEXT, value, value || "-");
+}
+
+function pluginSourceLabel(value: string | null | undefined): string {
+  return readLocalized(PLUGIN_SOURCE_TEXT, value, value || ui("未知来源", "Unknown Source"));
+}
+
+function pluginReasonLabel(value: string | null | undefined): string {
+  return readLocalized(PLUGIN_REASON_TEXT, value, value || "-");
+}
+
+function pluginScopeLabel(value: string | null | undefined): string {
+  return readLocalized(PLUGIN_SCOPE_TEXT, value, value || ui("未知位置", "Unknown Location"));
+}
+
+function pluginRiskFilterLabel(value: PluginRiskFilterValue): string {
+  if (value === "all") return ui("全部风险", "All Risk Tiers");
+  return pluginRiskLabel(value);
+}
+
+function pluginStateFilterLabel(value: PluginStateFilterValue): string {
+  if (value === "all") return ui("全部状态", "All States");
+  return pluginStateLabel(value);
+}
+
 function normalizeSkillPolicyDraft(policy: unknown): SkillPolicyConfig | null {
   if (!policy || typeof policy !== "object") {
     return null;
@@ -980,6 +1096,25 @@ function buildSkillListApiPath(filters: SkillListFilters): string {
   return query ? `/api/skills?${query}` : "/api/skills";
 }
 
+function buildPluginListApiPath(filters: {
+  risk?: PluginRiskFilterValue;
+  state?: PluginStateFilterValue;
+  source?: PluginSourceFilterValue;
+}): string {
+  const searchParams = new URLSearchParams();
+  if (filters?.risk && filters.risk !== "all") {
+    searchParams.set("risk", filters.risk);
+  }
+  if (filters?.state && filters.state !== "all") {
+    searchParams.set("state", filters.state);
+  }
+  if (filters?.source && filters.source !== "all") {
+    searchParams.set("source", filters.source);
+  }
+  const query = searchParams.toString();
+  return query ? `/api/plugins?${query}` : "/api/plugins";
+}
+
 function formatHash(value: string | null | undefined, length = 10): string {
   if (typeof value !== "string" || !value.trim()) {
     return "-";
@@ -993,6 +1128,16 @@ function formatConfidence(value: unknown): string {
     return "0%";
   }
   return `${Math.round(numeric * 100)}%`;
+}
+
+function clampSecurityScore(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function securityScoreTone(score: number): "good" | "warn" | "bad" {
+  if (score >= 80) return "good";
+  if (score >= 60) return "warn";
+  return "bad";
 }
 
 function readInitialAdminLocale(): SecurityClawLocale {
@@ -1066,18 +1211,40 @@ function App() {
   const [skillPolicySaving, setSkillPolicySaving] = useState(false);
   const [skillActionLoading, setSkillActionLoading] = useState("");
   const [skillConfirmAction, setSkillConfirmAction] = useState<SkillConfirmAction | null>(null);
-  const [hardeningStatus, setHardeningStatus] = useState<ClawGuardStatusPayload | null>(null);
+  const [pluginStatusPayload, setPluginStatusPayload] = useState<PluginStatusPayload | null>(null);
+  const [pluginListPayload, setPluginListPayload] = useState<PluginListPayload | null>(null);
+  const [pluginDetailPayload, setPluginDetailPayload] = useState<PluginDetailPayload | null>(null);
+  const [pluginRiskFilter, setPluginRiskFilter] = useState<PluginRiskFilterValue>("all");
+  const [pluginStateFilter, setPluginStateFilter] = useState<PluginStateFilterValue>("all");
+  const [pluginSourceFilter, setPluginSourceFilter] = useState<PluginSourceFilterValue>("all");
+  const [selectedPluginId, setSelectedPluginId] = useState("");
+  const [pluginListLoading, setPluginListLoading] = useState(true);
+  const [pluginDetailLoading, setPluginDetailLoading] = useState(false);
+  const [hardeningStatus, setHardeningStatus] = useState<ClawGuardStatusPayload | null>(() => {
+    const cached = readBrowserStorageJson<StoredStatusCache<ClawGuardStatusPayload> | null>(
+      "sessionStorage",
+      HARDENING_STATUS_CACHE_KEY,
+      null,
+    );
+    if (!cached || typeof cached.savedAt !== "number" || Date.now() - cached.savedAt > HARDENING_STATUS_CACHE_TTL_MS) {
+      return null;
+    }
+    return cached.payload || null;
+  });
   const [hardeningLoading, setHardeningLoading] = useState(false);
   const [selectedHardeningFindingId, setSelectedHardeningFindingId] = useState("");
   const [hardeningPreview, setHardeningPreview] = useState<ClawGuardPreviewPayload | null>(null);
   const [hardeningPreviewLoading, setHardeningPreviewLoading] = useState(false);
   const [hardeningApplyLoading, setHardeningApplyLoading] = useState(false);
+  const [hardeningExemptionLoading, setHardeningExemptionLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [decisionLoading, setDecisionLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const hardeningPreviewRequestIdRef = useRef(0);
+  const hardeningPreviewCacheRef = useRef(new Map<string, ClawGuardPreviewPayload>());
+  const hardeningAutoRefreshMarkerRef = useRef("");
   const [activeTab, setActiveTab] = useState<AdminTabId>(() => readInitialAdminDashboardViewState().tab);
   const [decisionFilter, setDecisionFilter] = useState<AdminDecisionFilterId>(() => readInitialAdminDashboardViewState().decisionFilter);
   const [decisionPage, setDecisionPage] = useState(() => readInitialAdminDashboardViewState().decisionPage);
@@ -1173,11 +1340,53 @@ function App() {
     quarantined: 0,
     trusted_overrides: 0
   };
-  const hardeningFindings = useMemo(() => toArray<ClawGuardFinding>(hardeningStatus?.findings), [hardeningStatus]);
-  const selectedHardeningFinding = useMemo(
-    () => hardeningFindings.find((item) => item.id === selectedHardeningFindingId) || null,
-    [hardeningFindings, selectedHardeningFindingId]
+  const pluginItems = useMemo(() => toArray<PluginSummary>(pluginListPayload?.items), [pluginListPayload]);
+  const pluginSourceOptions = useMemo(() => toArray<string>(pluginListPayload?.source_options), [pluginListPayload]);
+  const pluginOverviewHighlights = useMemo(() => toArray<PluginSummary>(pluginStatusPayload?.highlights), [pluginStatusPayload]);
+  const pluginSummaryCounts = pluginListPayload?.counts || {
+    total: 0,
+    enabled: 0,
+    high_critical: 0,
+    path_sources: 0,
+    exec_capable: 0,
+    network_capable: 0
+  };
+  const pluginOverviewStats = pluginStatusPayload?.stats || {
+    total: 0,
+    enabled: 0,
+    high_critical: 0,
+    path_sources: 0,
+    exec_capable: 0,
+    network_capable: 0
+  };
+  const hardeningRawFindings = useMemo(() => toArray<ClawGuardFinding>(hardeningStatus?.findings), [hardeningStatus]);
+  const hardeningExemptedFindings = useMemo(
+    () => toArray<ClawGuardFinding>(hardeningStatus?.exempted),
+    [hardeningStatus],
   );
+  const selectedHardeningFinding = useMemo(
+    () =>
+      hardeningRawFindings.find((item) => item.id === selectedHardeningFindingId)
+      || hardeningExemptedFindings.find((item) => item.id === selectedHardeningFindingId)
+      || null,
+    [hardeningExemptedFindings, hardeningRawFindings, selectedHardeningFindingId]
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!hardeningStatus) {
+      return;
+    }
+    writeBrowserStorageJson("sessionStorage", HARDENING_STATUS_CACHE_KEY, {
+      savedAt: Date.now(),
+      payload: hardeningStatus,
+    });
+  }, [hardeningStatus]);
+
+  useEffect(() => {
+    hardeningPreviewCacheRef.current.clear();
+  }, [hardeningStatus?.scanned_at]);
   useEffect(() => {
     setActiveAdminLocale(locale);
     if (typeof document !== "undefined") {
@@ -1399,8 +1608,52 @@ function App() {
     }
   }, []);
 
+  const loadPluginData = useCallback(async (options: LoadPluginDataOptions = {}) => {
+    const { silent = false } = options;
+    if (!silent) {
+      setPluginListLoading(true);
+    }
+    try {
+      const [status, list] = await Promise.all([
+        getJson<PluginStatusPayload>("/api/plugins/status"),
+        getJson<PluginListPayload>(
+          buildPluginListApiPath({
+            risk: pluginRiskFilter,
+            state: pluginStateFilter,
+            source: pluginSourceFilter,
+          }),
+        ),
+      ]);
+      setPluginStatusPayload(status);
+      setPluginListPayload(list);
+    } catch (loadError) {
+      setError(String(loadError));
+    } finally {
+      setPluginListLoading(false);
+    }
+  }, [pluginRiskFilter, pluginSourceFilter, pluginStateFilter]);
+
+  const loadPluginDetail = useCallback(async (pluginId: string, options: LoadDecisionOptions = {}) => {
+    const { silent = false } = options;
+    if (!pluginId) {
+      setPluginDetailPayload(null);
+      return;
+    }
+    if (!silent) {
+      setPluginDetailLoading(true);
+    }
+    try {
+      const payload = await getJson<PluginDetailPayload>(`/api/plugins/${encodeURIComponent(pluginId)}`);
+      setPluginDetailPayload(payload);
+    } catch (loadError) {
+      setError(String(loadError));
+    } finally {
+      setPluginDetailLoading(false);
+    }
+  }, []);
+
   const loadHardeningStatus = useCallback(async (options: LoadHardeningOptions = {}): Promise<ClawGuardStatusPayload | null> => {
-    const { silent = false, keepLoading = false } = options;
+    const { silent = false, keepLoading = false, mode = "fast" } = options;
     const shouldManageLoading = !silent && !keepLoading;
     if (!silent) {
       setError("");
@@ -1409,8 +1662,11 @@ function App() {
       setHardeningLoading(true);
     }
     try {
-      const payload = await getJson<ClawGuardStatusPayload>(`/api/hardening/status?ts=${Date.now()}`);
+      const payload = await getJson<ClawGuardStatusPayload>(`/api/hardening/status?mode=${mode}&ts=${Date.now()}`);
       setHardeningStatus(payload);
+      if (payload?.scanned_at) {
+        hardeningAutoRefreshMarkerRef.current = payload.scanned_at;
+      }
       return payload;
     } catch (loadError) {
       if (!silent) {
@@ -1424,6 +1680,44 @@ function App() {
     }
   }, []);
 
+  const refreshHardeningStatus = useCallback(async (options: LoadHardeningOptions = {}): Promise<ClawGuardStatusPayload | null> => {
+    const mode = options.mode ?? "fast";
+    const payload = await loadHardeningStatus({
+      ...options,
+      mode,
+    });
+    if (mode === "fast" && payload?.config_source === "local-file") {
+      void loadHardeningStatus({ silent: true, mode: "full" });
+    }
+    return payload;
+  }, [loadHardeningStatus]);
+
+  const refreshHardeningStatusUntil = useCallback(async (
+    predicate: (status: ClawGuardStatusPayload | null) => boolean,
+    options: {
+      attempts?: number;
+      intervalMs?: number;
+      mode?: "fast" | "full";
+    } = {},
+  ): Promise<ClawGuardStatusPayload | null> => {
+    const {
+      attempts = 6,
+      intervalMs = 250,
+      mode = "full",
+    } = options;
+    let latest: ClawGuardStatusPayload | null = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) {
+        await waitFor(intervalMs);
+      }
+      latest = await refreshHardeningStatus({ silent: true, mode });
+      if (predicate(latest)) {
+        return latest;
+      }
+    }
+    return latest;
+  }, [refreshHardeningStatus]);
+
   const refreshHardeningStatusAfterApply = useCallback(async (findingId: string, restartRequired: boolean) => {
     setHardeningLoading(true);
     setError("");
@@ -1433,7 +1727,7 @@ function App() {
         if (attempt > 0) {
           await waitFor(HARDENING_APPLY_REFRESH_INTERVAL_MS);
         }
-        const payload = await loadHardeningStatus({ silent: true, keepLoading: true });
+        const payload = await refreshHardeningStatus({ silent: true, keepLoading: true, mode: "fast" });
         if (!payload) {
           continue;
         }
@@ -1446,7 +1740,14 @@ function App() {
     } finally {
       setHardeningLoading(false);
     }
-  }, [loadHardeningStatus]);
+  }, [refreshHardeningStatus]);
+
+  const closeHardeningPreview = useCallback(() => {
+    hardeningPreviewRequestIdRef.current += 1;
+    setSelectedHardeningFindingId("");
+    setHardeningPreview(null);
+    setHardeningPreviewLoading(false);
+  }, []);
 
   const loadHardeningPreview = useCallback(async (findingId: string, options?: Record<string, unknown>) => {
     if (!findingId) {
@@ -1456,11 +1757,23 @@ function App() {
       setHardeningPreviewLoading(false);
       return;
     }
+    const previewKey = `${findingId}::${serializePreviewOptions(options)}`;
+    const cachedPreview = hardeningPreviewCacheRef.current.get(previewKey);
+    if (cachedPreview) {
+      hardeningPreviewRequestIdRef.current += 1;
+      setSelectedHardeningFindingId(findingId);
+      setHardeningPreview(cachedPreview);
+      setHardeningPreviewLoading(false);
+      setError("");
+      return;
+    }
     const requestId = hardeningPreviewRequestIdRef.current + 1;
     hardeningPreviewRequestIdRef.current = requestId;
     setSelectedHardeningFindingId(findingId);
     setHardeningPreviewLoading(true);
-    setHardeningPreview(null);
+    if (selectedHardeningFindingId !== findingId) {
+      setHardeningPreview(null);
+    }
     setError("");
     try {
       const payload = await postJson<ClawGuardPreviewPayload>(
@@ -1470,6 +1783,7 @@ function App() {
       if (hardeningPreviewRequestIdRef.current !== requestId) {
         return;
       }
+      hardeningPreviewCacheRef.current.set(previewKey, payload);
       setHardeningPreview(payload);
     } catch (loadError) {
       if (hardeningPreviewRequestIdRef.current !== requestId) {
@@ -1481,7 +1795,79 @@ function App() {
         setHardeningPreviewLoading(false);
       }
     }
-  }, []);
+  }, [selectedHardeningFindingId]);
+
+  const exemptHardeningFindings = useCallback(async (findingIds: string[]) => {
+    const normalizedFindingIds = Array.from(
+      new Set(
+        findingIds
+          .map((findingId) => (typeof findingId === "string" ? findingId.trim() : ""))
+          .filter(Boolean),
+      ),
+    );
+    if (normalizedFindingIds.length === 0) {
+      return;
+    }
+    setHardeningExemptionLoading(true);
+    setError("");
+    try {
+      let lastPayload: ClawGuardExemptionPayload | null = null;
+      for (const findingId of normalizedFindingIds) {
+        lastPayload = await postJson<ClawGuardExemptionPayload>(
+          `/api/hardening/findings/${encodeURIComponent(findingId)}/exempt`,
+          {},
+        );
+      }
+      if (normalizedFindingIds.includes(selectedHardeningFindingId)) {
+        closeHardeningPreview();
+      }
+      await refreshHardeningStatusUntil(
+        (status) => normalizedFindingIds.every((findingId) => (
+          !hardeningStatusHasActiveFinding(status, findingId)
+            && hardeningStatusHasExemptedFinding(status, findingId)
+        )),
+      );
+      if (normalizedFindingIds.length === 1 && lastPayload?.message) {
+        setMessage(lastPayload.message);
+      } else {
+        setMessage(
+          ui(
+            `已将 ${normalizedFindingIds.length} 个风险点移入豁免分类。`,
+            `Moved ${normalizedFindingIds.length} findings into the exempted section.`,
+          ),
+        );
+      }
+    } catch (actionError) {
+      setError(String(actionError));
+      setMessage("");
+    } finally {
+      setHardeningExemptionLoading(false);
+    }
+  }, [closeHardeningPreview, refreshHardeningStatusUntil, selectedHardeningFindingId]);
+
+  const restoreHardeningFinding = useCallback(async (findingId: string) => {
+    const normalizedFindingId = typeof findingId === "string" ? findingId.trim() : "";
+    if (!normalizedFindingId) {
+      return;
+    }
+    setHardeningExemptionLoading(true);
+    setError("");
+    try {
+      const payload = await postJson<ClawGuardExemptionPayload>(
+        `/api/hardening/findings/${encodeURIComponent(normalizedFindingId)}/unexempt`,
+        {},
+      );
+      await refreshHardeningStatusUntil(
+        (status) => !hardeningStatusHasExemptedFinding(status, normalizedFindingId),
+      );
+      setMessage(payload.message);
+    } catch (actionError) {
+      setError(String(actionError));
+      setMessage("");
+    } finally {
+      setHardeningExemptionLoading(false);
+    }
+  }, [refreshHardeningStatusUntil]);
 
   const loadDirectoryPicker = useCallback(async (targetPath = "") => {
     setFilePickerLoading(true);
@@ -1523,6 +1909,10 @@ function App() {
     });
   }, [hasPendingSkillPolicyChanges, loadSkillData]);
 
+  useEffect(() => {
+    void loadPluginData({ silent: false });
+  }, [loadPluginData]);
+
   const closeSkillDetail = useCallback(() => {
     setSelectedSkillId("");
     setSkillDetailPayload(null);
@@ -1531,6 +1921,16 @@ function App() {
   const openSkillDetail = useCallback((skillId: string) => {
     setSelectedSkillId(skillId);
     setSkillDetailPayload(null);
+  }, []);
+
+  const closePluginDetail = useCallback(() => {
+    setSelectedPluginId("");
+    setPluginDetailPayload(null);
+  }, []);
+
+  const openPluginDetail = useCallback((pluginId: string) => {
+    setSelectedPluginId(pluginId);
+    setPluginDetailPayload(null);
   }, []);
 
   useEffect(() => {
@@ -1562,23 +1962,79 @@ function App() {
   }, [activeTab, closeSkillDetail, selectedSkillId]);
 
   useEffect(() => {
-    if (activeTab !== "hardening") {
+    if (pluginItems.length === 0) {
+      closePluginDetail();
       return;
     }
-    if (!hardeningStatus) {
-      void loadHardeningStatus({ silent: false });
+    if (!selectedPluginId) {
+      return;
     }
-  }, [activeTab, hardeningStatus, loadHardeningStatus]);
+    const selectedStillExists = pluginItems.some((item) => item.plugin_id === selectedPluginId);
+    if (!selectedStillExists) {
+      closePluginDetail();
+    }
+  }, [closePluginDetail, pluginItems, selectedPluginId]);
+
+  useEffect(() => {
+    if (!selectedPluginId) {
+      setPluginDetailPayload(null);
+      return;
+    }
+    void loadPluginDetail(selectedPluginId, { silent: activeTab !== "plugins" });
+  }, [activeTab, loadPluginDetail, selectedPluginId]);
+
+  useEffect(() => {
+    if (activeTab !== "plugins" && selectedPluginId) {
+      closePluginDetail();
+    }
+  }, [activeTab, closePluginDetail, selectedPluginId]);
+
+  useEffect(() => {
+    if (hardeningStatus) {
+      return;
+    }
+    void refreshHardeningStatus({ silent: true, mode: "fast" });
+  }, [hardeningStatus, refreshHardeningStatus]);
+
+  useEffect(() => {
+    if (activeTab !== "hardening") {
+      hardeningAutoRefreshMarkerRef.current = "";
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      const marker = hardeningStatus?.scanned_at || "__initial__";
+      if (hardeningAutoRefreshMarkerRef.current === marker) {
+        return;
+      }
+      hardeningAutoRefreshMarkerRef.current = marker;
+      const payload = await refreshHardeningStatus({
+        silent: Boolean(hardeningStatus),
+        keepLoading: Boolean(hardeningStatus),
+        mode: "fast",
+      });
+      if (cancelled) {
+        return;
+      }
+      if (payload?.scanned_at) {
+        hardeningAutoRefreshMarkerRef.current = payload.scanned_at;
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, hardeningStatus?.scanned_at, refreshHardeningStatus]);
 
   useEffect(() => {
     if (activeTab !== "hardening" || !hardeningStatus) {
       return;
     }
-    void loadHardeningStatus({ silent: true });
-  }, [activeTab, loadHardeningStatus, locale]);
+    void refreshHardeningStatus({ silent: true, mode: "fast" });
+  }, [activeTab, locale, refreshHardeningStatus]);
 
   useEffect(() => {
-    if (!filePickerOpen && !fileRuleDeleteTarget && !skillConfirmAction && !selectedHardeningFindingId && !selectedSkillId) {
+    if (!filePickerOpen && !fileRuleDeleteTarget && !skillConfirmAction && !selectedHardeningFindingId && !selectedSkillId && !selectedPluginId) {
       return undefined;
     }
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1596,6 +2052,10 @@ function App() {
           closeSkillDetail();
           return;
         }
+        if (selectedPluginId) {
+          closePluginDetail();
+          return;
+        }
         if (fileRuleDeleteTarget) {
           setFileRuleDeleteTarget(null);
           return;
@@ -1605,7 +2065,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeSkillDetail, filePickerOpen, fileRuleDeleteTarget, selectedHardeningFindingId, selectedSkillId, skillConfirmAction]);
+  }, [closePluginDetail, closeSkillDetail, filePickerOpen, fileRuleDeleteTarget, selectedHardeningFindingId, selectedPluginId, selectedSkillId, skillConfirmAction]);
 
   useEffect(() => {
     if (hasPendingDashboardChanges || saving || skillPolicySaving || skillActionLoading) {
@@ -1615,8 +2075,13 @@ function App() {
       void loadData({ syncRules: true, syncAccounts: true, silent: true });
       void loadDecisionPage({ silent: true });
       void loadSkillData({ silent: true, syncPolicy: true });
+      void loadPluginData({ silent: true });
+      void refreshHardeningStatus({ silent: true, mode: "fast" });
       if (selectedSkillId) {
         void loadSkillDetail(selectedSkillId, { silent: true });
+      }
+      if (selectedPluginId) {
+        void loadPluginDetail(selectedPluginId, { silent: true });
       }
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
@@ -1624,9 +2089,14 @@ function App() {
     hasPendingDashboardChanges,
     loadData,
     loadDecisionPage,
+    loadPluginData,
+    loadPluginDetail,
+    loadHardeningStatus,
+    refreshHardeningStatus,
     loadSkillData,
     loadSkillDetail,
     saving,
+    selectedPluginId,
     selectedSkillId,
     skillActionLoading,
     skillPolicySaving
@@ -1641,7 +2111,6 @@ function App() {
     block: 0
   };
   const filteredDecisionTotal = Number(decisionPayload?.total || 0);
-  const latestDecision = decisions[0] || null;
   const totalDecisionPages = Math.max(1, Math.ceil(filteredDecisionTotal / DECISIONS_PER_PAGE));
   const pagedDecisions = toArray(decisionPayload?.items);
   const pageItems = buildPageItems(decisionPage, totalDecisionPages);
@@ -1903,13 +2372,6 @@ function App() {
     [loadSkillData, loadSkillDetail, selectedSkillId]
   );
 
-  const closeHardeningPreview = useCallback(() => {
-    hardeningPreviewRequestIdRef.current += 1;
-    setSelectedHardeningFindingId("");
-    setHardeningPreview(null);
-    setHardeningPreviewLoading(false);
-  }, []);
-
   const selectHardeningRepairChoice = useCallback((findingId: string, choiceId: string) => {
     void loadHardeningPreview(findingId, { choice: choiceId });
   }, [loadHardeningPreview]);
@@ -1985,6 +2447,17 @@ function App() {
       openSkillDetail(skillId);
     }
     switchTab("skills");
+  }
+
+  function openPluginWorkspace(pluginId = "") {
+    if (pluginId) {
+      openPluginDetail(pluginId);
+    }
+    switchTab("plugins");
+  }
+
+  function openHardeningWorkspace() {
+    switchTab("hardening");
   }
 
   function openDecisionRecords(filterId: AdminDecisionFilterId) {
@@ -2340,36 +2813,100 @@ function App() {
   const selectedSkill = skillDetailPayload?.skill || skillItems.find((item) => item.skill_id === selectedSkillId) || null;
   const selectedSkillFindings = toArray(skillDetailPayload?.findings || selectedSkill?.findings);
   const selectedSkillActivity = toArray(skillDetailPayload?.activity);
+  const selectedPlugin = pluginDetailPayload?.plugin || pluginItems.find((item) => item.plugin_id === selectedPluginId) || null;
   const accountCount = displayAccounts.length;
   const tabCounts: Record<AdminTabId, number> = {
     overview: stats.total,
-    hardening: hardeningStatus?.summary?.risk_count || 0,
+    hardening: hardeningRawFindings.length,
     events: stats.total,
     rules: policies.length,
     skills: skillOverviewStats.total,
+    plugins: pluginOverviewStats.total,
     accounts: accountCount
   };
-  const recentBlockCount = decisions.filter((item) => item.decision === "block").length;
-  const recentChallengeCount = decisions.filter((item) => item.decision === "challenge").length;
-  const recentWarnCount = decisions.filter((item) => item.decision === "warn").length;
-  const postureTitle = recentBlockCount > 0
-    ? ui("防护规则正在主动拦截风险操作", "Protection rules are actively blocking risky operations")
-    : recentChallengeCount > 0
-      ? ui("当前以需确认为主的审慎策略", "Current posture emphasizes approval-required decisions")
-      : recentWarnCount > 0
-        ? ui("当前以提醒为主，规则正在提示潜在风险", "Current posture is warning-first and highlighting potential risk")
-      : ui("当前以放行为主，运行相对平稳", "Current posture is mostly allow and relatively stable");
-  const postureDescription = latestDecision
-    ? `${decisionLabel(latestDecision.decision)} · ${latestDecision.tool || ui("未知操作", "Unknown operation")} · ${resourceScopeLabel(latestDecision.resource_scope)}`
-    : ui("等待新的运行数据进入控制台。", "Waiting for new runtime data.");
-  const skillPostureTitle = skillOverviewStats.high_critical > 0
-    ? ui("Skill 风险面正在重点关注高风险对象", "Skill posture is focused on high-risk items")
-    : skillOverviewStats.challenge_block_24h > 0
-      ? ui("Skill 扫描整体平稳，但仍有近期拦截活动", "Skill posture is stable overall with recent interceptions")
-      : ui("Skill 库整体稳定，当前没有明显高风险对象", "Skill library is stable with no obvious high-risk items");
-  const skillPostureDescription = skillOverviewHighlights[0]
-    ? `${skillOverviewHighlights[0].name} · ${skillRiskLabel(skillOverviewHighlights[0].risk_tier)} · ${ui("风险分", "Risk")} ${skillOverviewHighlights[0].risk_score}`
-    : ui("等待扫描目录中的 Skill 清单同步到概览。", "Waiting for installed skills to sync into overview.");
+  const systemOverviewStats = {
+    risk_count: Number(hardeningStatus?.summary?.risk_count || 0),
+    direct_fix_count: Number(hardeningStatus?.summary?.direct_fix_count || 0),
+    restart_required_count: Number(hardeningStatus?.summary?.restart_required_count || 0),
+    exempted_count: Number(hardeningStatus?.summary?.exempted_count || 0),
+    passed_count: Number(hardeningStatus?.summary?.passed_count || 0),
+    gateway_online: Boolean(hardeningStatus?.gateway_online),
+    read_only: Boolean(hardeningStatus?.read_only),
+  };
+  const runtimeSecurityScore = clampSecurityScore(
+    stats.total <= 0
+      ? 82
+      : 100 - (((stats.warn * 0.4) + (stats.challenge * 0.8) + (stats.block * 1.2)) / stats.total) * 55,
+  );
+  const systemSecurityScore = clampSecurityScore(
+    100
+      - systemOverviewStats.risk_count * 18
+      - systemOverviewStats.exempted_count * 5
+      - (systemOverviewStats.read_only ? 6 : 0)
+      - (!systemOverviewStats.gateway_online && hardeningStatus ? 6 : 0)
+      + Math.min(10, systemOverviewStats.passed_count * 2),
+  );
+  const skillSecurityScore = clampSecurityScore(
+    100
+      - skillOverviewStats.high_critical * 18
+      - skillOverviewStats.drift_alerts * 10
+      - Math.min(24, skillOverviewStats.challenge_block_24h * 2)
+      - skillOverviewStats.quarantined * 6,
+  );
+  const pluginSecurityScore = clampSecurityScore(
+    pluginOverviewStats.total <= 0
+      ? 96
+      : 100
+        - pluginOverviewStats.high_critical * 20
+        - pluginOverviewStats.path_sources * 8
+        - pluginOverviewStats.exec_capable * 10
+        - pluginOverviewStats.network_capable * 6,
+  );
+  const overallSecurityScoreValue = clampSecurityScore(
+    runtimeSecurityScore * 0.2
+      + systemSecurityScore * 0.35
+      + skillSecurityScore * 0.2
+      + pluginSecurityScore * 0.25,
+  );
+  const overallSecurityScoreUpdatedAt = [
+    hardeningStatus?.scanned_at,
+    pluginStatusPayload?.generated_at,
+    skillStatusPayload?.generated_at,
+  ].find(Boolean);
+  const overallSecurityScore = {
+    total: overallSecurityScoreValue,
+    ...(overallSecurityScoreUpdatedAt ? { updatedAt: overallSecurityScoreUpdatedAt } : {}),
+    items: [
+      {
+        key: "runtime",
+        label: ui("运行时", "Runtime"),
+        score: runtimeSecurityScore,
+        note: ui(`${formatPercent(stats.challenge + stats.block, Math.max(1, stats.total))} 需要确认 / 拦截`, `${formatPercent(stats.challenge + stats.block, Math.max(1, stats.total))} challenge / block`),
+        tone: securityScoreTone(runtimeSecurityScore),
+      },
+      {
+        key: "system",
+        label: ui("系统", "System"),
+        score: systemSecurityScore,
+        note: ui(`${systemOverviewStats.risk_count} 个活动风险点`, `${systemOverviewStats.risk_count} active findings`),
+        tone: securityScoreTone(systemSecurityScore),
+      },
+      {
+        key: "skills",
+        label: ui("Skills", "Skills"),
+        score: skillSecurityScore,
+        note: ui(`${skillOverviewStats.high_critical} 个高风险 / 严重`, `${skillOverviewStats.high_critical} high / critical`),
+        tone: securityScoreTone(skillSecurityScore),
+      },
+      {
+        key: "plugins",
+        label: ui("插件", "Plugins"),
+        score: pluginSecurityScore,
+        note: ui(`${pluginOverviewStats.high_critical} 个高风险 / 严重`, `${pluginOverviewStats.high_critical} high / critical`),
+        tone: securityScoreTone(pluginSecurityScore),
+      },
+    ],
+  };
   const statusTone = error
     ? "error"
     : hasPendingDashboardChanges || saving || skillPolicySaving
@@ -2465,14 +3002,12 @@ function App() {
       {activeTab === "overview" ? (
         <OverviewPanel
           stats={stats}
-          postureTitle={postureTitle}
-          postureDescription={postureDescription}
-          groupedPolicyCount={groupedPolicies.length}
-          policyCount={policies.length}
-          skillPostureTitle={skillPostureTitle}
-          skillPostureDescription={skillPostureDescription}
           skillOverviewStats={skillOverviewStats}
           skillOverviewHighlights={skillOverviewHighlights}
+          systemOverviewStats={systemOverviewStats}
+          pluginOverviewStats={pluginOverviewStats}
+          pluginOverviewHighlights={pluginOverviewHighlights}
+          overallSecurityScore={overallSecurityScore}
           messageSourceDistribution={messageSourceDistribution}
           decisionSourceDistribution={decisionSourceDistribution}
           strategyHitDistribution={strategyHitDistribution}
@@ -2493,8 +3028,12 @@ function App() {
           formatTime={formatTime}
           skillRiskLabel={skillRiskLabel}
           skillSourceLabel={skillSourceLabel}
+          pluginRiskLabel={pluginRiskLabel}
+          pluginSourceLabel={pluginSourceLabel}
           onOpenDecisionRecords={openDecisionRecords}
+          onOpenHardeningWorkspace={openHardeningWorkspace}
           onOpenSkillWorkspace={openSkillWorkspace}
+          onOpenPluginWorkspace={openPluginWorkspace}
         />
       ) : null}
 
@@ -2507,11 +3046,14 @@ function App() {
           preview={hardeningPreview}
           previewLoading={hardeningPreviewLoading}
           applyLoading={hardeningApplyLoading}
-          onRefresh={() => void loadHardeningStatus({ silent: false })}
+          actionLoading={hardeningExemptionLoading}
+          onRefresh={() => void refreshHardeningStatus({ silent: false, mode: "fast" })}
           onOpenFinding={(findingId, options) => void loadHardeningPreview(findingId, options)}
           onClosePreview={closeHardeningPreview}
           onSelectRepairChoice={selectHardeningRepairChoice}
           onApplyPreview={applyHardeningFix}
+          onExemptFindings={exemptHardeningFindings}
+          onRestoreFinding={restoreHardeningFinding}
           formatTime={formatTime}
         />
       ) : null}
@@ -2635,6 +3177,35 @@ function App() {
           formatTime={formatTime}
           formatHash={formatHash}
           formatConfidence={formatConfidence}
+        />
+      ) : null}
+
+      {activeTab === "plugins" ? (
+        <PluginsPanel
+          pluginOverviewStats={pluginOverviewStats}
+          pluginItems={pluginItems}
+          pluginSummaryCounts={pluginSummaryCounts}
+          pluginSourceOptions={pluginSourceOptions}
+          pluginRiskFilter={pluginRiskFilter}
+          pluginStateFilter={pluginStateFilter}
+          pluginSourceFilter={pluginSourceFilter}
+          selectedPluginId={selectedPluginId}
+          pluginListLoading={pluginListLoading}
+          pluginDetailLoading={pluginDetailLoading}
+          selectedPlugin={selectedPlugin}
+          selectedPluginDetail={pluginDetailPayload}
+          onRefresh={() => void loadPluginData({ silent: false })}
+          onSelectPlugin={openPluginDetail}
+          onClosePluginDetail={closePluginDetail}
+          onSetPluginRiskFilter={setPluginRiskFilter}
+          onSetPluginStateFilter={setPluginStateFilter}
+          onSetPluginSourceFilter={setPluginSourceFilter}
+          pluginRiskLabel={pluginRiskLabel}
+          pluginStateLabel={pluginStateLabel}
+          pluginSourceLabel={pluginSourceLabel}
+          pluginReasonLabel={pluginReasonLabel}
+          pluginScopeLabel={pluginScopeLabel}
+          formatTime={formatTime}
         />
       ) : null}
 

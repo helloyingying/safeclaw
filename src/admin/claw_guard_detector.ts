@@ -1,9 +1,15 @@
 import type { SecurityClawLocale } from "../i18n/locale.ts";
+import { readClawGuardExemptionMap } from "./claw_guard_exemptions.ts";
 import type {
   ClawGuardConfigSnapshot,
+  ClawGuardExemptedFinding,
   ClawGuardFinding,
+  ClawGuardFindingGroup,
+  ClawGuardFindingGroupKind,
+  ClawGuardFindingRelation,
   ClawGuardPassedItem,
   ClawGuardRepairChoice,
+  ClawGuardSeverity,
 } from "./claw_guard_types.ts";
 
 const HIGH_RISK_TOOL_PROFILES = new Set(["coding"]);
@@ -26,7 +32,22 @@ const CHANNEL_LABELS: Record<string, { "zh-CN": string; en: string }> = {
 
 type ClawGuardBuildResult = {
   findings: ClawGuardFinding[];
+  exempted: ClawGuardExemptedFinding[];
+  groups: ClawGuardFindingGroup[];
   passed: ClawGuardPassedItem[];
+};
+
+type GroupDraft = {
+  id: string;
+  kind: ClawGuardFindingGroupKind;
+  scopeType: "global" | "channel";
+  scopeId?: string;
+  title: string;
+  summary: string;
+  severity: ClawGuardSeverity;
+  configPaths: Set<string>;
+  childFindingIds: Set<string>;
+  recommendedFindingId?: string;
 };
 
 function text(locale: SecurityClawLocale, zhText: string, enText: string): string {
@@ -72,8 +93,12 @@ function isChannelEnabled(channel: Record<string, unknown>): boolean {
   return enabled !== false;
 }
 
-function buildFindingId(ruleId: string, scope?: string): string {
-  return scope ? `${ruleId}::${scope}` : ruleId;
+function buildFindingId(ruleId: string, scopeId?: string): string {
+  return scopeId ? `${ruleId}::${scopeId}` : ruleId;
+}
+
+function buildGroupId(kind: ClawGuardFindingGroupKind, scopeId?: string): string {
+  return scopeId ? `${kind}::${scopeId}` : kind;
 }
 
 function buildChoice(
@@ -95,17 +120,43 @@ function buildChoice(
   };
 }
 
-function sortFindings(findings: ClawGuardFinding[]): ClawGuardFinding[] {
-  const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-  return Array.from(findings).sort(
-    (left, right) =>
-      severityOrder[left.severity] - severityOrder[right.severity] ||
-      left.title.localeCompare(right.title, "en-US"),
-  );
+function buildRelation(
+  type: ClawGuardFindingRelation["type"],
+  targetFindingId: string,
+  choiceId?: string,
+): ClawGuardFindingRelation {
+  return {
+    type,
+    targetFindingId,
+    ...(choiceId ? { choiceId } : {}),
+  };
 }
 
-function sortPassed(items: ClawGuardPassedItem[]): ClawGuardPassedItem[] {
-  return Array.from(items).sort((left, right) => left.title.localeCompare(right.title, "en-US"));
+function severityRank(severity: ClawGuardSeverity): number {
+  if (severity === "critical") return 0;
+  if (severity === "high") return 1;
+  if (severity === "medium") return 2;
+  return 3;
+}
+
+function compareFindings(left: ClawGuardFinding, right: ClawGuardFinding): number {
+  return severityRank(left.severity) - severityRank(right.severity) || left.title.localeCompare(right.title, "en-US");
+}
+
+function comparePassed(left: ClawGuardPassedItem, right: ClawGuardPassedItem): number {
+  return left.title.localeCompare(right.title, "en-US");
+}
+
+function compareGroups(left: ClawGuardFindingGroup, right: ClawGuardFindingGroup): number {
+  return severityRank(left.severity) - severityRank(right.severity) || left.title.localeCompare(right.title, "en-US");
+}
+
+function maxSeverity(left: ClawGuardSeverity, right: ClawGuardSeverity): ClawGuardSeverity {
+  return severityRank(left) <= severityRank(right) ? left : right;
+}
+
+function sortConfigPaths(paths: Iterable<string>): string[] {
+  return Array.from(new Set(Array.from(paths).filter(Boolean))).sort((left, right) => left.localeCompare(right, "en-US"));
 }
 
 function readChannelWildcardRequireMention(channel: Record<string, unknown>): boolean {
@@ -129,17 +180,13 @@ function hasEffectiveAllowlist(channel: Record<string, unknown>): boolean {
   if (asArray(channel.groupAllowFrom).length > 0) {
     return true;
   }
-
   const groups = asRecord(channel.groups);
-  const specificGroupEntries = Object.entries(groups).filter(([groupId]) => groupId !== "*");
-  if (specificGroupEntries.length === 0) {
-    return false;
-  }
-
-  return specificGroupEntries.some(([, value]) => {
-    const entry = asRecord(value);
-    return readBoolean(entry.allow) === true || asArray(entry.allowFrom).length > 0;
-  });
+  return Object.entries(groups)
+    .filter(([groupId]) => groupId !== "*")
+    .some(([, value]) => {
+      const entry = asRecord(value);
+      return readBoolean(entry.allow) === true || asArray(entry.allowFrom).length > 0;
+    });
 }
 
 function isBrowserConfigured(config: Record<string, unknown>): boolean {
@@ -150,23 +197,132 @@ function isBrowserConfigured(config: Record<string, unknown>): boolean {
   return readBoolean(browser.enabled) !== false || Object.keys(browser).length > 1;
 }
 
+function createGroupDraft(
+  kind: ClawGuardFindingGroupKind,
+  locale: SecurityClawLocale,
+  scopeId?: string,
+): GroupDraft {
+  if (kind === "gateway") {
+    return {
+      id: buildGroupId("gateway"),
+      kind,
+      scopeType: "global",
+      title: text(locale, "gateway 基础配置", "Gateway baseline"),
+      summary: text(
+        locale,
+        "公开绑定和 token 鉴权都在同一层入口上，适合一起检查。",
+        "Public bind and token authentication live at the same entry layer and should be reviewed together.",
+      ),
+      severity: "low",
+      configPaths: new Set<string>(),
+      childFindingIds: new Set<string>(),
+    };
+  }
+
+  if (kind === "sandbox") {
+    return {
+      id: buildGroupId("sandbox"),
+      kind,
+      scopeType: "global",
+      title: text(locale, "沙箱执行边界", "Sandbox execution boundary"),
+      summary: text(
+        locale,
+        "普通沙箱和浏览器沙箱会一起决定执行边界。",
+        "The standard sandbox and browser sandbox together define the execution boundary.",
+      ),
+      severity: "low",
+      configPaths: new Set<string>(),
+      childFindingIds: new Set<string>(),
+    };
+  }
+
+  return {
+    id: buildGroupId("channel", scopeId),
+    kind,
+    scopeType: "channel",
+    ...(scopeId ? { scopeId } : {}),
+    title: text(locale, `${channelLabel(scopeId || "-", locale)} 渠道入口`, `${channelLabel(scopeId || "-", locale)} channel access`),
+    summary: text(
+      locale,
+      "同一渠道的私信入口、群入口和群内限制会互相影响，适合一起看。",
+      "DM entry, group entry, and in-group limits on the same channel affect each other and should be reviewed together.",
+    ),
+    severity: "low",
+    configPaths: new Set<string>(),
+    childFindingIds: new Set<string>(),
+  };
+}
+
 export function buildClawGuardFindings(
   snapshot: ClawGuardConfigSnapshot,
   locale: SecurityClawLocale,
 ): ClawGuardBuildResult {
   const findings: ClawGuardFinding[] = [];
+  const exempted: ClawGuardExemptedFinding[] = [];
   const passed: ClawGuardPassedItem[] = [];
+  const groups = new Map<string, GroupDraft>();
   const config = asRecord(snapshot.config);
+  const exemptionByFindingId = readClawGuardExemptionMap(config);
+
+  function ensureGroup(kind: ClawGuardFindingGroupKind, scopeId?: string): GroupDraft {
+    const id = buildGroupId(kind, scopeId);
+    const current = groups.get(id);
+    if (current) {
+      return current;
+    }
+    const next = createGroupDraft(kind, locale, scopeId);
+    groups.set(id, next);
+    return next;
+  }
+
+  function pickRecommendedFindingId(group: GroupDraft, finding: ClawGuardFinding): void {
+    if (!group.recommendedFindingId) {
+      group.recommendedFindingId = finding.id;
+      return;
+    }
+    const current = findings.find((item) => item.id === group.recommendedFindingId);
+    if (!current || severityRank(finding.severity) < severityRank(current.severity)) {
+      group.recommendedFindingId = finding.id;
+    }
+  }
+
+  function recordFinding(finding: ClawGuardFinding): void {
+    const exemption = exemptionByFindingId.get(finding.id);
+    if (exemption) {
+      exempted.push({
+        ...finding,
+        exemption,
+      });
+      return;
+    }
+
+    findings.push(finding);
+    const group = groups.get(finding.groupId);
+    if (!group) {
+      return;
+    }
+    group.severity = maxSeverity(group.severity, finding.severity);
+    finding.configPaths.forEach((configPath) => group.configPaths.add(configPath));
+    group.childFindingIds.add(finding.id);
+    pickRecommendedFindingId(group, finding);
+  }
+
+  function recordPassed(item: ClawGuardPassedItem): void {
+    passed.push(item);
+  }
+
   const gateway = asRecord(config.gateway);
   const gatewayAuth = asRecord(gateway.auth);
   const bind = readString(gateway.bind);
   const authMode = readString(gatewayAuth.mode);
   const authToken = gatewayAuth.token;
+  const gatewayGroupId = ensureGroup("gateway").id;
 
   if (bind && !LOOPBACK_BINDS.has(bind.toLowerCase())) {
-    findings.push({
+    recordFinding({
       id: buildFindingId("gateway_public_bind"),
       ruleId: "gateway_public_bind",
+      scopeType: "global",
       severity: "critical",
       title: text(locale, "gateway 当前不是 loopback 绑定", "Gateway is not bound to loopback"),
       summary: text(
@@ -180,9 +336,13 @@ export function buildClawGuardFindings(
       repairKind: "direct",
       repairChoices: [],
       restartRequired: true,
+      groupId: gatewayGroupId,
+      relations: [
+        buildRelation("related", buildFindingId("gateway_missing_token_auth")),
+      ],
     });
   } else if (bind) {
-    passed.push({
+    recordPassed({
       id: buildFindingId("gateway_public_bind"),
       title: text(locale, "gateway 已限制为 loopback", "Gateway is limited to loopback"),
       summary: bind,
@@ -191,9 +351,10 @@ export function buildClawGuardFindings(
   }
 
   if (authMode !== "token" || !hasConfiguredSecret(authToken)) {
-    findings.push({
+    recordFinding({
       id: buildFindingId("gateway_missing_token_auth"),
       ruleId: "gateway_missing_token_auth",
+      scopeType: "global",
       severity: "critical",
       title: text(locale, "gateway 没有启用 token 鉴权", "Gateway token authentication is not enabled"),
       summary: text(
@@ -215,9 +376,13 @@ export function buildClawGuardFindings(
       repairKind: "direct",
       repairChoices: [],
       restartRequired: true,
+      groupId: gatewayGroupId,
+      relations: [
+        buildRelation("related", buildFindingId("gateway_public_bind")),
+      ],
     });
   } else {
-    passed.push({
+    recordPassed({
       id: buildFindingId("gateway_missing_token_auth"),
       title: text(locale, "gateway 已启用 token 鉴权", "Gateway token authentication is enabled"),
       summary: text(locale, "mode=token，token 已配置", "mode=token, token configured"),
@@ -237,11 +402,17 @@ export function buildClawGuardFindings(
     const groupPolicy = readString(channel.groupPolicy);
     const mentionRequired = readChannelWildcardRequireMention(channel);
     const allowlistAvailable = hasEffectiveAllowlist(channel);
+    const channelGroupId = ensureGroup("channel", channelId).id;
+    const groupPolicyFindingId = buildFindingId("group_policy_too_open", channelId);
+    const requireMentionFindingId = buildFindingId("group_missing_require_mention", channelId);
+    const allowlistFindingId = buildFindingId("group_missing_allowlist", channelId);
 
     if (dmPolicy === "open") {
-      findings.push({
+      recordFinding({
         id: buildFindingId("dm_policy_too_open", channelId),
         ruleId: "dm_policy_too_open",
+        scopeType: "channel",
+        scopeId: channelId,
         severity: "high",
         title: text(locale, `${label} 私信入口对所有人开放`, `${label} direct messages are open to everyone`),
         summary: text(
@@ -255,9 +426,13 @@ export function buildClawGuardFindings(
         repairKind: "direct",
         repairChoices: [],
         restartRequired: true,
+        groupId: channelGroupId,
+        relations: [
+          buildRelation("related", groupPolicyFindingId),
+        ],
       });
     } else if (dmPolicy) {
-      passed.push({
+      recordPassed({
         id: buildFindingId("dm_policy_too_open", channelId),
         title: text(locale, `${label} 私信入口没有对所有人开放`, `${label} DM access is not open to everyone`),
         summary: dmPolicy,
@@ -272,7 +447,6 @@ export function buildClawGuardFindings(
           "当前没有可直接复用的群白名单或成员 allowlist。",
           "No reusable group allowlist or sender allowlist is configured yet.",
         );
-
     const groupChoices = [
       buildChoice(
         locale,
@@ -297,9 +471,11 @@ export function buildClawGuardFindings(
     ];
 
     if (groupPolicy === "open") {
-      findings.push({
-        id: buildFindingId("group_policy_too_open", channelId),
+      recordFinding({
+        id: groupPolicyFindingId,
         ruleId: "group_policy_too_open",
+        scopeType: "channel",
+        scopeId: channelId,
         severity: "high",
         title: text(locale, `${label} 群聊入口对所有成员开放`, `${label} group access is open to all members`),
         summary: text(
@@ -314,10 +490,18 @@ export function buildClawGuardFindings(
         repairChoices: groupChoices,
         defaultOptions: { choice: "disable_groups" },
         restartRequired: true,
+        groupId: channelGroupId,
+        relations: [
+          buildRelation("choice_resolves", requireMentionFindingId, "disable_groups"),
+          buildRelation("choice_resolves", allowlistFindingId, "disable_groups"),
+          buildRelation("choice_resolves", allowlistFindingId, "use_allowlist"),
+          buildRelation("related", requireMentionFindingId),
+          buildRelation("related", allowlistFindingId),
+        ],
       });
     } else if (groupPolicy) {
-      passed.push({
-        id: buildFindingId("group_policy_too_open", channelId),
+      recordPassed({
+        id: groupPolicyFindingId,
         title: text(locale, `${label} 群聊入口不是完全开放`, `${label} group access is not fully open`),
         summary: groupPolicy,
         configPaths: [`channels.${channelId}.groupPolicy`],
@@ -326,9 +510,11 @@ export function buildClawGuardFindings(
 
     if (groupPolicy && groupPolicy !== "disabled") {
       if (!mentionRequired) {
-        findings.push({
-          id: buildFindingId("group_missing_require_mention", channelId),
+        recordFinding({
+          id: requireMentionFindingId,
           ruleId: "group_missing_require_mention",
+          scopeType: "channel",
+          scopeId: channelId,
           severity: "medium",
           title: text(locale, `${label} 群聊当前没有要求 @ 机器人`, `${label} groups do not require mentioning the bot`),
           summary: text(
@@ -342,10 +528,15 @@ export function buildClawGuardFindings(
           repairKind: "direct",
           repairChoices: [],
           restartRequired: true,
+          groupId: channelGroupId,
+          relations: [
+            buildRelation("related", groupPolicyFindingId),
+            buildRelation("related", allowlistFindingId),
+          ],
         });
       } else {
-        passed.push({
-          id: buildFindingId("group_missing_require_mention", channelId),
+        recordPassed({
+          id: requireMentionFindingId,
           title: text(locale, `${label} 群聊已要求 @ 机器人`, `${label} groups require mentioning the bot`),
           summary: text(locale, "requireMention=true", "requireMention=true"),
           configPaths: [`channels.${channelId}.groups.*.requireMention`],
@@ -353,9 +544,11 @@ export function buildClawGuardFindings(
       }
 
       if (!allowlistAvailable) {
-        findings.push({
-          id: buildFindingId("group_missing_allowlist", channelId),
+        recordFinding({
+          id: allowlistFindingId,
           ruleId: "group_missing_allowlist",
+          scopeType: "channel",
+          scopeId: channelId,
           severity: "high",
           title: text(locale, `${label} 群聊没有收紧到明确白名单`, `${label} group access is not narrowed to an explicit allowlist`),
           summary: text(
@@ -374,10 +567,16 @@ export function buildClawGuardFindings(
           repairChoices: groupChoices,
           defaultOptions: { choice: "disable_groups" },
           restartRequired: true,
+          groupId: channelGroupId,
+          relations: [
+            buildRelation("related", groupPolicyFindingId),
+            buildRelation("related", requireMentionFindingId),
+            buildRelation("choice_resolves", groupPolicyFindingId, "disable_groups"),
+          ],
         });
       } else {
-        passed.push({
-          id: buildFindingId("group_missing_allowlist", channelId),
+        recordPassed({
+          id: allowlistFindingId,
           title: text(locale, `${label} 群聊已经有白名单约束`, `${label} group access already has allowlist controls`),
           summary: text(locale, "群或成员白名单已配置", "Group or sender allowlists are configured"),
           configPaths: [`channels.${channelId}.groupPolicy`, `channels.${channelId}.groupAllowFrom`],
@@ -389,11 +588,13 @@ export function buildClawGuardFindings(
   const toolProfile = readString(asRecord(config.tools).profile);
   const sandbox = asRecord(asRecord(asRecord(config.agents).defaults).sandbox);
   const sandboxMode = readString(sandbox.mode);
+  const sandboxGroupId = ensureGroup("sandbox").id;
   if (HIGH_RISK_TOOL_PROFILES.has(toolProfile.toLowerCase())) {
     if (!sandboxMode || sandboxMode === "off") {
-      findings.push({
+      recordFinding({
         id: buildFindingId("sandbox_disabled_for_high_risk_profile"),
         ruleId: "sandbox_disabled_for_high_risk_profile",
+        scopeType: "global",
         severity: "high",
         title: text(locale, "高风险工具画像下没有启用普通沙箱", "High-risk tool profile does not use the standard sandbox"),
         summary: text(
@@ -401,15 +602,23 @@ export function buildClawGuardFindings(
           "当前工具画像是 coding，但普通执行默认还在宿主机上。",
           "The active tool profile is coding, but execution still defaults to the host.",
         ),
-        currentSummary: text(locale, `tools.profile=${toolProfile}，sandbox.mode=${sandboxMode || "off"}`, `tools.profile=${toolProfile}, sandbox.mode=${sandboxMode || "off"}`),
+        currentSummary: text(
+          locale,
+          `tools.profile=${toolProfile}，sandbox.mode=${sandboxMode || "off"}`,
+          `tools.profile=${toolProfile}, sandbox.mode=${sandboxMode || "off"}`,
+        ),
         recommendationSummary: text(locale, "默认启用 non-main 沙箱", 'Enable `agents.defaults.sandbox.mode = "non-main"`'),
         configPaths: ["tools.profile", "agents.defaults.sandbox.mode"],
         repairKind: "direct",
         repairChoices: [],
         restartRequired: true,
+        groupId: sandboxGroupId,
+        relations: [
+          buildRelation("related", buildFindingId("browser_sandbox_missing")),
+        ],
       });
     } else {
-      passed.push({
+      recordPassed({
         id: buildFindingId("sandbox_disabled_for_high_risk_profile"),
         title: text(locale, "高风险工具画像已经启用普通沙箱", "High-risk tool profile already uses the standard sandbox"),
         summary: sandboxMode,
@@ -421,9 +630,10 @@ export function buildClawGuardFindings(
   if (isBrowserConfigured(config)) {
     const browserSandbox = asRecord(sandbox.browser);
     if (readBoolean(browserSandbox.enabled) !== true) {
-      findings.push({
+      recordFinding({
         id: buildFindingId("browser_sandbox_missing"),
         ruleId: "browser_sandbox_missing",
+        scopeType: "global",
         severity: "medium",
         title: text(locale, "浏览器能力已启用，但没有浏览器沙箱", "Browser capability is enabled without a browser sandbox"),
         summary: text(
@@ -437,13 +647,18 @@ export function buildClawGuardFindings(
           "启用浏览器沙箱；必要时同时补上普通沙箱模式",
           "Enable the browser sandbox and add a standard sandbox mode when needed",
         ),
-        configPaths: ["browser", "agents.defaults.sandbox.browser.enabled"],
+        configPaths: ["browser", "agents.defaults.sandbox.browser.enabled", "agents.defaults.sandbox.mode"],
         repairKind: "guided",
         repairChoices: [],
         restartRequired: true,
+        groupId: sandboxGroupId,
+        relations: [
+          buildRelation("choice_resolves", buildFindingId("sandbox_disabled_for_high_risk_profile")),
+          buildRelation("related", buildFindingId("sandbox_disabled_for_high_risk_profile")),
+        ],
       });
     } else {
-      passed.push({
+      recordPassed({
         id: buildFindingId("browser_sandbox_missing"),
         title: text(locale, "浏览器能力已经走浏览器沙箱", "Browser capability already uses a browser sandbox"),
         summary: text(locale, "sandbox.browser.enabled=true", "sandbox.browser.enabled=true"),
@@ -453,7 +668,23 @@ export function buildClawGuardFindings(
   }
 
   return {
-    findings: sortFindings(findings),
-    passed: sortPassed(passed),
+    findings: Array.from(findings).sort(compareFindings),
+    exempted: Array.from(exempted).sort((left, right) => compareFindings(left, right)),
+    groups: Array.from(groups.values())
+      .filter((group) => group.childFindingIds.size > 0)
+      .map((group) => ({
+        id: group.id,
+        kind: group.kind,
+        scopeType: group.scopeType,
+        ...(group.scopeId ? { scopeId: group.scopeId } : {}),
+        title: group.title,
+        summary: group.summary,
+        severity: group.severity,
+        configPaths: sortConfigPaths(group.configPaths),
+        childFindingIds: Array.from(group.childFindingIds).sort((left, right) => left.localeCompare(right, "en-US")),
+        ...(group.recommendedFindingId ? { recommendedFindingId: group.recommendedFindingId } : {}),
+      }))
+      .sort(compareGroups),
+    passed: Array.from(passed).sort(comparePassed),
   };
 }

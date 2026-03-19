@@ -1,12 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type {
   ClawGuardFinding,
+  ClawGuardFindingGroup,
   ClawGuardPreviewPayload,
   ClawGuardStatusPayload,
 } from "../../src/admin/claw_guard_types.ts";
-import { readLocalized, SEVERITY_TEXT, ui } from "./dashboard_core.ts";
+import { getActiveAdminLocale, readLocalized, SEVERITY_TEXT, ui } from "./dashboard_core.ts";
 import { OverviewStatCard } from "./dashboard_primitives.tsx";
+
+type HardeningDisplayGroup = {
+  id: string;
+  kind: ClawGuardFindingGroup["kind"];
+  title: string;
+  subtitle: string;
+  summary: string;
+  relationHint: string;
+  findings: ClawGuardFinding[];
+  severity: ClawGuardFinding["severity"];
+  exemptedCount: number;
+};
 
 type HardeningPanelProps = {
   loading: boolean;
@@ -16,11 +29,14 @@ type HardeningPanelProps = {
   preview: ClawGuardPreviewPayload | null;
   previewLoading: boolean;
   applyLoading: boolean;
+  actionLoading: boolean;
   onRefresh: () => void | Promise<void>;
   onOpenFinding: (findingId: string, options?: Record<string, unknown>) => void;
   onClosePreview: () => void;
   onSelectRepairChoice: (findingId: string, choiceId: string) => void;
   onApplyPreview: () => void | Promise<void>;
+  onExemptFindings: (findingIds: string[]) => void;
+  onRestoreFinding: (findingId: string) => void;
   formatTime: (value: string | null | undefined) => string;
 };
 
@@ -64,6 +80,186 @@ function pickStringList(...values: Array<readonly string[] | string[] | null | u
     }
   }
   return [];
+}
+
+function hardeningSeverityRank(severity: ClawGuardFinding["severity"]): number {
+  if (severity === "critical") return 0;
+  if (severity === "high") return 1;
+  if (severity === "medium") return 2;
+  return 3;
+}
+
+function compareHardeningFindings(left: ClawGuardFinding, right: ClawGuardFinding): number {
+  const severityDelta = hardeningSeverityRank(left.severity) - hardeningSeverityRank(right.severity);
+  if (severityDelta !== 0) {
+    return severityDelta;
+  }
+  return left.title.localeCompare(right.title, getActiveAdminLocale() === "zh-CN" ? "zh-CN" : "en-US");
+}
+
+function inferHardeningGroupKind(finding: ClawGuardFinding): ClawGuardFindingGroup["kind"] {
+  if (finding.groupId === "gateway" || finding.ruleId.startsWith("gateway_")) {
+    return "gateway";
+  }
+  if (finding.groupId === "sandbox" || finding.ruleId.startsWith("sandbox_") || finding.ruleId.startsWith("browser_")) {
+    return "sandbox";
+  }
+  return "channel";
+}
+
+function inferHardeningScopeId(groupId: string, finding?: ClawGuardFinding | null): string {
+  if (typeof finding?.scopeId === "string" && finding.scopeId.trim().length > 0) {
+    return finding.scopeId.trim();
+  }
+  const parts = groupId.split("::");
+  return parts.length > 1 ? parts.slice(1).join("::") : "";
+}
+
+function hardeningRelationHint(finding: ClawGuardFinding, siblingCount: number): string {
+  const relations = finding.relations;
+  const relatedTargets = relations.filter((relation) => relation.type === "related").length;
+  const resolvingChoices = relations.filter((relation) => relation.type === "choice_resolves").length;
+  if (resolvingChoices > 0) {
+    return ui(
+      "这个风险点和别的项有联动，点开详情能看到对应的修复选项。",
+      "This finding is linked with other items. Open the drawer to see the matching repair choices.",
+    );
+  }
+  if (relatedTargets > 0) {
+    return ui(
+      "这个风险点和同组或相邻配置项有关，通常需要一起改。",
+      "This finding is related to other items in the same or nearby scope, and they usually change together.",
+    );
+  }
+  if (siblingCount > 0) {
+    return ui(
+      "这项和同组的其他风险点共享同一个配置范围。",
+      "This item shares the same configuration scope with the rest of its group.",
+    );
+  }
+  return ui("这是单项检查。", "This is a single-item check.");
+}
+
+function hardeningGroupTitle(kind: ClawGuardFindingGroup["kind"], scopeId: string): string {
+  if (kind === "gateway") {
+    return ui("gateway 配置", "Gateway settings");
+  }
+  if (kind === "sandbox") {
+    return ui("沙箱配置", "Sandbox settings");
+  }
+  return `${ui("渠道", "Channel")} · ${scopeId || ui("未命名", "Unnamed")}`;
+}
+
+function hardeningGroupSubtitle(kind: ClawGuardFindingGroup["kind"], scopeId: string, count: number): string {
+  const base =
+    kind === "gateway"
+      ? ui("gateway 入口和鉴权", "Gateway entry and auth")
+      : kind === "channel"
+        ? `${ui("同一渠道", "Same channel")} · ${scopeId || ui("未命名", "Unnamed")}`
+        : ui("执行沙箱", "Execution sandbox");
+  return count > 1 ? ui(`${base}，共 ${count} 项`, `${base}, ${count} findings`) : base;
+}
+
+function defaultHardeningGroupSummary(kind: ClawGuardFindingGroup["kind"]): string {
+  if (kind === "gateway") {
+    return ui(
+      "这组项都在 gateway 入口层，通常会一起检查。",
+      "These items all sit at the gateway entry layer and are usually checked together.",
+    );
+  }
+  if (kind === "channel") {
+    return ui(
+      "同一渠道里的私信、群入口和群内限制会互相影响。",
+      "DM access, group access, and in-group limits on the same channel affect each other.",
+    );
+  }
+  return ui(
+    "这组项一起决定执行是否被关进沙箱。",
+    "These items together decide how tightly execution is sandboxed.",
+  );
+}
+
+function hardeningGroupSummary(
+  kind: ClawGuardFindingGroup["kind"],
+  activeCount: number,
+  exemptedCount: number,
+  baseSummary?: string,
+): string {
+  const base = pickText(defaultHardeningGroupSummary(kind), baseSummary);
+  const activeSuffix = activeCount > 1 ? ui(`当前有 ${activeCount} 个未豁免风险点。`, `${activeCount} active findings.`) : "";
+  const exemptedSuffix = exemptedCount > 0 ? ui(`其中 ${exemptedCount} 项已豁免。`, `${exemptedCount} are exempted.`) : "";
+  return [base, activeSuffix, exemptedSuffix].filter(Boolean).join(" ");
+}
+
+function buildFallbackGroup(finding: ClawGuardFinding): HardeningDisplayGroup {
+  const kind = inferHardeningGroupKind(finding);
+  const scopeId = inferHardeningScopeId(finding.groupId, finding);
+  return {
+    id: finding.groupId,
+    kind,
+    title: hardeningGroupTitle(kind, scopeId),
+    subtitle: hardeningGroupSubtitle(kind, scopeId, 1),
+    summary: hardeningGroupSummary(kind, 1, 0),
+    relationHint: hardeningRelationHint(finding, 0),
+    findings: [finding],
+    severity: finding.severity,
+    exemptedCount: 0,
+  };
+}
+
+function buildDisplayGroups(status: ClawGuardStatusPayload | null): HardeningDisplayGroup[] {
+  const findings = Array.isArray(status?.findings) ? status.findings : [];
+  const exemptedFindings = Array.isArray(status?.exempted) ? status.exempted : [];
+  const activeFindingById = new Map(findings.map((finding) => [finding.id, finding] as const));
+  const groups: HardeningDisplayGroup[] = [];
+  const coveredFindingIds = new Set<string>();
+
+  for (const group of Array.isArray(status?.groups) ? status.groups : []) {
+    const groupFindings = group.childFindingIds
+      .map((findingId) => activeFindingById.get(findingId))
+      .filter((finding): finding is ClawGuardFinding => Boolean(finding))
+      .sort(compareHardeningFindings);
+    if (groupFindings.length === 0) {
+      continue;
+    }
+    groupFindings.forEach((finding) => coveredFindingIds.add(finding.id));
+    const leadFinding = groupFindings.find((finding) => finding.id === group.recommendedFindingId) || groupFindings[0];
+    const scopeId = inferHardeningScopeId(group.id, leadFinding);
+    const exemptedCount = exemptedFindings.filter((finding) => finding.groupId === group.id).length;
+    groups.push({
+      id: group.id,
+      kind: group.kind,
+      title: pickText(hardeningGroupTitle(group.kind, scopeId), group.title),
+      subtitle: hardeningGroupSubtitle(group.kind, scopeId, groupFindings.length),
+      summary: hardeningGroupSummary(group.kind, groupFindings.length, exemptedCount, group.summary),
+      relationHint: hardeningRelationHint(leadFinding, Math.max(0, groupFindings.length - 1)),
+      findings: groupFindings,
+      severity: group.severity,
+      exemptedCount,
+    });
+  }
+
+  for (const finding of findings) {
+    if (!coveredFindingIds.has(finding.id)) {
+      groups.push(buildFallbackGroup(finding));
+    }
+  }
+
+  return groups.sort((left, right) => (
+    hardeningSeverityRank(left.severity) - hardeningSeverityRank(right.severity)
+      || left.title.localeCompare(right.title, getActiveAdminLocale() === "zh-CN" ? "zh-CN" : "en-US")
+  ));
+}
+
+function renderFindingPaths(configPaths: string[]): React.ReactNode {
+  if (configPaths.length === 0) {
+    return <span>{ui("当前没有可展示的配置路径。", "No config paths are available for this item.")}</span>;
+  }
+  return configPaths.map((configPath) => (
+    <span key={configPath} className="tag meta-tag">
+      {configPath}
+    </span>
+  ));
 }
 
 type ReadOnlyCause = {
@@ -187,15 +383,35 @@ export function HardeningPanel({
   preview,
   previewLoading,
   applyLoading,
+  actionLoading,
   onRefresh,
   onOpenFinding,
   onClosePreview,
   onSelectRepairChoice,
   onApplyPreview,
+  onExemptFindings,
+  onRestoreFinding,
   formatTime,
 }: HardeningPanelProps) {
   const [readOnlyInfoOpen, setReadOnlyInfoOpen] = useState(false);
-  const findings = Array.isArray(status?.findings) ? status.findings : [];
+  const findingGroups = useMemo(() => buildDisplayGroups(status), [status]);
+  const exemptedFindings = useMemo(
+    () => (Array.isArray(status?.exempted) ? status.exempted : []),
+    [status],
+  );
+  const groupById = useMemo(() => new Map(findingGroups.map((group) => [group.id, group] as const)), [findingGroups]);
+  const findingById = useMemo(() => {
+    const table = new Map<string, ClawGuardFinding>();
+    findingGroups.forEach((group) => {
+      group.findings.forEach((finding) => {
+        table.set(finding.id, finding);
+      });
+    });
+    exemptedFindings.forEach((finding) => {
+      table.set(finding.id, finding);
+    });
+    return table;
+  }, [exemptedFindings, findingGroups]);
   const passed = Array.isArray(status?.passed) ? status.passed : [];
   const drawerVisible = Boolean(selectedFindingId);
   const metricValue = (value: number | undefined): string | number => (status ? value ?? 0 : "...");
@@ -238,13 +454,28 @@ export function HardeningPanel({
     selectedFinding?.summary,
     preview?.summary,
   );
-  const repairPlanTitle = pickText("", preview?.title, selectedChoice?.label);
-  const repairPlanSummary = pickText("", preview?.summary, selectedChoice?.description);
-  const showRepairPlan = isMeaningfulText(repairPlanTitle) && repairPlanTitle !== drawerTitle;
-  const visibleRepairChoices = showRepairPlan && selectedChoice
-    ? repairChoices.filter((choice) => choice.id !== selectedChoice.id)
-    : repairChoices;
+  const relatedResolutionHints: Array<{
+    relation: ClawGuardFinding["relations"][number];
+    target: ClawGuardFinding;
+    choiceLabel: string;
+  }> = (selectedFinding?.relations || [])
+    .map((relation) => {
+      const target = findingById.get(relation.targetFindingId);
+      if (!target) {
+        return null;
+      }
+      const choiceLabel = relation.choiceId
+        ? repairChoices.find((choice) => choice.id === relation.choiceId)?.label || relation.choiceId
+        : "";
+      return { relation, target, choiceLabel };
+    })
+    .filter((item): item is {
+      relation: ClawGuardFinding["relations"][number];
+      target: ClawGuardFinding;
+      choiceLabel: string;
+    } => Boolean(item));
   const readOnlyCause = resolveReadOnlyCause(status);
+  const hasExemptedFindings = exemptedFindings.length > 0;
   const readOnlyStateTitle =
     status?.config_source === "local-file"
       ? ui("当前结果来自本地配置回退", "This result comes from the local config fallback")
@@ -381,9 +612,9 @@ export function HardeningPanel({
                 <span />
               </div>
             </div>
-          ) : status?.error && findings.length === 0 ? (
+          ) : status?.error && findingGroups.length === 0 && exemptedFindings.length === 0 ? (
             <div className="chart-empty">{status.error}</div>
-          ) : findings.length === 0 ? (
+          ) : findingGroups.length === 0 && exemptedFindings.length === 0 ? (
             <div className="chart-empty">
               {ui(
                 "当前配置没有发现可识别的高价值风险项。",
@@ -391,49 +622,163 @@ export function HardeningPanel({
               )}
             </div>
           ) : (
-            <div className="hardening-list">
-              {findings.map((finding) => (
-                <article key={finding.id} className={`hardening-item severity-${finding.severity}`}>
-                  <div className="hardening-item-head">
-                    <div className="hardening-item-title-row">
-                      <span className={`tag meta-tag severity-${finding.severity}`}>{severityLabel(finding.severity)}</span>
-                      {finding.restartRequired ? <span className="tag meta-tag">{ui("需要重启 gateway", "Gateway Restart Required")}</span> : null}
-                    </div>
-                    <div className="hardening-item-actions">
-                      <button className="ghost small" type="button" onClick={() => void onOpenFinding(finding.id, finding.defaultOptions)}>
-                        {ui("查看详情", "View Details")}
-                      </button>
-                      <button className="primary small" type="button" onClick={() => void onOpenFinding(finding.id, finding.defaultOptions)}>
-                        {ui("修复", "Repair")}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="hardening-item-main">
-                    <div>
-                      <h3>{finding.title}</h3>
-                      <p>{finding.summary}</p>
-                    </div>
-                    <div className="hardening-item-grid">
-                      <div className="hardening-item-block">
-                        <span>{ui("当前状态", "Current State")}</span>
-                        <strong>{finding.currentSummary}</strong>
+            <>
+              <div className="hardening-list">
+                {findingGroups.map((group) => (
+                  <article key={group.id} className={`hardening-item hardening-group-card severity-${group.severity}`}>
+                    <div className="hardening-item-head hardening-group-head">
+                      <div className="hardening-group-copy">
+                        <div className="hardening-item-title-row">
+                          <span className={`tag meta-tag severity-${group.severity}`}>{severityLabel(group.severity)}</span>
+                          <span className="tag meta-tag">{ui(`${group.findings.length} 个子项`, `${group.findings.length} child findings`)}</span>
+                          {group.exemptedCount > 0 ? (
+                            <span className="tag allow">{ui(`${group.exemptedCount} 项已豁免`, `${group.exemptedCount} exempted`)}</span>
+                          ) : null}
+                        </div>
+                        <h3>{group.title}</h3>
+                        <p>{group.summary}</p>
+                        <p className="hardening-group-subtitle">{group.subtitle}</p>
+                        {group.relationHint ? (
+                          <div className="hardening-relation-card">
+                            <strong>{ui("关联提示", "Related hint")}</strong>
+                            <p>{group.relationHint}</p>
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="hardening-item-block">
-                        <span>{ui("推荐做法", "Recommended Fix")}</span>
-                        <strong>{finding.recommendationSummary}</strong>
+                      <div className="hardening-group-actions">
+                        <button
+                          className="ghost small"
+                          type="button"
+                          disabled={actionLoading}
+                          onClick={() => void onExemptFindings(group.findings.map((finding) => finding.id))}
+                        >
+                          {actionLoading
+                            ? ui("处理中...", "Working...")
+                            : group.findings.length > 1
+                              ? ui("豁免整组", "Exempt group")
+                              : ui("豁免", "Exempt")}
+                        </button>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="hardening-paths">
-                    {finding.configPaths.map((configPath) => (
-                      <span key={configPath} className="tag meta-tag">{configPath}</span>
-                    ))}
+                    <div className="hardening-group-children">
+                      {group.findings.map((finding, index) => (
+                        <article key={finding.id} className={`hardening-item hardening-child-card severity-${finding.severity}`}>
+                          <div className="hardening-item-head">
+                            <div className="hardening-item-title-row">
+                              <span className={`tag meta-tag severity-${finding.severity}`}>{severityLabel(finding.severity)}</span>
+                              <span className="tag meta-tag">{ui(`子项 ${index + 1}`, `Child ${index + 1}`)}</span>
+                              {finding.restartRequired ? <span className="tag meta-tag">{ui("需要重启 gateway", "Gateway Restart Required")}</span> : null}
+                            </div>
+                            <div className="hardening-item-actions">
+                              <button className="ghost small" type="button" disabled={actionLoading} onClick={() => void onOpenFinding(finding.id, finding.defaultOptions)}>
+                                {ui("查看详情", "View Details")}
+                              </button>
+                              <button className="primary small" type="button" disabled={actionLoading} onClick={() => void onOpenFinding(finding.id, finding.defaultOptions)}>
+                                {ui("修复", "Repair")}
+                              </button>
+                              <button className="ghost small" type="button" disabled={actionLoading} onClick={() => onExemptFindings([finding.id])}>
+                                {actionLoading ? ui("处理中...", "Working...") : ui("豁免", "Exempt")}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="hardening-item-main">
+                            <div className="hardening-child-copy">
+                              <h3>{finding.title}</h3>
+                              <p>{finding.summary}</p>
+                              <div className="hardening-child-hint">
+                                <strong>{ui("关联说明", "Relation note")}</strong>
+                                <p>{hardeningRelationHint(finding, group.findings.length - 1)}</p>
+                              </div>
+                            </div>
+                            <div className="hardening-item-grid">
+                              <div className="hardening-item-block">
+                                <span>{ui("当前状态", "Current State")}</span>
+                                <strong>{finding.currentSummary}</strong>
+                              </div>
+                              <div className="hardening-item-block">
+                                <span>{ui("推荐做法", "Recommended Fix")}</span>
+                                <strong>{finding.recommendationSummary}</strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="hardening-paths">
+                            {renderFindingPaths(finding.configPaths)}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {hasExemptedFindings ? (
+                <details className="hardening-passed-panel hardening-exempted-panel" open>
+                  <summary>
+                    {ui("豁免分类", "Exempted")} ({exemptedFindings.length})
+                  </summary>
+                  <p className="hardening-exempted-summary">
+                    {ui("这里显示已经被手动豁免的风险点。", "This section shows findings that were manually exempted.")}
+                  </p>
+                  <div className="hardening-passed-list hardening-exempted-list">
+                    {exemptedFindings.map((finding) => {
+                      const group = groupById.get(finding.groupId) || buildFallbackGroup(finding);
+                      const exemption = finding.exemption;
+                      return (
+                      <article key={finding.id} className="hardening-item hardening-exempted-card">
+                        <div className="hardening-item-head">
+                          <div className="hardening-item-title-row">
+                            <span className={`tag meta-tag severity-${finding.severity}`}>{severityLabel(finding.severity)}</span>
+                            <span className="tag allow">{ui("已豁免", "Exempted")}</span>
+                          </div>
+                          <div className="hardening-item-actions">
+                            <button className="ghost small" type="button" disabled={actionLoading} onClick={() => void onOpenFinding(finding.id, finding.defaultOptions)}>
+                              {ui("查看详情", "View Details")}
+                            </button>
+                            <button className="primary small" type="button" disabled={actionLoading} onClick={() => onRestoreFinding(finding.id)}>
+                              {actionLoading ? ui("处理中...", "Working...") : ui("恢复", "Restore")}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="hardening-item-main">
+                          <div>
+                            <h3>{finding.title}</h3>
+                            <p>{finding.summary}</p>
+                            <p className="hardening-exempted-meta">
+                              {ui(
+                                `已分类到 ${group.title} · ${formatTime(exemption.updatedAt)}`,
+                                `Filed under ${group.title} · ${formatTime(exemption.updatedAt)}`,
+                              )}
+                            </p>
+                            {isMeaningfulText(exemption.reason) ? (
+                              <p className="hardening-exempted-meta">{exemption.reason}</p>
+                            ) : null}
+                          </div>
+                          <div className="hardening-item-grid">
+                            <div className="hardening-item-block">
+                              <span>{ui("豁免来源", "Exemption Source")}</span>
+                              <strong>{group.subtitle}</strong>
+                            </div>
+                            <div className="hardening-item-block">
+                              <span>{ui("当前状态", "Current State")}</span>
+                              <strong>{finding.currentSummary}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="hardening-paths">
+                          {renderFindingPaths(finding.configPaths)}
+                        </div>
+                      </article>
+                      );
+                    })}
                   </div>
-                </article>
-              ))}
-            </div>
+                </details>
+              ) : null}
+            </>
           )}
 
           <details className="hardening-passed-panel" open>
@@ -495,11 +840,25 @@ export function HardeningPanel({
             </div>
 
             <div className="hardening-drawer-content">
-              {showRepairPlan ? (
-                <div className="hardening-plan-card">
-                  <span>{ui("当前修复方案", "Current Repair Plan")}</span>
-                  <strong>{repairPlanTitle}</strong>
-                  {isMeaningfulText(repairPlanSummary) ? <p>{repairPlanSummary}</p> : null}
+              {relatedResolutionHints.length > 0 ? (
+                <div className="hardening-relation-card">
+                  <strong>{ui("关联修复提示", "Related resolution hints")}</strong>
+                  <div className="hardening-relation-list">
+                    {relatedResolutionHints.map(({ relation, target, choiceLabel }) => (
+                      <div key={`${relation.type}:${target.id}:${relation.choiceId || ""}`} className="hardening-relation-item">
+                        <span className="tag meta-tag">
+                          {relation.type === "choice_resolves" ? ui("选项联动", "Choice-linked") : ui("关联项", "Related")}
+                        </span>
+                        <span>
+                          {choiceLabel ? `${choiceLabel} · ` : ""}
+                          {ui(
+                            `查看修复时会顺带影响 ${target.title}`,
+                            `The repair flow also affects ${target.title}`,
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 
@@ -516,9 +875,9 @@ export function HardeningPanel({
               ) : null}
 
               <div className="hardening-modal-body">
-                {visibleRepairChoices.length > 0 ? (
+                {repairChoices.length > 0 ? (
                   <div className="hardening-choice-list">
-                    {visibleRepairChoices.map((choice) => (
+                    {repairChoices.map((choice) => (
                       <button
                         key={choice.id}
                         className={`hardening-choice ${selectedChoiceId === choice.id ? "active" : ""}`}

@@ -11,6 +11,7 @@ import {
 } from "recharts";
 
 import type { AdminDecisionFilterId, AdminTabId } from "../../src/admin/dashboard_url_state.ts";
+import type { PluginSummary } from "../../src/admin/plugin_security_store.ts";
 import type { SkillSummary } from "../../src/admin/skill_interception_store.ts";
 import type { DecisionHistoryRecord } from "../../src/admin/server_types.ts";
 import type { SecurityClawLocale } from "../../src/i18n/locale.ts";
@@ -73,6 +74,37 @@ type SkillOverviewStats = {
   trusted_overrides: number;
 };
 
+type PluginOverviewStats = {
+  total: number;
+  enabled: number;
+  high_critical: number;
+  path_sources: number;
+  exec_capable: number;
+  network_capable: number;
+};
+
+type SystemOverviewStats = {
+  risk_count: number;
+  direct_fix_count: number;
+  restart_required_count: number;
+  exempted_count: number;
+  passed_count: number;
+  gateway_online: boolean;
+  read_only: boolean;
+};
+
+type SecurityScoreCard = {
+  total: number;
+  updatedAt?: string;
+  items: Array<{
+    key: string;
+    label: string;
+    score: number;
+    note: string;
+    tone: "good" | "warn" | "bad";
+  }>;
+};
+
 type DashboardShellProps = {
   brandText: string;
   locale: SecurityClawLocale;
@@ -94,14 +126,12 @@ type DashboardShellProps = {
 
 type OverviewPanelProps = {
   stats: OverviewStats;
-  postureTitle: string;
-  postureDescription: string;
-  groupedPolicyCount: number;
-  policyCount: number;
-  skillPostureTitle: string;
-  skillPostureDescription: string;
   skillOverviewStats: SkillOverviewStats;
   skillOverviewHighlights: SkillSummary[];
+  systemOverviewStats: SystemOverviewStats;
+  pluginOverviewStats: PluginOverviewStats;
+  pluginOverviewHighlights: PluginSummary[];
+  overallSecurityScore: SecurityScoreCard;
   messageSourceDistribution: DistributionItem[];
   decisionSourceDistribution: DistributionItem[];
   strategyHitDistribution: DistributionItem[];
@@ -122,8 +152,12 @@ type OverviewPanelProps = {
   formatTime: (value: string | null | undefined) => string;
   skillRiskLabel: (value: string | null | undefined) => string;
   skillSourceLabel: (value: string | null | undefined, detail?: string | null) => string;
+  pluginRiskLabel: (value: string | null | undefined) => string;
+  pluginSourceLabel: (value: string | null | undefined) => string;
   onOpenDecisionRecords: (filter: AdminDecisionFilterId) => void;
+  onOpenHardeningWorkspace: () => void;
   onOpenSkillWorkspace: (skillId?: string) => void;
+  onOpenPluginWorkspace: (pluginId?: string) => void;
 };
 
 type EventsPanelProps = {
@@ -187,7 +221,6 @@ export function DashboardShell({
               <img src="/favicon.svg" alt="" className="workspace-favicon" aria-hidden="true" />
               {brandText}
             </div>
-            <h1>{ui("管理后台", "Admin Dashboard")}</h1>
             <div className="tablist" role="tablist" aria-label={ui("后台模块页签", "Dashboard tabs")}>
               {tabItems.map((tab) => (
                 <button
@@ -253,16 +286,23 @@ export function DashboardShell({
   );
 }
 
+function OverviewSectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
+  return (
+    <div className="overview-section-head">
+      <h3>{title}</h3>
+      {action ? <div className="overview-section-action">{action}</div> : null}
+    </div>
+  );
+}
+
 export function OverviewPanel({
   stats,
-  postureTitle,
-  postureDescription,
-  groupedPolicyCount,
-  policyCount,
-  skillPostureTitle,
-  skillPostureDescription,
   skillOverviewStats,
   skillOverviewHighlights,
+  systemOverviewStats,
+  pluginOverviewStats,
+  pluginOverviewHighlights,
+  overallSecurityScore,
   messageSourceDistribution,
   decisionSourceDistribution,
   strategyHitDistribution,
@@ -283,9 +323,17 @@ export function OverviewPanel({
   formatTime,
   skillRiskLabel,
   skillSourceLabel,
+  pluginRiskLabel,
+  pluginSourceLabel,
   onOpenDecisionRecords,
+  onOpenHardeningWorkspace,
   onOpenSkillWorkspace,
+  onOpenPluginWorkspace,
 }: OverviewPanelProps) {
+  const lowestScoreItem = overallSecurityScore.items.reduce((lowest, current) =>
+    current.score < lowest.score ? current : lowest
+  );
+
   return (
     <section
       id="panel-overview"
@@ -298,7 +346,8 @@ export function OverviewPanel({
           <h2>{ui("概览", "Overview")}</h2>
         </div>
         <div className="overview-grid">
-          <div className="panel-card">
+          <div className="panel-card overview-module-card overview-metrics-card">
+            <OverviewSectionHeader title={ui("决策概况", "Decision Overview")} />
             <div className="stats">
               <OverviewStatCard label={ui("决策记录", "Decision Records")} value={stats.total} onClick={() => onOpenDecisionRecords("all")} />
               <OverviewStatCard label={ui("放行", "Allow")} value={stats.allow} tone="good" onClick={() => onOpenDecisionRecords("allow")} />
@@ -308,43 +357,167 @@ export function OverviewPanel({
             </div>
           </div>
 
-          <aside className="panel-card insight-card">
-            <div className="insight-head">
-              <span className="eyebrow">{ui("当前态势", "Current Posture")}</span>
-              <h3>{postureTitle}</h3>
-              <p>{postureDescription}</p>
+          <aside className="panel-card overview-module-card overview-score-card">
+            <div className="overview-score-head overview-section-head">
+              <div className="overview-score-copy">
+                <h3>{ui("整体安全评分", "Overall Security Score")}</h3>
+                <p className="overview-score-intro">
+                  {ui(
+                    "基于运行时、系统、Skills 与插件四个模块汇总。",
+                    "Calculated from runtime, system, skills, and plugins."
+                  )}
+                </p>
+                <div className="overview-score-pills">
+                  <span className="overview-score-pill">
+                    {ui("评分维度", "Dimensions")} {overallSecurityScore.items.length}
+                  </span>
+                  <span className="overview-score-pill">
+                    {ui("最低分项", "Lowest Area")} {lowestScoreItem.label} {lowestScoreItem.score}
+                  </span>
+                  {overallSecurityScore.updatedAt ? (
+                    <span className="overview-score-pill">
+                      {ui("最近刷新", "Last Refresh")} {formatTime(overallSecurityScore.updatedAt)}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className={`overview-score-badge tone-${overallSecurityScore.total >= 80 ? "good" : overallSecurityScore.total >= 60 ? "warn" : "bad"}`}>
+                <strong>{overallSecurityScore.total}</strong>
+                <span>/ 100</span>
+              </div>
             </div>
+            <div className="overview-score-track" aria-hidden="true">
+              <span style={{ width: `${Math.max(8, overallSecurityScore.total)}%` }} />
+            </div>
+            <div className="overview-score-grid">
+              {overallSecurityScore.items.map((item) => (
+                <button key={item.key} className={`overview-score-item tone-${item.tone}`} type="button" onClick={() => {
+                  if (item.key === "system") {
+                    onOpenHardeningWorkspace();
+                    return;
+                  }
+                  if (item.key === "skills") {
+                    onOpenSkillWorkspace();
+                    return;
+                  }
+                  if (item.key === "plugins") {
+                    onOpenPluginWorkspace();
+                    return;
+                  }
+                  onOpenDecisionRecords("all");
+                }}>
+                  <span>{item.label}</span>
+                  <strong>{item.score}</strong>
+                  <small>{item.note}</small>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <aside className="panel-card insight-card overview-module-card overview-system-card">
+            <OverviewSectionHeader
+              title={ui("系统安全分析", "System Security Analysis")}
+              action={(
+                <button className="ghost small" type="button" onClick={onOpenHardeningWorkspace}>
+                  {ui("打开系统面板", "Open System Panel")}
+                </button>
+              )}
+            />
             <div className="insight-list">
               <div className="insight-item">
-                <span>{ui("需确认占比", "Approval Ratio")}</span>
-                <strong>{formatPercent(stats.challenge, stats.total)}</strong>
+                <span>{ui("活动风险项", "Active Findings")}</span>
+                <strong>{systemOverviewStats.risk_count}</strong>
               </div>
               <div className="insight-item">
-                <span>{ui("拦截占比", "Block Ratio")}</span>
-                <strong>{formatPercent(stats.block, stats.total)}</strong>
+                <span>{ui("可直接修复", "Direct Fixes")}</span>
+                <strong>{systemOverviewStats.direct_fix_count}</strong>
               </div>
               <div className="insight-item">
-                <span>{ui("规则分组", "Rule Groups")}</span>
-                <strong>{groupedPolicyCount}</strong>
+                <span>{ui("需要重启", "Restart Required")}</span>
+                <strong>{systemOverviewStats.restart_required_count}</strong>
               </div>
               <div className="insight-item">
-                <span>{ui("生效规则", "Active Rules")}</span>
-                <strong>{policyCount}</strong>
+                <span>{ui("已通过 / 已豁免", "Passed / Exempted")}</span>
+                <strong>{systemOverviewStats.passed_count} / {systemOverviewStats.exempted_count}</strong>
               </div>
             </div>
           </aside>
 
-          <article className="panel-card overview-skill-card">
-            <div className="overview-skill-head">
-              <div>
-                <span className="eyebrow">{ui("Skill 拦截", "Skill Interception")}</span>
-                <h3>{skillPostureTitle}</h3>
-                <p>{skillPostureDescription}</p>
+          <article className="panel-card insight-card overview-module-card overview-plugin-card">
+            <OverviewSectionHeader
+              title={ui("插件安全分析", "Plugin Security Analysis")}
+              action={(
+                <button className="ghost small" type="button" onClick={() => onOpenPluginWorkspace()}>
+                  {ui("查看插件面板", "Open Plugins Panel")}
+                </button>
+              )}
+            />
+
+            <div className="overview-skill-stats overview-skill-stats-compact">
+              <div className="overview-skill-stat">
+                <span>{ui("已发现插件", "Discovered Plugins")}</span>
+                <strong>{pluginOverviewStats.total}</strong>
               </div>
-              <button className="ghost small" type="button" onClick={() => onOpenSkillWorkspace()}>
-                {ui("查看 Skills 面板", "Open Skills Panel")}
-              </button>
+              <div className="overview-skill-stat">
+                <span>{ui("已启用", "Enabled")}</span>
+                <strong>{pluginOverviewStats.enabled}</strong>
+              </div>
+              <div className="overview-skill-stat">
+                <span>{ui("高风险 / 严重", "High / Critical")}</span>
+                <strong>{pluginOverviewStats.high_critical}</strong>
+              </div>
+              <div className="overview-skill-stat">
+                <span>{ui("本地路径来源", "Local Path Sources")}</span>
+                <strong>{pluginOverviewStats.path_sources}</strong>
+              </div>
             </div>
+
+            {pluginOverviewHighlights.length === 0 ? (
+              <div className="chart-empty">
+                {ui("当前还没有可展示的插件风险快照。", "No plugin highlights are available yet.")}
+              </div>
+            ) : (
+              <div className="overview-skill-highlights">
+                {pluginOverviewHighlights.map((plugin) => (
+                  <button
+                    key={plugin.plugin_id}
+                    className="overview-skill-item"
+                    type="button"
+                    onClick={() => onOpenPluginWorkspace(plugin.plugin_id)}
+                  >
+                    <div className="overview-skill-item-main">
+                      <div className="overview-skill-item-head">
+                        <strong>{plugin.name}</strong>
+                        <div className="skill-row-tags">
+                          <span className={`tag meta-tag severity-${plugin.risk_tier}`}>{pluginRiskLabel(plugin.risk_tier)}</span>
+                          <span className={`tag ${plugin.enabled ? "allow" : "warn"}`}>
+                            {plugin.enabled ? ui("已启用", "Enabled") : ui("已停用", "Disabled")}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="overview-skill-item-meta">
+                        {pluginSourceLabel(plugin.source)} · {ui("风险分", "Risk")} {plugin.risk_score} · {ui("发现项", "Findings")} {plugin.finding_count}
+                      </div>
+                    </div>
+                    <div className="overview-skill-item-side">
+                      <span>{ui("最近扫描", "Last Scan")}</span>
+                      <strong>{formatTime(plugin.last_scan_at)}</strong>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </article>
+
+          <article className="panel-card overview-module-card overview-skill-card">
+            <OverviewSectionHeader
+              title={ui("Skills 安全分析", "Skills Security Analysis")}
+              action={(
+                <button className="ghost small" type="button" onClick={() => onOpenSkillWorkspace()}>
+                  {ui("查看 Skills 面板", "Open Skills Panel")}
+                </button>
+              )}
+            />
 
             <div className="overview-skill-stats">
               <div className="overview-skill-stat">
@@ -366,6 +539,10 @@ export function OverviewPanel({
               <div className="overview-skill-stat">
                 <span>{ui("已隔离", "Quarantined")}</span>
                 <strong>{skillOverviewStats.quarantined}</strong>
+              </div>
+              <div className="overview-skill-stat">
+                <span>{ui("受信覆盖", "Trust Overrides")}</span>
+                <strong>{skillOverviewStats.trusted_overrides}</strong>
               </div>
             </div>
 

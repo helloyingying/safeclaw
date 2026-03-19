@@ -1,4 +1,4 @@
-export const ADMIN_TAB_IDS = ["overview", "hardening", "accounts", "rules", "skills", "events"] as const;
+export const ADMIN_TAB_IDS = ["overview", "hardening", "accounts", "rules", "skills", "plugins", "events"] as const;
 export const ADMIN_DECISION_FILTER_IDS = ["all", "allow", "warn", "challenge", "block"] as const;
 
 export type AdminTabId = (typeof ADMIN_TAB_IDS)[number];

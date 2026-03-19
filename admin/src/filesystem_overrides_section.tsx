@@ -81,7 +81,6 @@ export function FilesystemOverridesSection({
       >
         <div className="sensitive-path-head">
           <div>
-            <span className="eyebrow">{ui("设置例外目录", "Exception Directories")}</span>
             <h3>{ui("设置例外目录", "Exception Directories")}</h3>
             <p className="sensitive-path-intro">
               {ui(

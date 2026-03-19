@@ -22,7 +22,7 @@ export const ADMIN_DEFAULT_LOCALE = resolveSecurityClawLocale(
 export const ADMIN_DEFAULT_THEME_PREFERENCE: DashboardThemePreference = "system";
 export const DARK_COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 export const ADMIN_THEME_OPTIONS = new Set<DashboardThemePreference>(["system", "light", "dark"]);
-export const ADMIN_BRAND_TEXT = "SecurityClaw Admin";
+export const ADMIN_BRAND_TEXT = "SecurityClaw";
 
 let activeLocale: SecurityClawLocale = ADMIN_DEFAULT_LOCALE;
 
@@ -73,6 +73,7 @@ export const TAB_ITEMS = [
   { id: "accounts" },
   { id: "rules" },
   { id: "skills" },
+  { id: "plugins" },
   { id: "events" }
 ];
 
@@ -82,6 +83,7 @@ export function tabLabel(tabId: string): string {
   if (tabId === "accounts") return ui("账号", "Accounts");
   if (tabId === "rules") return ui("工具", "Tools");
   if (tabId === "skills") return ui("Skills", "Skills");
+  if (tabId === "plugins") return ui("插件", "Plugins");
   if (tabId === "events") return ui("记录", "Records");
   return tabId;
 }
@@ -227,6 +229,89 @@ export const SKILL_DRIFT_FILTER_OPTIONS = ["all", "drifted", "steady"];
 export const SKILL_INTERCEPT_FILTER_OPTIONS = ["all", "recent"];
 export const SKILL_POLICY_TIERS = ["low", "medium", "high", "critical", "unknown"];
 export const SKILL_SEVERITY_LEVELS = ["S0", "S1", "S2", "S3"];
+
+export const PLUGIN_RISK_TIER_TEXT = {
+  low: { "zh-CN": "低风险", en: "Low" },
+  medium: { "zh-CN": "中风险", en: "Medium" },
+  high: { "zh-CN": "高风险", en: "High" },
+  critical: { "zh-CN": "严重风险", en: "Critical" }
+};
+
+export const PLUGIN_STATE_TEXT = {
+  enabled: { "zh-CN": "已启用", en: "Enabled" },
+  disabled: { "zh-CN": "已停用", en: "Disabled" }
+};
+
+export const PLUGIN_SOURCE_TEXT = {
+  npm: { "zh-CN": "NPM 安装", en: "NPM Package" },
+  path: { "zh-CN": "本地路径", en: "Local Path" },
+  git: { "zh-CN": "Git 来源", en: "Git Source" },
+  unknown: { "zh-CN": "未知来源", en: "Unknown Source" }
+};
+
+export const PLUGIN_SCOPE_TEXT = {
+  openclaw_home: { "zh-CN": "OpenClaw 目录内", en: "Inside OpenClaw Home" },
+  external: { "zh-CN": "OpenClaw 目录外", en: "Outside OpenClaw Home" },
+  unknown: { "zh-CN": "未知位置", en: "Unknown Location" }
+};
+
+export const PLUGIN_REASON_TEXT = {
+  PLUGIN_INSTALL_PATH_MISSING: {
+    "zh-CN": "安装路径缺失或不存在",
+    en: "Install Path Missing or Unreadable"
+  },
+  PLUGIN_MANIFEST_MISSING: {
+    "zh-CN": "缺少插件清单",
+    en: "Plugin Manifest Missing"
+  },
+  PLUGIN_PACKAGE_METADATA_MISSING: {
+    "zh-CN": "缺少包元数据",
+    en: "Package Metadata Missing"
+  },
+  PLUGIN_PATH_SOURCE: {
+    "zh-CN": "来自可变本地路径",
+    en: "Loaded From Mutable Local Path"
+  },
+  PLUGIN_INTEGRITY_MISSING: {
+    "zh-CN": "缺少安装完整性记录",
+    en: "Integrity Record Missing"
+  },
+  PLUGIN_EXTERNAL_INSTALL_PATH: {
+    "zh-CN": "安装位置在 OpenClaw 目录外",
+    en: "Installed Outside OpenClaw Home"
+  },
+  PLUGIN_CONFIG_SCHEMA_MISSING: {
+    "zh-CN": "未声明配置 Schema",
+    en: "Config Schema Missing"
+  },
+  PLUGIN_DYNAMIC_EVAL: {
+    "zh-CN": "检测到动态执行代码",
+    en: "Dynamic Code Evaluation Detected"
+  },
+  PLUGIN_EXECUTION_SIGNAL: {
+    "zh-CN": "检测到进程执行能力",
+    en: "Process Execution Signal"
+  },
+  PLUGIN_NETWORK_SIGNAL: {
+    "zh-CN": "检测到网络访问能力",
+    en: "Network Access Signal"
+  },
+  PLUGIN_ENV_ACCESS: {
+    "zh-CN": "检测到环境变量访问",
+    en: "Environment Variable Access"
+  },
+  PLUGIN_FILESYSTEM_WRITE: {
+    "zh-CN": "检测到文件写入能力",
+    en: "Filesystem Write Signal"
+  },
+  PLUGIN_HEAVY_DEPENDENCIES: {
+    "zh-CN": "依赖面较大",
+    en: "Broad Dependency Surface"
+  }
+};
+
+export const PLUGIN_RISK_FILTER_OPTIONS = ["all", "low", "medium", "high", "critical"];
+export const PLUGIN_STATE_FILTER_OPTIONS = ["all", "enabled", "disabled"];
 
 export const CONTROL_DOMAIN_SECURITY_GAIN_TEXT = {
   execution_control: "降低误执行高危命令、系统损坏和被植入后门的风险。",

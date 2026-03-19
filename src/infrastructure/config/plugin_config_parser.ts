@@ -14,6 +14,12 @@ export interface SecurityClawPluginConfig {
   statusPath?: string;
   adminAutoStart?: boolean;
   adminPort?: number;
+  hardeningExemptions?: Array<{
+    findingId: string;
+    reason?: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
 }
 
 export interface ResolvedPluginRuntime {
