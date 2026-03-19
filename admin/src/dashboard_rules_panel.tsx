@@ -97,25 +97,28 @@ export function RulesPanel({
           onSetAdminAccount={onSetAdminAccount}
         />
 
-        <div className={`management-note ${toolControlsDisabled ? "warn" : "good"}`}>
-          {toolControlsDisabled
-            ? ui(
-              "当前没有管理员，所以下面的工具设置会保持在页面里，但不会参与工具决策。",
-              "There is no admin right now, so the tool settings below stay on the page but do not participate in tool decisions."
-            )
-            : ui(
-              "下面的工具设置会直接影响工具运行。",
-              "The tool settings below directly affect tool behavior."
-            )}
-        </div>
+        <section
+          className={`rule-group rule-group-shell tool-policy-panel ${toolControlsDisabled ? "is-disabled" : ""}`}
+          aria-label={ui("访问基线", "Access baseline")}
+        >
+          <div className="rule-head">
+            <div>
+              <div className="rule-title">{ui("工具规则", "Tool rules")}</div>
+              <div className="rule-desc">
+                {ui(
+                  "这里设置每类工具的默认处理方式和附加规则。",
+                  "Set the default handling and extra rules for each tool category."
+                )}
+              </div>
+            </div>
+          </div>
 
-        <section className="rule-group rule-group-shell" aria-label={ui("访问基线", "Access baseline")}>
           {capabilityPolicies.length === 0 ? (
             <div className="chart-empty">{ui("暂无能力配置。", "No capability policies configured.")}</div>
           ) : (
             <div className="rule-capability-list">
               {capabilityPolicies.map((capability) => (
-                <section key={capability.capability_id} className={`rule-group rule-capability-group ${toolControlsDisabled ? "is-disabled" : ""}`}>
+                <section key={capability.capability_id} className="rule-group rule-capability-group">
                   <div className="rule-head rule-capability-head">
                     <div>
                       <div className="rule-title">{capabilityLabel(capability.capability_id)}</div>
@@ -127,19 +130,25 @@ export function RulesPanel({
                     </div>
                   </div>
 
-                  <div className="rule-actions" role="group" aria-label={ui(`${capabilityLabel(capability.capability_id)} 默认策略`, `${capabilityLabel(capability.capability_id)} baseline policy`)}>
-                    {DECISION_OPTIONS.map((decision) => (
-                      <button
-                        key={`${capability.capability_id}-${decision}`}
-                        className={`rule-action-button ${decision} ${capability.default_decision === decision ? "active" : ""}`}
-                        type="button"
+                  <div className="rule-select-row">
+                    <label className="rule-select-field">
+                      <span>{ui("默认策略", "Baseline policy")}</span>
+                      <select
+                        className="rule-select-control"
+                        value={capability.default_decision}
                         disabled={toolControlsDisabled}
-                        aria-pressed={capability.default_decision === decision}
-                        onClick={() => onSetCapabilityDefaultDecision(capability.capability_id, decision as Decision)}
+                        aria-label={ui(`${capabilityLabel(capability.capability_id)} 默认策略`, `${capabilityLabel(capability.capability_id)} baseline policy`)}
+                        onChange={(event) =>
+                          onSetCapabilityDefaultDecision(capability.capability_id, event.target.value as Decision)
+                        }
                       >
-                        {decisionLabel(decision)}
-                      </button>
-                    ))}
+                        {DECISION_OPTIONS.map((decision) => (
+                          <option key={`${capability.capability_id}-${decision}`} value={decision}>
+                            {decisionLabel(decision)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
 
                   <div className={`rule-helper ${capability.default_decision}`}>
@@ -168,19 +177,23 @@ export function RulesPanel({
                                 </div>
                               </div>
                             </div>
-                            <div className="rule-actions" role="group" aria-label={ui(`规则 ${rule.rule_id || index + 1} 的策略动作`, `Policy actions for rule ${rule.rule_id || index + 1}`)}>
-                              {DECISION_OPTIONS.map((decision) => (
-                                <button
-                                  key={`${rule.rule_id}-${decision}`}
-                                  className={`rule-action-button ${decision} ${rule.decision === decision ? "active" : ""}`}
-                                  type="button"
+                            <div className="rule-select-row">
+                              <label className="rule-select-field">
+                                <span>{ui("处理方式", "Handling")}</span>
+                                <select
+                                  className="rule-select-control"
+                                  value={rule.decision}
                                   disabled={toolControlsDisabled}
-                                  aria-pressed={rule.decision === decision}
-                                  onClick={() => onSetRuleDecision(rule.rule_id, decision as Decision)}
+                                  aria-label={ui(`规则 ${rule.rule_id || index + 1} 的策略动作`, `Policy actions for rule ${rule.rule_id || index + 1}`)}
+                                  onChange={(event) => onSetRuleDecision(rule.rule_id, event.target.value as Decision)}
                                 >
-                                  {decisionLabel(decision)}
-                                </button>
-                              ))}
+                                  {DECISION_OPTIONS.map((decision) => (
+                                    <option key={`${rule.rule_id}-${decision}`} value={decision}>
+                                      {decisionLabel(decision)}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
                             </div>
                             <div className="rule-desc">{ruleDescription(policy)}</div>
                             <div className={`rule-helper ${rule.decision}`}>

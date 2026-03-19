@@ -2692,6 +2692,13 @@ tbody tr:hover {
   gap: 20px;
 }
 
+.tool-policy-panel {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--bg-panel-accent);
+}
+
 .rule-capability-list {
   display: grid;
   gap: 24px;
@@ -2802,10 +2809,35 @@ tbody tr:hover {
   row-gap: 8px;
 }
 
-.rule-actions {
-  display: flex;
-  flex-wrap: wrap;
+.rule-select-row {
+  display: grid;
   gap: 8px;
+}
+
+.rule-select-field {
+  display: grid;
+  gap: 8px;
+  max-width: 320px;
+}
+
+.rule-select-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rule-select-control {
+  min-height: 44px;
+  width: 100%;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .rule-action-button {
