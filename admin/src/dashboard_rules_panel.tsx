@@ -2,8 +2,10 @@ import type { CapabilityPolicy, StrategyPolicyRule } from "../../src/domain/serv
 import type { Decision, PolicyMatch } from "../../src/types.ts";
 import { DECISION_OPTIONS, ui } from "./dashboard_core.ts";
 import { DecisionTag } from "./dashboard_primitives.tsx";
+import { AdminAccessPanel } from "./dashboard_panels.tsx";
 import { FilesystemOverridesSection } from "./filesystem_overrides_section.tsx";
 import type { FilesystemOverridesSectionProps } from "./filesystem_overrides_section.tsx";
+import type { AccountPolicyMode, AccountPolicyRecord } from "../../src/types.ts";
 
 type RuleDisplay = StrategyPolicyRule & {
   match: PolicyMatch;
@@ -13,11 +15,20 @@ type RulesPanelProps = {
   capabilityPolicies: CapabilityPolicy[];
   additionalRestrictionCount: number;
   directoryOverrideCount: number;
+  accountCount: number;
+  displayAccounts: AccountPolicyRecord[];
+  selectedAdminSubject: string;
+  adminConfigured: boolean;
+  managementEffective: boolean;
+  managementInactiveReason: string;
   hasFilesystemCapability: boolean;
   filesystemOverridesProps: FilesystemOverridesSectionProps;
   capabilityLabel: (capabilityId: string | null | undefined) => string;
   capabilityDescription: (capabilityId: string | null | undefined) => string;
   decisionLabel: (decision: string | null | undefined) => string;
+  accountPrimaryLabel: (account: Partial<AccountPolicyRecord> | null | undefined) => string;
+  accountModeLabel: (mode: AccountPolicyMode | string | null | undefined) => string;
+  accountMetaLabel: (account: Partial<AccountPolicyRecord> | null | undefined) => string;
   controlDomainLabel: (domain: string | null | undefined) => string;
   severityLabel: (severity: string | null | undefined) => string;
   policyTitle: (policy: RuleDisplay, index: number) => string;
@@ -26,17 +37,28 @@ type RulesPanelProps = {
   capabilityBaselineSummary: (capability: CapabilityPolicy | unknown) => string;
   onSetCapabilityDefaultDecision: (capabilityId: CapabilityPolicy["capability_id"], decision: Decision) => void;
   onSetRuleDecision: (ruleId: string, decision: Decision) => void;
+  onUpdateAccountPolicy: (subject: string, patch: Partial<AccountPolicyRecord>) => void;
+  onSetAdminAccount: (subject: string) => void;
 };
 
 export function RulesPanel({
   capabilityPolicies,
   additionalRestrictionCount,
   directoryOverrideCount,
+  accountCount,
+  displayAccounts,
+  selectedAdminSubject,
+  adminConfigured,
+  managementEffective,
+  managementInactiveReason,
   hasFilesystemCapability,
   filesystemOverridesProps,
   capabilityLabel,
   capabilityDescription,
   decisionLabel,
+  accountPrimaryLabel,
+  accountModeLabel,
+  accountMetaLabel,
   controlDomainLabel,
   severityLabel,
   policyTitle,
@@ -45,7 +67,10 @@ export function RulesPanel({
   capabilityBaselineSummary,
   onSetCapabilityDefaultDecision,
   onSetRuleDecision,
+  onUpdateAccountPolicy,
+  onSetAdminAccount,
 }: RulesPanelProps) {
+  const toolControlsDisabled = !managementEffective;
   return (
     <section id="panel-rules" className="tab-panel" role="tabpanel" aria-labelledby="tab-rules">
       <div className="panel-card strategy-panel dashboard-panel">
@@ -58,13 +83,39 @@ export function RulesPanel({
           </div>
         </div>
 
+        <AdminAccessPanel
+          accountCount={accountCount}
+          displayAccounts={displayAccounts}
+          selectedAdminSubject={selectedAdminSubject}
+          adminConfigured={adminConfigured}
+          managementEffective={managementEffective}
+          inactiveReason={managementInactiveReason}
+          accountPrimaryLabel={accountPrimaryLabel}
+          accountModeLabel={accountModeLabel}
+          accountMetaLabel={accountMetaLabel}
+          onUpdateAccountPolicy={onUpdateAccountPolicy}
+          onSetAdminAccount={onSetAdminAccount}
+        />
+
+        <div className={`management-note ${toolControlsDisabled ? "warn" : "good"}`}>
+          {toolControlsDisabled
+            ? ui(
+              "当前没有管理员，所以下面的工具设置会保持在页面里，但不会参与工具决策。",
+              "There is no admin right now, so the tool settings below stay on the page but do not participate in tool decisions."
+            )
+            : ui(
+              "下面的工具设置会直接影响工具运行。",
+              "The tool settings below directly affect tool behavior."
+            )}
+        </div>
+
         <section className="rule-group rule-group-shell" aria-label={ui("访问基线", "Access baseline")}>
           {capabilityPolicies.length === 0 ? (
             <div className="chart-empty">{ui("暂无能力配置。", "No capability policies configured.")}</div>
           ) : (
             <div className="rule-capability-list">
               {capabilityPolicies.map((capability) => (
-                <section key={capability.capability_id} className="rule-group rule-capability-group">
+                <section key={capability.capability_id} className={`rule-group rule-capability-group ${toolControlsDisabled ? "is-disabled" : ""}`}>
                   <div className="rule-head rule-capability-head">
                     <div>
                       <div className="rule-title">{capabilityLabel(capability.capability_id)}</div>
@@ -82,6 +133,7 @@ export function RulesPanel({
                         key={`${capability.capability_id}-${decision}`}
                         className={`rule-action-button ${decision} ${capability.default_decision === decision ? "active" : ""}`}
                         type="button"
+                        disabled={toolControlsDisabled}
                         aria-pressed={capability.default_decision === decision}
                         onClick={() => onSetCapabilityDefaultDecision(capability.capability_id, decision as Decision)}
                       >
@@ -122,6 +174,7 @@ export function RulesPanel({
                                   key={`${rule.rule_id}-${decision}`}
                                   className={`rule-action-button ${decision} ${rule.decision === decision ? "active" : ""}`}
                                   type="button"
+                                  disabled={toolControlsDisabled}
                                   aria-pressed={rule.decision === decision}
                                   onClick={() => onSetRuleDecision(rule.rule_id, decision as Decision)}
                                 >
@@ -143,7 +196,12 @@ export function RulesPanel({
                   )}
 
                   {capability.capability_id === "filesystem" ? (
-                    <FilesystemOverridesSection inline {...filesystemOverridesProps} />
+                    <FilesystemOverridesSection
+                      inline
+                      disabled={toolControlsDisabled}
+                      disabledReason={managementInactiveReason}
+                      {...filesystemOverridesProps}
+                    />
                   ) : null}
                 </section>
               ))}
@@ -151,7 +209,13 @@ export function RulesPanel({
           )}
         </section>
 
-        {!hasFilesystemCapability ? <FilesystemOverridesSection {...filesystemOverridesProps} /> : null}
+        {!hasFilesystemCapability ? (
+          <FilesystemOverridesSection
+            disabled={toolControlsDisabled}
+            disabledReason={managementInactiveReason}
+            {...filesystemOverridesProps}
+          />
+        ) : null}
       </div>
     </section>
   );

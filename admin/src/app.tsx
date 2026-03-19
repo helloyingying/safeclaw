@@ -53,8 +53,6 @@ import {
 } from "../../src/admin/dashboard_url_state.ts";
 import {
   createAccountPolicyDraftFromSession,
-  DEFAULT_MAIN_ADMIN_SESSION_KEY,
-  ensureDefaultAdminAccount,
   mergeAccountPoliciesWithSessions,
   pruneAccountPolicyOverrides,
 } from "../../src/admin/account_catalog.ts";
@@ -122,7 +120,6 @@ import {
   ToolbarMonogram
 } from "./dashboard_primitives.tsx";
 import {
-  AccountsPanel,
   DashboardShell,
   EventsPanel,
   OverviewPanel,
@@ -162,6 +159,10 @@ type StrategyApiPayload = {
 type AccountsApiPayload = {
   account_policies?: unknown;
   sessions?: OpenClawChatSession[];
+  admin_subject?: string | null;
+  admin_configured?: boolean;
+  management_effective?: boolean;
+  inactive_reason?: string | null;
 };
 
 type DirectoryPickerEntry = {
@@ -1195,6 +1196,7 @@ function App() {
   const [accountPolicies, setAccountPolicies] = useState<AccountPolicyRecord[]>([]);
   const [publishedAccountPolicies, setPublishedAccountPolicies] = useState<AccountPolicyRecord[]>([]);
   const [availableSessions, setAvailableSessions] = useState<OpenClawChatSession[]>([]);
+  const [accountsPayload, setAccountsPayload] = useState<AccountsApiPayload | null>(null);
   const [skillStatusPayload, setSkillStatusPayload] = useState<SkillStatusPayload | null>(null);
   const [skillListPayload, setSkillListPayload] = useState<SkillListPayload | null>(null);
   const [skillDetailPayload, setSkillDetailPayload] = useState<SkillDetailPayload | null>(null);
@@ -1299,13 +1301,20 @@ function App() {
     [capabilityPolicies]
   );
   const displayAccounts = useMemo(
-    () => mergeAccountPoliciesWithSessions(ensureDefaultAdminAccount(accountPolicies, availableSessions), availableSessions),
+    () => mergeAccountPoliciesWithSessions(accountPolicies, availableSessions),
     [accountPolicies, availableSessions]
   );
   const selectedAdminSubject = useMemo(
-    () => displayAccounts.find((account) => account.is_admin)?.subject || "",
-    [displayAccounts]
+    () => accountsPayload?.admin_subject?.trim() || displayAccounts.find((account) => account.is_admin)?.subject || "",
+    [accountsPayload, displayAccounts]
   );
+  const adminConfigured = accountsPayload?.admin_configured ?? Boolean(selectedAdminSubject);
+  const managementEffective = accountsPayload?.management_effective ?? adminConfigured;
+  const managementInactiveReason =
+    accountsPayload?.inactive_reason?.trim() ||
+    (adminConfigured
+      ? ui("管理员已经配置，但工具管理当前没有生效。", "An admin is configured, but tool management is not active.")
+      : ui("还没有管理员账号，所以工具策略不会生效。", "No admin account is configured, so tool management does not take effect."));
   const normalizedFileRules = useMemo(() => normalizeFileRules(fileRules), [fileRules]);
   const normalizedNewFileRuleOperations = useMemo(
     () => normalizeFileRuleOperations(newFileRuleOperations),
@@ -1518,6 +1527,7 @@ function App() {
       const nextFileRules = extractFileRules(strategy);
       const nextAccountPolicies = extractAccountPolicies(accounts);
       const nextSessions = extractChatSessions(accounts);
+      setAccountsPayload(accounts);
       setPublishedStrategyModel(nextStrategyModel);
       setPublishedAccountPolicies(nextAccountPolicies);
       setAvailableSessions(nextSessions);
@@ -2401,7 +2411,7 @@ function App() {
   }, [closeHardeningPreview, hardeningPreview, refreshHardeningStatusAfterApply, selectedHardeningFindingId]);
 
   useEffect(() => {
-    if (loading || saving || (!hasPendingRuleChanges && !hasPendingFileRuleChanges)) {
+    if (loading || saving || !managementEffective || (!hasPendingRuleChanges && !hasPendingFileRuleChanges)) {
       return undefined;
     }
     setMessage(
@@ -2414,7 +2424,7 @@ function App() {
       void saveStrategy(strategyModel);
     }, 500);
     return () => clearTimeout(timer);
-  }, [hasPendingFileRuleChanges, hasPendingRuleChanges, loading, saveStrategy, saving, strategyModel]);
+  }, [hasPendingFileRuleChanges, hasPendingRuleChanges, loading, managementEffective, saveStrategy, saving, strategyModel]);
 
   useEffect(() => {
     if (loading || saving || !hasPendingAccountChanges) {
@@ -2612,7 +2622,7 @@ function App() {
               }
             : account
       );
-      if (!next.some((account) => account.subject === subject) && subject !== DEFAULT_MAIN_ADMIN_SESSION_KEY) {
+      if (!next.some((account) => account.subject === subject)) {
         next = [
           ...next,
           {
@@ -2621,17 +2631,6 @@ function App() {
             updated_at: nowIso
           }
         ];
-      }
-      if (subject === DEFAULT_MAIN_ADMIN_SESSION_KEY) {
-        next = next.map((account) =>
-          account.subject === subject
-            ? {
-                ...account,
-                is_admin: false,
-                updated_at: nowIso
-              }
-            : account
-        );
       }
       return pruneAccountPolicyOverrides(next);
     });
@@ -2815,14 +2814,14 @@ function App() {
   const selectedSkillActivity = toArray(skillDetailPayload?.activity);
   const selectedPlugin = pluginDetailPayload?.plugin || pluginItems.find((item) => item.plugin_id === selectedPluginId) || null;
   const accountCount = displayAccounts.length;
+  const toolTabCount = capabilityPolicies.length + accountCount + normalizedFileRules.length;
   const tabCounts: Record<AdminTabId, number> = {
     overview: stats.total,
     hardening: hardeningRawFindings.length,
     events: stats.total,
-    rules: policies.length,
+    rules: toolTabCount,
     skills: skillOverviewStats.total,
-    plugins: pluginOverviewStats.total,
-    accounts: accountCount
+    plugins: pluginOverviewStats.total
   };
   const systemOverviewStats = {
     risk_count: Number(hardeningStatus?.summary?.risk_count || 0),
@@ -3103,11 +3102,20 @@ function App() {
           capabilityPolicies={capabilityPolicies}
           additionalRestrictionCount={policies.length}
           directoryOverrideCount={normalizedFileRules.length}
+          accountCount={accountCount}
+          displayAccounts={displayAccounts}
+          selectedAdminSubject={selectedAdminSubject}
+          adminConfigured={adminConfigured}
+          managementEffective={managementEffective}
+          managementInactiveReason={managementInactiveReason}
           hasFilesystemCapability={hasFilesystemCapability}
           filesystemOverridesProps={filesystemOverridesProps}
           capabilityLabel={capabilityLabel}
           capabilityDescription={capabilityDescription}
           decisionLabel={decisionLabel}
+          accountPrimaryLabel={accountPrimaryLabel}
+          accountModeLabel={accountModeLabel}
+          accountMetaLabel={accountMetaLabel}
           controlDomainLabel={controlDomainLabel}
           severityLabel={severityLabel}
           policyTitle={policyTitle}
@@ -3118,6 +3126,8 @@ function App() {
             setStrategyModel((current) => updateStrategyCapabilityDefaultDecision(current, capabilityId, decision))
           }
           onSetRuleDecision={onDecisionChange}
+          onUpdateAccountPolicy={updateAccountPolicy}
+          onSetAdminAccount={setAdminAccount}
         />
       ) : null}
 
@@ -3206,19 +3216,6 @@ function App() {
           pluginReasonLabel={pluginReasonLabel}
           pluginScopeLabel={pluginScopeLabel}
           formatTime={formatTime}
-        />
-      ) : null}
-
-      {activeTab === "accounts" ? (
-        <AccountsPanel
-          accountCount={accountCount}
-          displayAccounts={displayAccounts}
-          selectedAdminSubject={selectedAdminSubject}
-          accountPrimaryLabel={accountPrimaryLabel}
-          accountModeLabel={accountModeLabel}
-          accountMetaLabel={accountMetaLabel}
-          onUpdateAccountPolicy={updateAccountPolicy}
-          onSetAdminAccount={setAdminAccount}
         />
       ) : null}
     </DashboardShell>

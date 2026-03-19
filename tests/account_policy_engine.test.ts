@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { canonicalizeAccountPolicies } from "../src/domain/services/account_policy_engine.ts";
+import { AccountPolicyEngine, canonicalizeAccountPolicies } from "../src/domain/services/account_policy_engine.ts";
 
 test("canonicalize account policies produces stable order and field layout", () => {
   const first = canonicalizeAccountPolicies([
@@ -46,4 +46,24 @@ test("canonicalize account policies keeps only one admin account", () => {
 
   assert.equal(policies.filter((policy) => policy.is_admin).length, 1);
   assert.equal(policies.find((policy) => policy.is_admin)?.subject, "telegram:admin-b");
+});
+
+test("account default allow stays inactive until an admin is configured", () => {
+  const inactive = new AccountPolicyEngine([
+    {
+      subject: "telegram:chat-42",
+      mode: "default_allow",
+      is_admin: false,
+    },
+  ]);
+  assert.equal(inactive.evaluate("telegram:chat-42"), undefined);
+
+  const active = new AccountPolicyEngine([
+    {
+      subject: "telegram:chat-42",
+      mode: "default_allow",
+      is_admin: true,
+    },
+  ]);
+  assert.equal(active.evaluate("telegram:chat-42")?.decision_source, "account");
 });

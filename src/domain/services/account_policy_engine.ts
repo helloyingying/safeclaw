@@ -87,6 +87,14 @@ export function sanitizeAccountPolicies(input: unknown): AccountPolicyRecord[] {
   return enforceSingleAdmin(Array.from(deduped.values()));
 }
 
+export function hasConfiguredAdminAccount(input: unknown): boolean {
+  return sanitizeAccountPolicies(input).some((policy) => policy.is_admin);
+}
+
+export function getConfiguredAdminAccount(input: unknown): AccountPolicyRecord | undefined {
+  return sanitizeAccountPolicies(input).find((policy) => policy.is_admin);
+}
+
 export function canonicalizeAccountPolicies(input: unknown): AccountPolicyRecord[] {
   return sanitizeAccountPolicies(input)
     .map((policy) => {
@@ -119,11 +127,14 @@ export function canonicalizeAccountPolicies(input: unknown): AccountPolicyRecord
 
 export class AccountPolicyEngine {
   #policiesBySubject: Map<string, AccountPolicyRecord>;
+  #adminConfigured: boolean;
 
   constructor(policies: unknown) {
+    const normalizedPolicies = sanitizeAccountPolicies(policies);
     this.#policiesBySubject = new Map(
-      sanitizeAccountPolicies(policies).map((policy) => [policy.subject, policy]),
+      normalizedPolicies.map((policy) => [policy.subject, policy]),
     );
+    this.#adminConfigured = normalizedPolicies.some((policy) => policy.is_admin);
   }
 
   getPolicy(subject: string | undefined): AccountPolicyRecord | undefined {
@@ -138,6 +149,9 @@ export class AccountPolicyEngine {
   }
 
   evaluate(subject: string | undefined): AccountDecisionOverride | undefined {
+    if (!this.#adminConfigured) {
+      return undefined;
+    }
     const policy = this.getPolicy(subject);
     if (!policy) {
       return undefined;

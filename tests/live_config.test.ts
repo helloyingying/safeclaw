@@ -78,7 +78,14 @@ test("live config resolver applies sqlite strategy changes on next read", () => 
       });
       writer.writeOverride({
         policy_version: "2026-03-14-hot",
-        strategy
+        strategy,
+        account_policies: [
+          {
+            subject: "telegram:ops",
+            mode: "apply_rules",
+            is_admin: true,
+          },
+        ],
       });
     } finally {
       writer.close();
@@ -135,7 +142,14 @@ test("live config resolver applies sensitive path strategy overrides on next rea
         }
       ];
       writer.writeOverride({
-        strategy
+        strategy,
+        account_policies: [
+          {
+            subject: "telegram:ops",
+            mode: "apply_rules",
+            is_admin: true,
+          },
+        ],
       });
     } finally {
       writer.close();

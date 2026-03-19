@@ -1543,6 +1543,10 @@ tbody tr:hover {
   background: var(--bg-subtle);
 }
 
+.sensitive-path-panel-disabled {
+  opacity: 0.86;
+}
+
 .sensitive-path-head {
   display: flex;
   justify-content: space-between;
@@ -1619,6 +1623,13 @@ tbody tr:hover {
   line-height: 1.6;
 }
 
+.sensitive-path-disabled-note {
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
 .file-rule-operation-group {
   display: flex;
   flex-wrap: wrap;
@@ -1646,6 +1657,12 @@ tbody tr:hover {
   border-color: var(--brand-soft-strong);
   background: linear-gradient(135deg, var(--brand-soft-strong) 0%, var(--brand-soft) 100%);
   box-shadow: var(--shadow-subtle);
+}
+
+.file-rule-operation-chip:disabled {
+  color: var(--muted);
+  background: var(--bg-subtle);
+  box-shadow: none;
 }
 
 .sensitive-path-validation {
@@ -2667,6 +2684,10 @@ tbody tr:hover {
   gap: 10px;
 }
 
+.rule-group.is-disabled {
+  opacity: 0.82;
+}
+
 .rule-group-shell {
   gap: 20px;
 }
@@ -2978,6 +2999,41 @@ tbody tr:hover {
   background: var(--bad-soft);
 }
 
+.management-note,
+.management-status {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  display: grid;
+  gap: 6px;
+}
+
+.management-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.management-note.good,
+.management-status.good {
+  border-color: var(--good-border-soft);
+  background: var(--good-soft);
+}
+
+.management-note.warn,
+.management-status.warn {
+  border-color: var(--warn-border-soft);
+  background: var(--warn-soft);
+}
+
+.management-status p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .pagination {
   margin-top: 16px;
   padding-top: 16px;
@@ -3073,6 +3129,11 @@ tbody tr:hover {
   gap: 16px;
 }
 
+.account-card.active {
+  border-color: var(--brand-soft-strong);
+  box-shadow: var(--shadow-soft-strong);
+}
+
 .account-card-head {
   display: flex;
   justify-content: space-between;
@@ -3147,6 +3208,13 @@ tbody tr:hover {
   width: 16px;
   height: 16px;
   margin: 0;
+}
+
+.admin-access-panel {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--bg-panel-accent);
 }
 
 .skills-intro,

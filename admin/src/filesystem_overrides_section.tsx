@@ -16,6 +16,8 @@ type DirectoryEntry = {
 
 export type FilesystemOverridesSectionProps = {
   inline?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
   normalizedFileRules: FileRuleRecord[];
   selectedFileDirectory: string;
   newFileRuleDecision: Decision;
@@ -46,6 +48,8 @@ export type FilesystemOverridesSectionProps = {
 
 export function FilesystemOverridesSection({
   inline = true,
+  disabled = false,
+  disabledReason,
   normalizedFileRules,
   selectedFileDirectory,
   newFileRuleDecision,
@@ -76,7 +80,10 @@ export function FilesystemOverridesSection({
   return (
     <>
       <section
-        className={inline ? "sensitive-path-panel sensitive-path-panel-inline" : "sensitive-path-panel"}
+        className={[
+          inline ? "sensitive-path-panel sensitive-path-panel-inline" : "sensitive-path-panel",
+          disabled ? "sensitive-path-panel-disabled" : "",
+        ].filter(Boolean).join(" ")}
         aria-label={ui("设置例外目录", "Exception directories")}
       >
         <div className="sensitive-path-head">
@@ -88,6 +95,7 @@ export function FilesystemOverridesSection({
                 "Exception directories are a filesystem-scoped overlay rather than a child of one specific file action. You can narrow them to read, list, search, write, delete, archive, or execute. Leaving the scope empty applies the override to all filesystem-related operations in that directory."
               )}
             </p>
+            {disabled && disabledReason ? <div className="sensitive-path-disabled-note">{disabledReason}</div> : null}
           </div>
           <div className="rule-meta">
             <span className="meta-pill">{ui("设置例外目录", "Exception Directories")} {normalizedFileRules.length}</span>
@@ -96,7 +104,7 @@ export function FilesystemOverridesSection({
         </div>
 
         <div className="sensitive-path-toolbar">
-          <button className="ghost" type="button" onClick={openDirectoryPicker}>
+          <button className="ghost" type="button" disabled={disabled} onClick={openDirectoryPicker}>
             {ui("选择目录", "Choose Directory")}
           </button>
 
@@ -106,7 +114,11 @@ export function FilesystemOverridesSection({
 
           <label className="sensitive-path-field file-rule-action-field">
             <span>{ui("处理方式", "Action")}</span>
-            <select value={newFileRuleDecision} onChange={(event) => setNewFileRuleDecision(event.target.value)}>
+            <select
+              value={newFileRuleDecision}
+              disabled={disabled}
+              onChange={(event) => setNewFileRuleDecision(event.target.value)}
+            >
               {DECISION_OPTIONS.map((decisionOption) => (
                 <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
               ))}
@@ -117,6 +129,7 @@ export function FilesystemOverridesSection({
             <span>{ui("适用操作", "Applies to operations")}</span>
             <FileRuleOperationSelector
               operations={newFileRuleOperations}
+              disabled={disabled}
               onToggle={toggleDraftFileRuleOperation}
             />
           </label>
@@ -124,7 +137,7 @@ export function FilesystemOverridesSection({
           <button
             className="primary"
             type="button"
-            disabled={!selectedFileDirectory || selectedDirectoryRuleExists}
+            disabled={disabled || !selectedFileDirectory || selectedDirectoryRuleExists}
             onClick={applySelectedFileRule}
           >
             {ui("添加", "Add")}
@@ -165,6 +178,7 @@ export function FilesystemOverridesSection({
                     <span>{ui("处理方式", "Action")}</span>
                     <select
                       value={rule.decision}
+                      disabled={disabled}
                       onChange={(event) => setDirectoryFileRuleDecision(rule.id, event.target.value)}
                     >
                       {DECISION_OPTIONS.map((decisionOption) => (
@@ -176,10 +190,11 @@ export function FilesystemOverridesSection({
                     <span>{ui("适用操作", "Applies to operations")}</span>
                     <FileRuleOperationSelector
                       operations={rule.operations}
+                      disabled={disabled}
                       onToggle={(operation) => toggleDirectoryFileRuleOperation(rule.id, operation)}
                     />
                   </label>
-                  <button className="ghost small" type="button" onClick={() => requestRemoveFileRule(rule)}>
+                  <button className="ghost small" type="button" disabled={disabled} onClick={() => requestRemoveFileRule(rule)}>
                     {ui("删除", "Remove")}
                   </button>
                 </div>
@@ -194,7 +209,7 @@ export function FilesystemOverridesSection({
           <div className="directory-picker-card" onClick={(event) => event.stopPropagation()}>
             <div className="directory-picker-head">
               <h4>{ui("选择目录", "Choose Directory")}</h4>
-              <button className="ghost small" type="button" onClick={closeDirectoryPicker}>
+              <button className="ghost small" type="button" disabled={disabled} onClick={closeDirectoryPicker}>
                 {ui("关闭", "Close")}
               </button>
             </div>
@@ -202,13 +217,13 @@ export function FilesystemOverridesSection({
               <button
                 className="ghost small"
                 type="button"
-                disabled={!filePickerParentPath || filePickerLoading}
+                disabled={disabled || !filePickerParentPath || filePickerLoading}
                 onClick={() => void loadDirectoryPicker(filePickerParentPath)}
               >
                 {ui("上级目录", "Up")}
               </button>
               <div className="directory-picker-current">{filePickerCurrentPath || "-"}</div>
-              <button className="primary small" type="button" disabled={!filePickerCurrentPath} onClick={chooseCurrentDirectory}>
+              <button className="primary small" type="button" disabled={disabled || !filePickerCurrentPath} onClick={chooseCurrentDirectory}>
                 {ui("选择当前目录", "Select Current Directory")}
               </button>
             </div>
@@ -221,7 +236,7 @@ export function FilesystemOverridesSection({
                     className="ghost small"
                     type="button"
                     onClick={() => void loadDirectoryPicker(root)}
-                    disabled={filePickerLoading}
+                    disabled={disabled || filePickerLoading}
                   >
                     {root}
                   </button>
@@ -242,6 +257,7 @@ export function FilesystemOverridesSection({
                     key={entry.path}
                     className="directory-picker-item"
                     type="button"
+                    disabled={disabled}
                     onClick={() => void loadDirectoryPicker(entry.path)}
                   >
                     <span className="directory-picker-item-name">{entry.name}</span>
@@ -273,10 +289,10 @@ export function FilesystemOverridesSection({
             <div className="confirm-dialog-path">{fileRuleDeleteTarget.directory}</div>
             <div className="confirm-dialog-text">{fileRuleOperationsSummary(fileRuleDeleteTarget)}</div>
             <div className="confirm-dialog-actions">
-              <button className="ghost small" type="button" onClick={cancelRemoveFileRule}>
+              <button className="ghost small" type="button" disabled={disabled} onClick={cancelRemoveFileRule}>
                 {ui("取消", "Cancel")}
               </button>
-              <button className="primary small" type="button" onClick={confirmRemoveFileRule}>
+              <button className="primary small" type="button" disabled={disabled} onClick={confirmRemoveFileRule}>
                 {ui("确认删除", "Delete")}
               </button>
             </div>

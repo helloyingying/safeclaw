@@ -35,6 +35,13 @@ export type GlobalWithSecurityClawAdmin = typeof globalThis & {
 };
 
 export type JsonRecord = Record<string, unknown>;
+export type ManagementStatus = {
+  admin_configured: boolean;
+  admin_subject?: string;
+  strategy_configured: boolean;
+  management_effective: boolean;
+  inactive_reason?: string;
+};
 export type DecisionValue = "allow" | "warn" | "challenge" | "block";
 
 export type DecisionHistoryRecord = {

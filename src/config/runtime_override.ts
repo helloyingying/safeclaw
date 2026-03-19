@@ -5,6 +5,7 @@ import {
 } from "../domain/services/sensitive_path_registry.ts";
 import { normalizeFileRules } from "../domain/services/file_rule_registry.ts";
 import { compileStrategyV2, type StrategyV2 } from "../domain/services/strategy_model.ts";
+import { hasConfiguredAdminAccount } from "../domain/services/account_policy_engine.ts";
 import type {
   AccountPolicyRecord,
   DlpConfig,
@@ -39,6 +40,7 @@ export function readRuntimeOverride(overridePath: string): RuntimeOverride | und
 
 export function applyRuntimeOverride(base: SecurityClawConfig, override: RuntimeOverride): SecurityClawConfig {
   const compiledStrategy = override.strategy ? compileStrategyV2(base, override.strategy) : undefined;
+  const canApplyStrategy = Boolean(compiledStrategy) && hasConfiguredAdminAccount(override.account_policies);
   const baseSensitivity = hydrateSensitivePathConfig(base.sensitivity);
   const merged: SecurityClawConfig = {
     ...base,
@@ -53,9 +55,9 @@ export function applyRuntimeOverride(base: SecurityClawConfig, override: Runtime
       ...(override.dlp ?? {}),
       patterns: override.dlp?.patterns ?? base.dlp.patterns
     },
-    policies: compiledStrategy?.policies ?? base.policies,
-    sensitivity: compiledStrategy?.sensitivity ?? baseSensitivity,
-    file_rules: compiledStrategy?.file_rules ?? normalizeFileRules(base.file_rules),
+    policies: canApplyStrategy ? (compiledStrategy?.policies ?? base.policies) : base.policies,
+    sensitivity: canApplyStrategy ? (compiledStrategy?.sensitivity ?? baseSensitivity) : baseSensitivity,
+    file_rules: canApplyStrategy ? (compiledStrategy?.file_rules ?? normalizeFileRules(base.file_rules)) : normalizeFileRules(base.file_rules),
   };
   return validateConfig(merged as unknown as Record<string, unknown>);
 }

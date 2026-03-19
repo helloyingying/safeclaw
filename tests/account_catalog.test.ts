@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  createAccountPolicyDraftFromSession,
   ensureDefaultAdminAccount,
   pruneAccountPolicyOverrides,
   mergeAccountPoliciesWithSessions,
@@ -10,16 +9,6 @@ import {
 
 test("mergeAccountPoliciesWithSessions shows scanned sessions and overlays saved policy fields", () => {
   const sessions = [
-    {
-      subject: "agent:main:main",
-      label: "main",
-      session_key: "agent:main:main",
-      session_id: "session-main",
-      agent_id: "main",
-      channel: "webchat",
-      chat_type: "direct",
-      updated_at: "2026-03-18T08:00:00.000Z",
-    },
     {
       subject: "telegram:chat-42",
       label: "telegram:chat-42",
@@ -29,6 +18,16 @@ test("mergeAccountPoliciesWithSessions shows scanned sessions and overlays saved
       channel: "telegram",
       chat_type: "direct",
       updated_at: "2026-03-18T07:00:00.000Z",
+    },
+    {
+      subject: "agent:main:main",
+      label: "main",
+      session_key: "agent:main:main",
+      session_id: "session-main",
+      agent_id: "main",
+      channel: "webchat",
+      chat_type: "direct",
+      updated_at: "2026-03-18T08:00:00.000Z",
     },
   ];
 
@@ -45,16 +44,16 @@ test("mergeAccountPoliciesWithSessions shows scanned sessions and overlays saved
   );
 
   assert.equal(merged.length, 2);
-  assert.equal(merged[0]?.subject, "agent:main:main");
-  assert.equal(merged[0]?.label, "main");
-  assert.equal(merged[1]?.subject, "telegram:chat-42");
-  assert.equal(merged[1]?.label, "Ops Telegram");
-  assert.equal(merged[1]?.mode, "default_allow");
-  assert.equal(merged[1]?.is_admin, true);
-  assert.equal(merged[1]?.session_id, "session-42");
+  assert.equal(merged[0]?.subject, "telegram:chat-42");
+  assert.equal(merged[0]?.label, "Ops Telegram");
+  assert.equal(merged[0]?.mode, "default_allow");
+  assert.equal(merged[0]?.is_admin, true);
+  assert.equal(merged[0]?.session_id, "session-42");
+  assert.equal(merged[1]?.subject, "agent:main:main");
+  assert.equal(merged[1]?.label, "main");
 });
 
-test("ensureDefaultAdminAccount seeds the main session as admin when none is configured", () => {
+test("ensureDefaultAdminAccount no longer invents a default admin", () => {
   const sessions = [
     {
       subject: "agent:main:main",
@@ -69,12 +68,7 @@ test("ensureDefaultAdminAccount seeds the main session as admin when none is con
   ];
 
   const next = ensureDefaultAdminAccount([], sessions, "2026-03-18T09:00:00.000Z");
-  assert.equal(next.length, 1);
-  assert.deepEqual(next[0], {
-    ...createAccountPolicyDraftFromSession(sessions[0], sessions[0].subject),
-    is_admin: true,
-    updated_at: "2026-03-18T09:00:00.000Z",
-  });
+  assert.deepEqual(next, []);
 });
 
 test("pruneAccountPolicyOverrides drops default apply_rules records", () => {

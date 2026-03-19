@@ -4,10 +4,6 @@ import type { OpenClawChatSession } from "./openclaw_session_catalog.ts";
 
 export const DEFAULT_MAIN_ADMIN_SESSION_KEY = "agent:main:main";
 
-function isDefaultMainSession(session: OpenClawChatSession | AccountPolicyRecord): boolean {
-  return session.session_key === DEFAULT_MAIN_ADMIN_SESSION_KEY || session.subject === DEFAULT_MAIN_ADMIN_SESSION_KEY;
-}
-
 export function createAccountPolicyDraftFromSession(
   session: OpenClawChatSession | undefined,
   subject: string,
@@ -74,12 +70,6 @@ export function mergeAccountPoliciesWithSessions(
   }
 
   return merged.sort((left, right) => {
-    const leftMain = isDefaultMainSession(left) ? 0 : 1;
-    const rightMain = isDefaultMainSession(right) ? 0 : 1;
-    if (leftMain !== rightMain) {
-      return leftMain - rightMain;
-    }
-
     const leftOrder = sessionOrder.get(left.subject) ?? Number.MAX_SAFE_INTEGER;
     const rightOrder = sessionOrder.get(right.subject) ?? Number.MAX_SAFE_INTEGER;
     if (leftOrder !== rightOrder) {
@@ -92,40 +82,10 @@ export function mergeAccountPoliciesWithSessions(
 
 export function ensureDefaultAdminAccount(
   policies: unknown,
-  sessions: OpenClawChatSession[],
-  nowIso = new Date().toISOString(),
+  _sessions: OpenClawChatSession[],
+  _nowIso = new Date().toISOString(),
 ): AccountPolicyRecord[] {
-  const normalizedPolicies = AccountPolicyEngine.sanitize(policies);
-  if (normalizedPolicies.some((policy) => policy.is_admin)) {
-    return normalizedPolicies;
-  }
-
-  const mainSession = sessions.find((session) => isDefaultMainSession(session));
-  if (!mainSession) {
-    return normalizedPolicies;
-  }
-
-  const existing = normalizedPolicies.find((policy) => policy.subject === mainSession.subject);
-  if (existing) {
-    return normalizedPolicies.map((policy) =>
-      policy.subject === mainSession.subject
-        ? {
-            ...policy,
-            is_admin: true,
-            updated_at: nowIso,
-          }
-        : policy,
-    );
-  }
-
-  return [
-    ...normalizedPolicies,
-    {
-      ...createAccountPolicyDraftFromSession(mainSession, mainSession.subject),
-      is_admin: true,
-      updated_at: nowIso,
-    },
-  ];
+  return AccountPolicyEngine.sanitize(policies);
 }
 
 export function isAccountPolicyOverride(policy: AccountPolicyRecord): boolean {

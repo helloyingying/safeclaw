@@ -43,6 +43,7 @@ import {
   countStrategyRules,
   readAccountPolicies,
   readEffectivePolicy,
+  readManagementStatus,
   readStrategyModel,
   summarizeTotals,
 } from "./server_policy.ts";
@@ -63,6 +64,65 @@ function sendServerError(res: http.ServerResponse, error: unknown): void {
 
 function sendClientError(res: http.ServerResponse, error: unknown): void {
   sendJson(res, 400, { ok: false, error: String(error) });
+}
+
+function buildManagementPayload(
+  locale: Parameters<typeof localize>[0],
+  management: {
+    admin_configured: boolean;
+    admin_subject?: string;
+    strategy_configured: boolean;
+    management_effective: boolean;
+  },
+) {
+  if (management.admin_configured) {
+    return management;
+  }
+  return {
+    ...management,
+    inactive_reason: localize(
+      locale,
+      "还没有管理员账号，所以工具策略不会生效。",
+      "No admin account is configured, so tool management does not take effect.",
+    ),
+  };
+}
+
+function formatStrategyManagementMessage(locale: Parameters<typeof localize>[0], management: {
+  admin_configured: boolean;
+  strategy_configured: boolean;
+  management_effective: boolean;
+}): string {
+  if (!management.admin_configured) {
+    return localize(
+      locale,
+      "工具策略已保存到本地 SQLite，但当前没有管理员，暂不会生效。",
+      "Tool strategy has been saved to local SQLite, but no admin is configured yet, so it is not active.",
+    );
+  }
+  return localize(
+    locale,
+    "工具策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
+    "Tool strategy has been saved to local SQLite and will apply on the next security decision.",
+  );
+}
+
+function formatAccountManagementMessage(locale: Parameters<typeof localize>[0], management: {
+  admin_configured: boolean;
+  admin_subject?: string;
+}): string {
+  if (!management.admin_configured) {
+    return localize(
+      locale,
+      "账号策略已保存到本地 SQLite，但当前没有管理员，工具策略暂不会生效。",
+      "Account settings have been saved to local SQLite, but no admin is configured yet, so tool management is not active.",
+    );
+  }
+  return localize(
+    locale,
+    "账号策略已保存到本地 SQLite，工具页里的提醒和审批会发给管理员账号。",
+    "Account settings have been saved to local SQLite. Tool approvals and warnings will go to the admin account.",
+  );
 }
 
 export function handleApi(
@@ -527,14 +587,17 @@ export function handleApi(
 
   if (req.method === "GET" && url.pathname === "/api/strategy") {
     try {
-      const { effective, override } = readEffectivePolicy(runtime, strategyStore);
+      const { effective, override, management } = readEffectivePolicy(runtime, strategyStore);
       const strategyModel = readStrategyModel(effective, override);
+      const managementPayload = buildManagementPayload(locale, management);
       sendJson(res, 200, {
         paths: {
           config_path: runtime.configPath,
           db_path: runtime.dbPath,
         },
         override: override ?? {},
+        management: managementPayload,
+        ...managementPayload,
         strategy: {
           environment: effective.environment,
           policy_version: effective.policy_version,
@@ -558,6 +621,7 @@ export function handleApi(
   if (req.method === "GET" && url.pathname === "/api/accounts") {
     try {
       const override = strategyStore.readOverride() ?? {};
+      const managementPayload = buildManagementPayload(locale, readManagementStatus(override));
       sendJson(res, 200, {
         paths: {
           db_path: runtime.dbPath,
@@ -565,6 +629,8 @@ export function handleApi(
         },
         account_policies: AccountPolicyEngine.sanitize(override.account_policies),
         sessions: listOpenClawChatSessions(runtime.openClawHome),
+        management: managementPayload,
+        ...managementPayload,
       });
     } catch (error) {
       sendServerError(res, error);
@@ -595,15 +661,15 @@ export function handleApi(
 
         const validated = applyRuntimeOverride(base, nextOverride);
         strategyStore.writeOverride(nextOverride);
+        const managementPayload = buildManagementPayload(locale, readManagementStatus(nextOverride));
+        const message = formatStrategyManagementMessage(locale, managementPayload);
 
         sendJson(res, 200, {
           ok: true,
           restart_required: false,
-          message: localize(
-            locale,
-            "策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
-            "Strategy has been saved to local SQLite and will apply on the next security decision.",
-          ),
+          message,
+          management: managementPayload,
+          ...managementPayload,
           effective: {
             environment: validated.environment,
             policy_version: validated.policy_version,
@@ -635,15 +701,15 @@ export function handleApi(
         const base = ConfigManager.fromFile(runtime.configPath).getConfig();
         applyRuntimeOverride(base, nextOverride);
         strategyStore.writeOverride(nextOverride);
+        const managementPayload = buildManagementPayload(locale, readManagementStatus(nextOverride));
+        const message = formatAccountManagementMessage(locale, managementPayload);
 
         sendJson(res, 200, {
           ok: true,
           restart_required: false,
-          message: localize(
-            locale,
-            "账号策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
-            "Account policies have been saved to local SQLite and will apply on the next security decision.",
-          ),
+          message,
+          management: managementPayload,
+          ...managementPayload,
           account_policy_count: readAccountPolicies(strategyStore).length,
         });
       } catch (error) {

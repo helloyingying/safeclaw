@@ -31,6 +31,17 @@ test("dashboard url state reads tab from query and falls back to hash", () => {
       decisionPage: 1,
     },
   );
+
+  assert.deepEqual(
+    readAdminDashboardUrlState({
+      search: "?tab=accounts",
+    }),
+    {
+      tab: "overview",
+      decisionFilter: "all",
+      decisionPage: 1,
+    },
+  );
 });
 
 test("dashboard search builder keeps unrelated params and drops default view state", () => {

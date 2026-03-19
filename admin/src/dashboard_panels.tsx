@@ -183,10 +183,13 @@ type EventsPanelProps = {
   onNavigatePage: (page: number) => void;
 };
 
-type AccountsPanelProps = {
+type AdminAccessPanelProps = {
   accountCount: number;
   displayAccounts: AccountPolicyRecord[];
   selectedAdminSubject: string;
+  adminConfigured: boolean;
+  managementEffective: boolean;
+  inactiveReason: string;
   accountPrimaryLabel: (account: Partial<AccountPolicyRecord> | null | undefined) => string;
   accountModeLabel: (mode: AccountPolicyMode | string | null | undefined) => string;
   accountMetaLabel: (account: Partial<AccountPolicyRecord> | null | undefined) => string;
@@ -817,84 +820,113 @@ export function EventsPanel({
   );
 }
 
-export function AccountsPanel({
+export function AdminAccessPanel({
   accountCount,
   displayAccounts,
   selectedAdminSubject,
+  adminConfigured,
+  managementEffective,
+  inactiveReason,
   accountPrimaryLabel,
   accountModeLabel,
   accountMetaLabel,
   onUpdateAccountPolicy,
   onSetAdminAccount,
-}: AccountsPanelProps) {
+}: AdminAccessPanelProps) {
+  const selectedAdminAccount = displayAccounts.find((account) => account.subject === selectedAdminSubject);
   return (
-    <section id="panel-accounts" className="tab-panel" role="tabpanel" aria-labelledby="tab-accounts">
-      <div className="panel-card accounts-panel dashboard-panel">
-        <div className="card-head">
-          <div>
-            <h2>{ui("账号", "Accounts")}</h2>
-            <p className="accounts-intro">
-              {ui("设置账号模式和管理员。默认管理员为 main。", "Set account mode and admin. main is the default admin.")}
-            </p>
-          </div>
-          <div className="rule-meta">
-            <span className="meta-pill">{ui("账号", "Accounts")} {accountCount}</span>
+    <section className="rule-group admin-access-panel" aria-label={ui("管理员账号", "Admin account")}>
+      <div className="rule-head rule-capability-head">
+        <div>
+          <div className="rule-title">{ui("管理员账号", "Admin account")}</div>
+          <div className="rule-desc">
+            {ui(
+              "先选一个管理员账号。审批和提醒消息会发给这个账号；没有管理员时，工具管理策略不会生效。",
+              "Choose an admin account first. Approval and warning messages go to that account; without an admin, tool management does not take effect."
+            )}
           </div>
         </div>
-
-        {accountCount === 0 ? (
-          <div className="chart-empty">{ui("还没有账号。", "No accounts yet.")}</div>
-        ) : (
-          <div className="account-list">
-            {displayAccounts.map((account) => (
-              <article key={account.subject} className="account-card">
-                <div className="account-card-head">
-                  <div>
-                    <div className="account-title-row">
-                      <h3>{accountPrimaryLabel(account)}</h3>
-                      {account.is_admin ? <span className="tag meta-tag">{ui("管理员", "Admin")}</span> : null}
-                      <span className={`tag ${account.mode === "default_allow" ? "warn" : "allow"}`}>
-                        {accountModeLabel(account.mode)}
-                      </span>
-                    </div>
-                    <div className="account-subject">{account.subject}</div>
-                    <div className="account-meta">{accountMetaLabel(account)}</div>
-                  </div>
-                </div>
-
-                <div className="account-controls">
-                  <label className="account-field">
-                    <span>{ui("规则模式", "Rule Mode")}</span>
-                    <select
-                      value={account.mode || "apply_rules"}
-                      onChange={(event) =>
-                        onUpdateAccountPolicy(account.subject, { mode: event.target.value as AccountPolicyMode })
-                      }
-                    >
-                      <option value="apply_rules">{ui("应用规则", "Apply Rules")}</option>
-                      <option value="default_allow">{ui("默认放行", "Default Allow")}</option>
-                    </select>
-                  </label>
-
-                  <label className="account-toggle">
-                    <input
-                      type="radio"
-                      name="admin-account"
-                      checked={selectedAdminSubject === account.subject}
-                      onChange={(event) => {
-                        if (event.target.checked) {
-                          onSetAdminAccount(account.subject);
-                        }
-                      }}
-                    />
-                    <span>{ui("管理员", "Admin")}</span>
-                  </label>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
+        <div className="rule-head-side">
+          <span className={`tag meta-tag ${managementEffective ? "allow" : "warn"}`}>
+            {managementEffective ? ui("已生效", "Active") : ui("未生效", "Inactive")}
+          </span>
+          <span className="tag meta-tag">{ui("账号", "Accounts")} {accountCount}</span>
+        </div>
       </div>
+
+      <div className={`management-status ${managementEffective ? "good" : "warn"}`}>
+        <span className="rule-helper-label">{ui("当前状态", "Current status")}</span>
+        <p>
+          {managementEffective && selectedAdminAccount
+            ? ui(
+              `管理员已配置，审批和提醒会发到 ${accountPrimaryLabel(selectedAdminAccount)}。`,
+              `An admin account is configured, and approval and warning messages will go to ${accountPrimaryLabel(selectedAdminAccount)}.`
+            )
+            : (inactiveReason || ui("还没有管理员账号，所以工具策略不会生效。", "No admin account is configured, so tool management does not take effect."))}
+        </p>
+      </div>
+
+      {adminConfigured ? (
+        <div className="management-note">
+          {ui(
+            "账号设置会决定谁收到审批和提醒。下面的工具策略只在管理员存在时才会参与判断。",
+            "Account settings decide who receives approvals and warnings. The tool policy below only participates when an admin exists."
+          )}
+        </div>
+      ) : null}
+
+      {accountCount === 0 ? (
+        <div className="chart-empty">{ui("还没有账号。", "No accounts yet.")}</div>
+      ) : (
+        <div className="account-list">
+          {displayAccounts.map((account) => (
+            <article key={account.subject} className={`account-card ${selectedAdminSubject === account.subject ? "active" : ""}`}>
+              <div className="account-card-head">
+                <div>
+                  <div className="account-title-row">
+                    <h3>{accountPrimaryLabel(account)}</h3>
+                    {account.is_admin ? <span className="tag meta-tag">{ui("管理员", "Admin")}</span> : null}
+                    <span className={`tag ${account.mode === "default_allow" ? "warn" : "allow"}`}>
+                      {accountModeLabel(account.mode)}
+                    </span>
+                  </div>
+                  <div className="account-subject">{account.subject}</div>
+                  <div className="account-meta">{accountMetaLabel(account)}</div>
+                </div>
+              </div>
+
+              <div className="account-controls">
+                <label className="account-field">
+                  <span>{ui("规则模式", "Rule Mode")}</span>
+                  <select
+                    value={account.mode || "apply_rules"}
+                    onChange={(event) =>
+                      onUpdateAccountPolicy(account.subject, { mode: event.target.value as AccountPolicyMode })
+                    }
+                  >
+                    <option value="apply_rules">{ui("应用规则", "Apply Rules")}</option>
+                    <option value="default_allow">{ui("默认放行", "Default Allow")}</option>
+                  </select>
+                </label>
+
+                <label className="account-toggle">
+                  <input
+                    type="radio"
+                    name="admin-account"
+                    checked={selectedAdminSubject === account.subject}
+                    onChange={(event) => {
+                      if (event.target.checked) {
+                        onSetAdminAccount(account.subject);
+                      }
+                    }}
+                  />
+                  <span>{ui("设为管理员", "Set as admin")}</span>
+                </label>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

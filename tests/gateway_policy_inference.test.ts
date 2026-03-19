@@ -539,7 +539,14 @@ test("gateway directory overrides can be scoped to read-only access", async () =
         }
       ];
       writer.writeOverride({
-        strategy
+        strategy,
+        account_policies: [
+          {
+            subject: "telegram:chat-42",
+            mode: "apply_rules",
+            is_admin: true,
+          },
+        ],
       });
     } finally {
       writer.close();
@@ -594,7 +601,7 @@ test("gateway maps shell file writes to filesystem.write rules", async () => {
   }
 });
 
-test("gateway allows configured account in default allow mode without changing rules", async () => {
+test("gateway allows configured admin account in default allow mode without changing rules", async () => {
   const harness = await createBeforeToolCallHook();
   let writer: StrategyStore | undefined;
   try {
@@ -604,7 +611,7 @@ test("gateway allows configured account in default allow mode without changing r
         {
           subject: "telegram:chat-42",
           mode: "default_allow",
-          is_admin: false
+          is_admin: true
         }
       ]
     });
@@ -625,6 +632,43 @@ test("gateway allows configured account in default allow mode without changing r
     };
     assert.equal(snapshot.recent_decisions[0]?.decision_source, "account");
     assert.deepEqual(snapshot.recent_decisions[0]?.reasons, ["ACCOUNT_DEFAULT_ALLOW"]);
+  } finally {
+    writer?.close();
+    harness.cleanup();
+  }
+});
+
+test("gateway ignores default allow when no admin account is configured", async () => {
+  const harness = await createBeforeToolCallHook();
+  let writer: StrategyStore | undefined;
+  try {
+    writer = new StrategyStore(harness.dbPath);
+    writer.writeOverride({
+      account_policies: [
+        {
+          subject: "telegram:chat-42",
+          mode: "default_allow",
+          is_admin: false
+        }
+      ]
+    });
+    writer.close();
+    writer = undefined;
+
+    const challenged = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(challenged?.block, true);
+    assert.match(String(challenged?.blockReason), /SecurityClaw/);
+    const snapshot = JSON.parse(readFileSync(harness.statusPath, "utf8")) as {
+      recent_decisions: Array<{ decision_source?: string; reasons?: string[] }>;
+    };
+    assert.notEqual(snapshot.recent_decisions[0]?.decision_source, "account");
   } finally {
     writer?.close();
     harness.cleanup();

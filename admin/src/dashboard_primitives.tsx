@@ -26,6 +26,7 @@ type DecisionTagProps = {
 type FileRuleOperationSelectorProps = {
   operations?: unknown;
   onToggle: (operation: string) => void;
+  disabled?: boolean;
 };
 
 type OverviewStatCardProps = {
@@ -130,7 +131,7 @@ export function DecisionTag({ decision }: DecisionTagProps) {
   return <span className={`tag ${decision || "allow"}`}>{decisionLabel(decision)}</span>;
 }
 
-export function FileRuleOperationSelector({ operations, onToggle }: FileRuleOperationSelectorProps) {
+export function FileRuleOperationSelector({ operations, onToggle, disabled = false }: FileRuleOperationSelectorProps) {
   const normalizedOperations = normalizeFileRuleOperations(operations);
   const appliesToAll = normalizedOperations.length === 0;
   return (
@@ -138,6 +139,7 @@ export function FileRuleOperationSelector({ operations, onToggle }: FileRuleOper
       <button
         className={`file-rule-operation-chip ${appliesToAll ? "active" : ""}`}
         type="button"
+        disabled={disabled}
         onClick={() => onToggle("__all__")}
         aria-pressed={appliesToAll}
       >
@@ -148,6 +150,7 @@ export function FileRuleOperationSelector({ operations, onToggle }: FileRuleOper
           key={operation}
           className={`file-rule-operation-chip ${normalizedOperations.includes(operation) ? "active" : ""}`}
           type="button"
+          disabled={disabled}
           onClick={() => onToggle(operation)}
           aria-pressed={normalizedOperations.includes(operation)}
         >
