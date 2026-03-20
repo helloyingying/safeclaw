@@ -1,4 +1,6 @@
 import type { AccountPolicyMode, AccountPolicyRecord } from "../../types.ts";
+import type { SecurityClawLocale } from "../../i18n/locale.ts";
+import { resolveSecurityClawLocale } from "../../i18n/locale.ts";
 import { isManageableAccountRecord } from "./account_subject_classifier.ts";
 
 export type AccountDecisionOverride = {
@@ -14,6 +16,13 @@ function normalizeString(value: unknown): string | undefined {
 
 function normalizeMode(value: unknown): AccountPolicyMode {
   return value === "default_allow" ? "default_allow" : "apply_rules";
+}
+
+function normalizeApprovalLocale(value: unknown): SecurityClawLocale | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  return resolveSecurityClawLocale(value, "en");
 }
 
 function enforceSingleAdmin(policies: AccountPolicyRecord[]): AccountPolicyRecord[] {
@@ -36,7 +45,12 @@ function enforceSingleAdmin(policies: AccountPolicyRecord[]): AccountPolicyRecor
   );
 }
 
-function normalizePolicyEntry(value: unknown): AccountPolicyRecord | undefined {
+function normalizePolicyEntry(
+  value: unknown,
+  options: {
+    defaultAdminApprovalLocale?: SecurityClawLocale;
+  } = {},
+): AccountPolicyRecord | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -46,11 +60,19 @@ function normalizePolicyEntry(value: unknown): AccountPolicyRecord | undefined {
     return undefined;
   }
 
+  const isAdmin = (value as { is_admin?: unknown }).is_admin === true;
   const record: AccountPolicyRecord = {
     subject,
     mode: normalizeMode((value as { mode?: unknown }).mode),
-    is_admin: (value as { is_admin?: unknown }).is_admin === true,
+    is_admin: isAdmin,
   };
+
+  const approvalLocale =
+    normalizeApprovalLocale((value as { approval_locale?: unknown }).approval_locale) ??
+    (isAdmin ? options.defaultAdminApprovalLocale : undefined);
+  if (approvalLocale) {
+    record.approval_locale = approvalLocale;
+  }
 
   const optionalFields = [
     "label",
@@ -73,13 +95,22 @@ function normalizePolicyEntry(value: unknown): AccountPolicyRecord | undefined {
 }
 
 export function sanitizeAccountPolicies(input: unknown): AccountPolicyRecord[] {
+  return sanitizeAccountPoliciesWithOptions(input);
+}
+
+export function sanitizeAccountPoliciesWithOptions(
+  input: unknown,
+  options: {
+    defaultAdminApprovalLocale?: SecurityClawLocale;
+  } = {},
+): AccountPolicyRecord[] {
   if (!Array.isArray(input)) {
     return [];
   }
 
   const deduped = new Map<string, AccountPolicyRecord>();
   for (const entry of input) {
-    const normalized = normalizePolicyEntry(entry);
+    const normalized = normalizePolicyEntry(entry, options);
     if (!normalized || !isManageableAccountRecord(normalized)) {
       continue;
     }
@@ -97,13 +128,26 @@ export function getConfiguredAdminAccount(input: unknown): AccountPolicyRecord |
 }
 
 export function canonicalizeAccountPolicies(input: unknown): AccountPolicyRecord[] {
-  return sanitizeAccountPolicies(input)
+  return canonicalizeAccountPoliciesWithOptions(input);
+}
+
+export function canonicalizeAccountPoliciesWithOptions(
+  input: unknown,
+  options: {
+    defaultAdminApprovalLocale?: SecurityClawLocale;
+  } = {},
+): AccountPolicyRecord[] {
+  return sanitizeAccountPoliciesWithOptions(input, options)
     .map((policy) => {
       const canonical: AccountPolicyRecord = {
         subject: policy.subject,
         mode: policy.mode,
         is_admin: policy.is_admin,
       };
+
+      if (policy.approval_locale) {
+        canonical.approval_locale = policy.approval_locale;
+      }
 
       const optionalFields = [
         "label",

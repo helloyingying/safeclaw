@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   ensureDefaultAdminAccount,
+  materializeAdminApprovalLocale,
   pruneAccountPolicyOverrides,
   mergeAccountPoliciesWithSessions,
 } from "../src/admin/account_catalog.ts";
@@ -38,6 +39,7 @@ test("mergeAccountPoliciesWithSessions shows scanned sessions and overlays saved
         mode: "default_allow",
         is_admin: true,
         label: "Ops Telegram",
+        approval_locale: "zh-CN",
       },
     ],
     sessions,
@@ -48,6 +50,7 @@ test("mergeAccountPoliciesWithSessions shows scanned sessions and overlays saved
   assert.equal(merged[0]?.label, "Ops Telegram");
   assert.equal(merged[0]?.mode, "default_allow");
   assert.equal(merged[0]?.is_admin, true);
+  assert.equal(merged[0]?.approval_locale, "zh-CN");
   assert.equal(merged[0]?.session_id, "session-42");
   assert.equal(merged[1]?.subject, "agent:main:main");
   assert.equal(merged[1]?.label, "main");
@@ -109,6 +112,38 @@ test("ensureDefaultAdminAccount no longer invents a default admin", () => {
 
   const next = ensureDefaultAdminAccount([], sessions, "2026-03-18T09:00:00.000Z");
   assert.deepEqual(next, []);
+});
+
+test("materializeAdminApprovalLocale fills the selected admin locale when it is missing", () => {
+  const next = materializeAdminApprovalLocale(
+    [
+      {
+        subject: "feishu:ops",
+        mode: "apply_rules",
+        is_admin: true,
+      },
+      {
+        subject: "telegram:reviewer",
+        mode: "default_allow",
+        is_admin: false,
+      },
+    ],
+    "zh-CN",
+  );
+
+  assert.deepEqual(next, [
+    {
+      subject: "feishu:ops",
+      mode: "apply_rules",
+      is_admin: true,
+      approval_locale: "zh-CN",
+    },
+    {
+      subject: "telegram:reviewer",
+      mode: "default_allow",
+      is_admin: false,
+    },
+  ]);
 });
 
 test("pruneAccountPolicyOverrides drops default apply_rules records", () => {

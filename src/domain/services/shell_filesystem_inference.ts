@@ -115,6 +115,11 @@ const OPERATION_PRIORITY: Record<FilesystemOperation, number> = {
   delete: 6,
 };
 
+type PendingHeredoc = {
+  marker: string;
+  allowTabs: boolean;
+};
+
 function toTokens(segment: string): string[] {
   return segment.match(TOKEN_PATTERN) ?? [];
 }
@@ -151,6 +156,48 @@ function resolvePrimaryCommand(tokens: string[]): { command?: string; remaining:
     };
   }
   return { remaining: [] };
+}
+
+function extractHeredocMarkers(line: string): PendingHeredoc[] {
+  const markers: PendingHeredoc[] = [];
+  const matches = line.matchAll(/<<(-)?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g);
+  for (const match of matches) {
+    const marker = match[3];
+    if (!marker) {
+      continue;
+    }
+    markers.push({
+      marker,
+      allowTabs: match[1] === "-",
+    });
+  }
+  return markers;
+}
+
+function stripHeredocBodies(commandText: string): string {
+  const lines = commandText.split(/\r?\n/);
+  if (lines.length <= 1) {
+    return commandText;
+  }
+
+  const sanitized: string[] = [];
+  const pending: PendingHeredoc[] = [];
+
+  for (const line of lines) {
+    if (pending.length > 0) {
+      const current = pending[0];
+      const candidate = current.allowTabs ? line.replace(/^\t+/, "") : line;
+      if (candidate === current.marker) {
+        pending.shift();
+      }
+      continue;
+    }
+
+    sanitized.push(line);
+    pending.push(...extractHeredocMarkers(line));
+  }
+
+  return sanitized.join("\n");
 }
 
 function classifyGitOperation(remaining: string[]): FilesystemOperation | undefined {
@@ -336,7 +383,8 @@ export function inferShellFilesystemSemantic(
   commandText: string | undefined,
   resourcePaths: string[],
 ): ShellFilesystemSemantic | undefined {
-  const segments = (commandText ?? "")
+  const normalizedCommandText = stripHeredocBodies(commandText ?? "");
+  const segments = normalizedCommandText
     .split(SEGMENT_SPLITTER)
     .map((item) => item.trim())
     .filter(Boolean);

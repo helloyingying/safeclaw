@@ -67,6 +67,7 @@ export class ContextInferenceService {
     let nextResourceScope = resourceScope;
     let toolGroup = normalizedToolName ? this.inferToolGroup(normalizedToolName) : undefined;
     let operation = normalizedToolName ? this.inferOperation(normalizedToolName) : undefined;
+    let inferredToolName: string | undefined;
     const tags: string[] = [];
 
     if (normalizedToolName === "shell.exec") {
@@ -84,6 +85,7 @@ export class ContextInferenceService {
       } else {
         const shellSemantic = inferShellFilesystemSemantic(commandText, nextResourcePaths);
         if (shellSemantic) {
+          inferredToolName = shellSemantic.toolName;
           toolGroup = "filesystem";
           operation = shellSemantic.operation;
           tags.push("shell_filesystem_access", `shell_filesystem_operation:${shellSemantic.operation}`);
@@ -92,6 +94,7 @@ export class ContextInferenceService {
     }
 
     return {
+      ...(inferredToolName !== undefined ? { inferredToolName } : {}),
       ...(toolGroup !== undefined ? { toolGroup } : {}),
       ...(operation !== undefined ? { operation } : {}),
       resourceScope: nextResourceScope,

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AccountPolicyEngine, canonicalizeAccountPolicies } from "../src/domain/services/account_policy_engine.ts";
+import {
+  AccountPolicyEngine,
+  canonicalizeAccountPolicies,
+  sanitizeAccountPoliciesWithOptions,
+} from "../src/domain/services/account_policy_engine.ts";
 
 test("canonicalize account policies produces stable order and field layout", () => {
   const first = canonicalizeAccountPolicies([
@@ -46,6 +50,27 @@ test("canonicalize account policies keeps only one admin account", () => {
 
   assert.equal(policies.filter((policy) => policy.is_admin).length, 1);
   assert.equal(policies.find((policy) => policy.is_admin)?.subject, "telegram:admin-b");
+});
+
+test("sanitize account policies defaults admin approval locale from the admin console locale", () => {
+  const policies = sanitizeAccountPoliciesWithOptions(
+    [
+      {
+        subject: "telegram:admin-a",
+        mode: "apply_rules",
+        is_admin: true,
+      },
+      {
+        subject: "telegram:chat-42",
+        mode: "default_allow",
+        is_admin: false,
+      },
+    ],
+    { defaultAdminApprovalLocale: "zh-CN" },
+  );
+
+  assert.equal(policies.find((policy) => policy.is_admin)?.approval_locale, "zh-CN");
+  assert.equal(policies.find((policy) => !policy.is_admin)?.approval_locale, undefined);
 });
 
 test("account default allow stays inactive until an admin is configured", () => {

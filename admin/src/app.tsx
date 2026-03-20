@@ -53,6 +53,7 @@ import {
 } from "../../src/admin/dashboard_url_state.ts";
 import {
   createAccountPolicyDraftFromSession,
+  materializeAdminApprovalLocale,
   mergeAccountPoliciesWithSessions,
   pruneAccountPolicyOverrides,
 } from "../../src/admin/account_catalog.ts";
@@ -2438,6 +2439,20 @@ function App() {
   }, [accountPolicies, hasPendingAccountChanges, loading, saveAccounts, saving]);
 
   useEffect(() => {
+    if (loading) {
+      return;
+    }
+    const nextAccountPolicies = materializeAdminApprovalLocale(accountPolicies, locale);
+    if (
+      JSON.stringify(canonicalizeAccountPolicies(nextAccountPolicies))
+      === JSON.stringify(canonicalizeAccountPolicies(accountPolicies))
+    ) {
+      return;
+    }
+    setAccountPolicies(clone(nextAccountPolicies));
+  }, [accountPolicies, loading, locale]);
+
+  useEffect(() => {
     if (decisionLoading) {
       return;
     }
@@ -2605,6 +2620,7 @@ function App() {
 
   function setAdminAccount(subject: string) {
     const nowIso = new Date().toISOString();
+    const defaultApprovalLocale = getActiveAdminLocale();
     const session = availableSessions.find((item) => item.subject === subject);
     setAccountPolicies((current) => {
       let next = current.map((account) =>
@@ -2612,6 +2628,7 @@ function App() {
           ? {
               ...account,
               is_admin: true,
+              approval_locale: account.approval_locale ?? defaultApprovalLocale,
               updated_at: nowIso
             }
           : account.is_admin
@@ -2628,6 +2645,7 @@ function App() {
           {
             ...createAccountPolicyDraftFromSession(session, subject),
             is_admin: true,
+            approval_locale: defaultApprovalLocale,
             updated_at: nowIso
           }
         ];

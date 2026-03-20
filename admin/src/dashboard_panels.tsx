@@ -16,7 +16,7 @@ import type { SkillSummary } from "../../src/admin/skill_interception_store.ts";
 import type { DecisionHistoryRecord } from "../../src/admin/server_types.ts";
 import type { SecurityClawLocale } from "../../src/i18n/locale.ts";
 import type { AccountPolicyMode, AccountPolicyRecord, Decision } from "../../src/types.ts";
-import { ui } from "./dashboard_core.ts";
+import { getActiveAdminLocale, ui } from "./dashboard_core.ts";
 import type { DashboardTheme, DashboardThemePreference } from "./dashboard_core.ts";
 import {
   ChartTooltip,
@@ -834,6 +834,7 @@ export function AdminAccessPanel({
   onSetAdminAccount,
 }: AdminAccessPanelProps) {
   const selectedAdminAccount = displayAccounts.find((account) => account.subject === selectedAdminSubject);
+  const defaultApprovalLocale = getActiveAdminLocale();
   return (
     <section className="rule-group admin-access-panel" aria-label={ui("管理员账号", "Admin account")}>
       <div className="rule-head rule-capability-head">
@@ -922,6 +923,22 @@ export function AdminAccessPanel({
                   />
                   <span>{ui("设为管理员", "Set as admin")}</span>
                 </label>
+
+                {selectedAdminSubject === account.subject ? (
+                  <label className="account-field">
+                    <span>{ui("审批消息语言", "Approval message language")}</span>
+                    <select
+                      value={account.approval_locale || defaultApprovalLocale}
+                      onChange={(event) =>
+                        onUpdateAccountPolicy(account.subject, {
+                          approval_locale: event.target.value as SecurityClawLocale,
+                        })}
+                    >
+                      <option value="zh-CN">{ui("中文", "Chinese")}</option>
+                      <option value="en">English</option>
+                    </select>
+                  </label>
+                ) : null}
               </div>
             </article>
           ))}

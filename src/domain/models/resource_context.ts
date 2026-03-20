@@ -6,6 +6,7 @@ export interface ResourceContext {
 }
 
 export interface ToolContext {
+  inferredToolName?: string;
   toolGroup?: string;
   operation?: string;
   resourceScope: ResourceScope;

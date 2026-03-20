@@ -1,5 +1,6 @@
 import { AccountPolicyEngine } from "../domain/services/account_policy_engine.ts";
 import { isManageableAccountRecord } from "../domain/services/account_subject_classifier.ts";
+import type { SecurityClawLocale } from "../i18n/locale.ts";
 import type { AccountPolicyRecord } from "../types.ts";
 import type { OpenClawChatSession } from "./openclaw_session_catalog.ts";
 
@@ -88,6 +89,20 @@ export function ensureDefaultAdminAccount(
   _nowIso = new Date().toISOString(),
 ): AccountPolicyRecord[] {
   return AccountPolicyEngine.sanitize(policies);
+}
+
+export function materializeAdminApprovalLocale(
+  policies: unknown,
+  defaultAdminApprovalLocale: SecurityClawLocale,
+): AccountPolicyRecord[] {
+  return AccountPolicyEngine.sanitize(policies).map((policy) =>
+    policy.is_admin && !policy.approval_locale
+      ? {
+          ...policy,
+          approval_locale: defaultAdminApprovalLocale,
+        }
+      : policy,
+  );
 }
 
 export function isAccountPolicyOverride(policy: AccountPolicyRecord): boolean {

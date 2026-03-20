@@ -1,5 +1,4 @@
 import os from "node:os";
-import { isIP } from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -34,15 +33,9 @@ import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import { readProcessEnvValue, resolveSecurityClawAdminPort } from "./src/runtime/process_env.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
-import {
-  extractEmbeddedPathCandidates,
-  hasEmbeddedPathHint,
-  isPathLikeCandidate,
-  resolvePathCandidate,
-} from "./src/domain/services/path_candidate_inference.ts";
+import { ContextInferenceService } from "./src/domain/services/context_inference_service.ts";
+import { resolveConfiguredOpenClawWorkspace } from "./src/domain/services/openclaw_workspace_resolver.ts";
 import { hydrateSensitivePathConfig } from "./src/domain/services/sensitive_path_registry.ts";
-import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
-import { inferSensitivityLabels } from "./src/domain/services/sensitivity_label_inference.ts";
 import type { SecurityClawLocale } from "./src/i18n/locale.ts";
 import { localeForIntl, pickLocalized, resolveSecurityClawLocale } from "./src/i18n/locale.ts";
 import type {
@@ -71,6 +64,8 @@ type SecurityClawHookContext = {
   sessionId?: string;
   runId?: string;
   workspaceDir?: string;
+  cwd?: string;
+  sessionCwd?: string;
   channelId?: string;
 };
 
@@ -103,6 +98,13 @@ type ResolvedApprovalBridge = {
   enabled: boolean;
   targets: ChatApprovalTarget[];
   approvers: ChatApprovalApprover[];
+  locale: SecurityClawLocale;
+};
+
+type AutoHandledApprovalReply = {
+  expiresAt: number;
+  remainingCancels: number;
+  aliases: string[];
 };
 
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -116,32 +118,10 @@ const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
 const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
 const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
 const APPROVAL_NOTIFICATION_HISTORY_LIMIT = 12;
+const AUTO_HANDLED_ADMIN_REPLY_TTL_MS = 10_000;
+const AUTO_HANDLED_ADMIN_REPLY_CANCELS = 3;
 const SECURITYCLAW_PROTECTED_STORAGE_RULE_ID = "internal:securityclaw-protected-storage";
 const SECURITYCLAW_PROTECTED_STORAGE_REASON = "SECURITYCLAW_STATE_STORAGE_PROTECTED";
-const OPENCLAW_CONTEXT_READ_RULE_ID = "internal:openclaw-context-read";
-const OPENCLAW_CONTEXT_READ_REASON = "OPENCLAW_CONTEXT_READ_ALLOW";
-const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
-const COMMAND_KEY_PATTERN = /(command|cmd|script|query|sql)/i;
-const URL_KEY_PATTERN = /(url|uri|endpoint|host|domain|upload|webhook|callback|proxy|origin|destination|dest)/i;
-const SYSTEM_PATH_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/private/etc", "/System", "/Library"];
-const DEFAULT_MESSAGES_DB_PATH = path.join(HOME_DIR, "Library/Messages/chat.db");
-const MESSAGE_DB_PATH_PATTERN = /(?:~\/Library\/Messages\/chat\.db|\/Users\/[^/\s"'`;]+\/Library\/Messages\/chat\.db)/i;
-const PERSONAL_STORAGE_DOMAINS = [
-  "dropbox.com",
-  "drive.google.com",
-  "docs.google.com",
-  "onedrive.live.com",
-  "1drv.ms",
-  "notion.so",
-  "notion.site",
-];
-const PASTE_SERVICE_DOMAINS = [
-  "pastebin.com",
-  "gist.github.com",
-  "gist.githubusercontent.com",
-  "hastebin.com",
-  "transfer.sh",
-];
 const CHANNEL_METHOD_SUFFIX_OVERRIDES: Record<string, string> = {
   imessage: "IMessage",
   whatsapp: "WhatsApp",
@@ -154,16 +134,10 @@ const CHANNEL_LOOKUP_ALIASES: Record<string, string[]> = {
   feishu: ["lark"],
   lark: ["feishu"],
 };
-const OPENCLAW_WORKSPACE_BOOTSTRAP_FILES = new Set([
-  "SOUL.md",
-  "USER.md",
-  "MEMORY.md",
-  "IDENTITY.md",
-  "BOOTSTRAP.md",
-]);
 const getChannelPluginCompat = (OpenClawCompat as Record<string, unknown>).getChannelPlugin as
   | ((id: string) => unknown)
   | undefined;
+const contextInference = new ContextInferenceService();
 
 function resolveRuntimeLocale(): SecurityClawLocale {
   const systemLocale = Intl.DateTimeFormat().resolvedOptions().locale;
@@ -174,6 +148,10 @@ let runtimeLocale: SecurityClawLocale = resolveRuntimeLocale();
 
 function text(zhText: string, enText: string): string {
   return pickLocalized(runtimeLocale, zhText, enText);
+}
+
+function textForLocale(locale: SecurityClawLocale, zhText: string, enText: string): string {
+  return pickLocalized(locale, zhText, enText);
 }
 
 function resolvePluginStateDir(api: OpenClawPluginApi): string {
@@ -200,54 +178,34 @@ function resolveScope(ctx: { workspaceDir?: string | undefined; channelId?: stri
   return ctx.channelId ?? "default";
 }
 
-function isPathLike(value: string, keyHint: string): boolean {
-  if (PATH_KEY_PATTERN.test(keyHint)) {
-    return true;
+function normalizeWorkspaceCandidate(candidate: unknown, fallbackBaseDir?: string): string | undefined {
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    return undefined;
   }
-  return isPathLikeCandidate(value);
+  const trimmed = candidate.trim();
+  if (path.isAbsolute(trimmed)) {
+    return path.normalize(path.resolve(trimmed));
+  }
+  if (!fallbackBaseDir) {
+    return undefined;
+  }
+  return path.normalize(path.resolve(fallbackBaseDir, trimmed));
 }
 
-function collectPathCandidates(value: unknown, keyHint = "", depth = 0, output: string[] = []): string[] {
-  if (depth > 4 || output.length >= 24) {
-    return output;
+function resolveWorkspaceFromArgs(args: unknown, fallbackBaseDir?: string): string | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
   }
 
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed && isPathLike(trimmed, keyHint)) {
-      output.push(trimmed);
-    } else if (trimmed && (COMMAND_KEY_PATTERN.test(keyHint) || hasEmbeddedPathHint(trimmed))) {
-      for (const candidate of extractEmbeddedPathCandidates(trimmed)) {
-        output.push(candidate);
-        if (output.length >= 24) {
-          break;
-        }
-      }
-    }
-    return output;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectPathCandidates(item, keyHint, depth + 1, output);
-      if (output.length >= 24) {
-        break;
-      }
-    }
-    return output;
-  }
-
-  if (!value || typeof value !== "object") {
-    return output;
-  }
-
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    collectPathCandidates(item, key, depth + 1, output);
-    if (output.length >= 24) {
-      break;
+  const record = args as Record<string, unknown>;
+  for (const key of ["workspaceDir", "workdir", "cwd"]) {
+    const resolved = normalizeWorkspaceCandidate(record[key], fallbackBaseDir);
+    if (resolved) {
+      return resolved;
     }
   }
-  return output;
+
+  return undefined;
 }
 
 function isPathInside(rootDir: string, candidate: string): boolean {
@@ -255,305 +213,24 @@ function isPathInside(rootDir: string, candidate: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function isSystemPath(candidate: string): boolean {
-  return SYSTEM_PATH_PREFIXES.some((prefix) => candidate === prefix || candidate.startsWith(`${prefix}/`));
-}
-
-function classifyResolvedResourcePaths(
-  resolved: string[],
-  workspaceDir?: string,
-): { resourceScope: ResourceScope; resourcePaths: string[] } {
-  if (resolved.length === 0) {
-    return { resourceScope: "none", resourcePaths: [] };
-  }
-
-  let hasInside = false;
-  let hasOutside = false;
-  let hasSystem = false;
-  const normalizedWorkspace = workspaceDir ? path.normalize(workspaceDir) : undefined;
-
-  for (const candidate of resolved) {
-    if (isSystemPath(candidate)) {
-      hasSystem = true;
-    }
-    if (normalizedWorkspace && isPathInside(normalizedWorkspace, candidate)) {
-      hasInside = true;
-    } else {
-      hasOutside = true;
-    }
-  }
-
-  if (hasSystem) {
-    return { resourceScope: "system", resourcePaths: resolved };
-  }
-  if (hasOutside) {
-    return { resourceScope: "workspace_outside", resourcePaths: resolved };
-  }
-  if (hasInside) {
-    return { resourceScope: "workspace_inside", resourcePaths: resolved };
-  }
-  return { resourceScope: "none", resourcePaths: resolved };
-}
-
 function extractResourceContext(args: unknown, workspaceDir?: string): { resourceScope: ResourceScope; resourcePaths: string[] } {
-  const candidates = collectPathCandidates(args);
-  const resolved = Array.from(
-    new Set(
-      candidates
-        .map((candidate) => resolvePathCandidate(candidate, workspaceDir))
-        .filter((value): value is string => Boolean(value)),
-    ),
-  ).slice(0, 12);
-  return classifyResolvedResourcePaths(resolved, workspaceDir);
+  return contextInference.inferResourceContext(args, workspaceDir);
 }
 
-function isUrlLike(value: string, keyHint: string): boolean {
-  return URL_KEY_PATTERN.test(keyHint) || value.startsWith("http://") || value.startsWith("https://");
-}
-
-function collectUrlCandidates(value: unknown, keyHint = "", depth = 0, output: string[] = []): string[] {
-  if (depth > 4 || output.length >= 12) {
-    return output;
-  }
-
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed && isUrlLike(trimmed, keyHint)) {
-      output.push(trimmed);
-    }
-    return output;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectUrlCandidates(item, keyHint, depth + 1, output);
-      if (output.length >= 12) {
-        break;
-      }
-    }
-    return output;
-  }
-
-  if (!value || typeof value !== "object") {
-    return output;
-  }
-
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    collectUrlCandidates(item, key, depth + 1, output);
-    if (output.length >= 12) {
-      break;
-    }
-  }
-  return output;
-}
-
-function isPrivateIp(host: string): boolean {
-  if (isIP(host) !== 4) {
-    return false;
-  }
-  const octets = host.split(".").map((value) => Number(value));
-  return (
-    octets[0] === 10 ||
-    octets[0] === 127 ||
-    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-    (octets[0] === 192 && octets[1] === 168)
-  );
-}
-
-function isLoopbackIp(host: string): boolean {
-  if (isIP(host) === 4) {
-    return host.startsWith("127.");
-  }
-  return host === "::1";
-}
-
-function classifyDestination(urls: string[]): Pick<
-  DecisionContext,
-  "destination_type" | "dest_domain" | "dest_ip_class"
-> {
-  for (const candidate of urls) {
-    try {
-      const parsed = new URL(candidate);
-      const host = parsed.hostname.toLowerCase();
-      const ipVersion = isIP(host);
-      const isInternalHost =
-        host === "localhost" ||
-        host.endsWith(".internal") ||
-        host.endsWith(".corp") ||
-        host.endsWith(".local") ||
-        host.endsWith(".lan") ||
-        isPrivateIp(host);
-
-      const destinationType =
-        PERSONAL_STORAGE_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))
-          ? "personal_storage"
-          : PASTE_SERVICE_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`))
-            ? "paste_service"
-            : isInternalHost
-              ? "internal"
-              : "public";
-
-      const destIpClass =
-        ipVersion === 0
-          ? destinationType === "internal"
-            ? "private"
-            : "unknown"
-          : isLoopbackIp(host)
-            ? "loopback"
-            : isPrivateIp(host)
-              ? "private"
-              : "public";
-
-      return {
-        destination_type: destinationType,
-        dest_domain: host,
-        dest_ip_class: destIpClass,
-      };
-    } catch {
-      continue;
-    }
-  }
-
-  return {};
-}
-
-function inferToolGroup(toolName: string): string | undefined {
-  const normalized = toolName.trim().toLowerCase();
-  if (normalized.startsWith("shell.")) {
-    return "execution";
-  }
-  if (normalized.startsWith("filesystem.")) {
-    return "filesystem";
-  }
-  if (normalized.startsWith("network.") || normalized.startsWith("http.")) {
-    return "network";
-  }
-  if (normalized.startsWith("email.") || normalized.startsWith("mail.")) {
-    return "email";
-  }
-  if (
-    normalized.startsWith("sms.") ||
-    normalized.startsWith("message.") ||
-    normalized.startsWith("messages.")
-  ) {
-    return "sms";
-  }
-  if (normalized.startsWith("album.") || normalized.startsWith("photo.") || normalized.startsWith("media.")) {
-    return "album";
-  }
-  if (normalized.startsWith("browser.")) {
-    return "browser";
-  }
-  if (
-    normalized.startsWith("archive.") ||
-    normalized.startsWith("compress.") ||
-    normalized.includes(".archive") ||
-    normalized.includes(".compress") ||
-    normalized.includes(".zip")
-  ) {
-    return "archive";
-  }
-  if (
-    normalized.startsWith("crm.") ||
-    normalized.startsWith("erp.") ||
-    normalized.startsWith("hr.") ||
-    normalized.startsWith("finance.") ||
-    normalized.startsWith("jira.") ||
-    normalized.startsWith("servicenow.") ||
-    normalized.startsWith("zendesk.")
-  ) {
-    return "business";
-  }
-  return undefined;
-}
-
-function inferOperation(toolName: string): string | undefined {
-  const normalized = toolName.trim().toLowerCase();
-  if (normalized.startsWith("network.") || normalized.startsWith("http.")) {
-    return "request";
-  }
-  if (/(exec|run|spawn)$/.test(normalized) || normalized.endsWith(".exec")) {
-    return "execute";
-  }
-  if (/(delete|remove|unlink|destroy)$/.test(normalized) || normalized.endsWith(".rm")) {
-    return "delete";
-  }
-  if (/(write|save|create|update|append|put)$/.test(normalized)) {
-    return "write";
-  }
-  if (/(list|ls|enumerate)$/.test(normalized)) {
-    return "list";
-  }
-  if (/(search|query|find)$/.test(normalized)) {
-    return "search";
-  }
-  if (/(read|get|open|cat|fetch|download)$/.test(normalized)) {
-    return "read";
-  }
-  if (/(upload|send|post|reply)$/.test(normalized)) {
-    return "upload";
-  }
-  if (/(export|dump)$/.test(normalized)) {
-    return "export";
-  }
-  if (/(archive|compress|zip|tar|bundle)$/.test(normalized)) {
-    return "archive";
-  }
-  if (/(deploy|apply|terraform|kubectl)$/.test(normalized)) {
-    return "modify";
-  }
-  return undefined;
+function resolveEffectiveWorkspaceDir(
+  ctx: SecurityClawHookContext,
+  args: unknown,
+  defaultWorkspaceDir?: string,
+): string | undefined {
+  return normalizeWorkspaceCandidate(ctx.workspaceDir)
+    ?? normalizeWorkspaceCandidate(ctx.sessionCwd)
+    ?? normalizeWorkspaceCandidate(ctx.cwd)
+    ?? resolveWorkspaceFromArgs(args, defaultWorkspaceDir)
+    ?? defaultWorkspaceDir;
 }
 
 function inferFileType(resourcePaths: string[]): string | undefined {
-  for (const candidate of resourcePaths) {
-    const basename = path.basename(candidate);
-    if (basename === "Dockerfile") {
-      return "dockerfile";
-    }
-    const extension = path.extname(basename).toLowerCase().replace(/^\./, "");
-    if (extension) {
-      return extension;
-    }
-  }
-  return undefined;
-}
-
-function extractShellCommandText(args: unknown): string | undefined {
-  if (!args || typeof args !== "object" || Array.isArray(args)) {
-    return undefined;
-  }
-  const record = args as Record<string, unknown>;
-  for (const key of ["command", "cmd", "script"]) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
-function isMessagesDbPath(candidate: string): boolean {
-  return /\/Library\/Messages\/chat\.db$/i.test(candidate);
-}
-
-function isMessagesShellAccess(commandText: string | undefined, resourcePaths: string[]): boolean {
-  if (resourcePaths.some((candidate) => isMessagesDbPath(candidate))) {
-    return true;
-  }
-  const corpus = [commandText ?? "", ...resourcePaths].join(" ");
-  return /\bimsg\b/i.test(corpus) || (/\bsqlite3\b/i.test(corpus) && MESSAGE_DB_PATH_PATTERN.test(corpus));
-}
-
-function inferMessagesOperation(commandText: string | undefined): string {
-  const normalized = (commandText ?? "").toLowerCase();
-  if (/\b(export|dump)\b/.test(normalized)) {
-    return "export";
-  }
-  if (/\b(search|find|query)\b/.test(normalized)) {
-    return "search";
-  }
-  return "read";
+  return contextInference.inferFileType(resourcePaths);
 }
 
 function deriveToolContext(
@@ -570,44 +247,13 @@ function deriveToolContext(
   resourcePaths: string[];
   tags: string[];
 } {
-  let nextResourcePaths = [...resourcePaths];
-  let nextResourceScope = resourceScope;
-  let toolGroup = normalizedToolName ? inferToolGroup(normalizedToolName) : undefined;
-  let operation = normalizedToolName ? inferOperation(normalizedToolName) : undefined;
-  let inferredToolName: string | undefined;
-  const tags: string[] = [];
-
-  if (normalizedToolName === "shell.exec") {
-    const commandText = extractShellCommandText(args);
-    if (isMessagesShellAccess(commandText, nextResourcePaths)) {
-      toolGroup = "sms";
-      operation = inferMessagesOperation(commandText);
-      if (!nextResourcePaths.some((candidate) => isMessagesDbPath(candidate))) {
-        nextResourcePaths = [...nextResourcePaths, DEFAULT_MESSAGES_DB_PATH];
-      }
-      const classified = classifyResolvedResourcePaths(nextResourcePaths, workspaceDir);
-      nextResourcePaths = classified.resourcePaths;
-      nextResourceScope = classified.resourceScope;
-      tags.push("messages_shell_access");
-    } else {
-      const shellSemantic = inferShellFilesystemSemantic(commandText, nextResourcePaths);
-      if (shellSemantic) {
-        inferredToolName = shellSemantic.toolName;
-        toolGroup = "filesystem";
-        operation = shellSemantic.operation;
-        tags.push("shell_filesystem_access", `shell_filesystem_operation:${shellSemantic.operation}`);
-      }
-    }
-  }
-
-  return {
-    ...(inferredToolName !== undefined ? { inferredToolName } : {}),
-    ...(toolGroup !== undefined ? { toolGroup } : {}),
-    ...(operation !== undefined ? { operation } : {}),
-    resourceScope: nextResourceScope,
-    resourcePaths: nextResourcePaths,
-    tags,
-  };
+  return contextInference.inferToolContext(
+    normalizedToolName,
+    args,
+    resourceScope,
+    resourcePaths,
+    workspaceDir,
+  );
 }
 
 function inferLabels(
@@ -616,7 +262,7 @@ function inferLabels(
   resourcePaths: string[],
   toolArgsSummary: string | undefined,
 ): Pick<DecisionContext, "asset_labels" | "data_labels"> {
-  const inferred = inferSensitivityLabels(
+  const inferred = contextInference.inferLabels(
     toolGroup,
     resourcePaths,
     toolArgsSummary,
@@ -629,40 +275,12 @@ function inferLabels(
 }
 
 function inferVolume(args: unknown, resourcePaths: string[]): DecisionContext["volume"] {
-  const metrics: DecisionContext["volume"] = {};
-  if (resourcePaths.length > 0) {
-    metrics.file_count = resourcePaths.length;
-  }
-  if (!args || typeof args !== "object" || Array.isArray(args)) {
-    return metrics;
-  }
-
-  const record = args as Record<string, unknown>;
-  for (const [key, value] of Object.entries(record)) {
-    const lower = key.toLowerCase();
-    if (Array.isArray(value)) {
-      if (/(files|paths|attachments|items|results|records|messages)/.test(lower)) {
-        if ((metrics.file_count ?? 0) < value.length) {
-          metrics.file_count = value.length;
-        }
-        if (/(results|records|messages)/.test(lower) && (metrics.record_count ?? 0) < value.length) {
-          metrics.record_count = value.length;
-        }
-      }
-      continue;
-    }
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      continue;
-    }
-    if (/(bytes|size|length)/.test(lower)) {
-      metrics.bytes = value;
-    }
-    if (/(count|limit|total|records)/.test(lower)) {
-      metrics.record_count = value;
-    }
-  }
-
-  return metrics;
+  const inferred = contextInference.inferVolume(args, resourcePaths);
+  return {
+    ...(inferred.fileCount !== undefined ? { file_count: inferred.fileCount } : {}),
+    ...(inferred.bytes !== undefined ? { bytes: inferred.bytes } : {}),
+    ...(inferred.recordCount !== undefined ? { record_count: inferred.recordCount } : {}),
+  };
 }
 
 function trimText(value: string, maxLength: number): string {
@@ -741,13 +359,15 @@ function collectAdminApprovalIdentities(policy: AccountPolicyRecord, channel: Ap
 
 function deriveApprovalBridgeFromAdminPolicies(
   accountPolicyEngine: AccountPolicyEngine,
-): Pick<ResolvedApprovalBridge, "targets" | "approvers"> {
+): Pick<ResolvedApprovalBridge, "targets" | "approvers" | "locale"> {
   const targets: ChatApprovalTarget[] = [];
   const approvers: ChatApprovalApprover[] = [];
+  let locale: SecurityClawLocale = runtimeLocale;
   for (const policy of accountPolicyEngine.listPolicies()) {
     if (!policy.is_admin) {
       continue;
     }
+    locale = policy.approval_locale ?? runtimeLocale;
     const subject = splitApprovalSubject(policy.subject);
     const channel = normalizeApprovalChannel(policy.channel) ?? subject.channel;
     if (!channel) {
@@ -765,7 +385,7 @@ function deriveApprovalBridgeFromAdminPolicies(
       });
     }
   }
-  return { targets, approvers };
+  return { targets, approvers, locale };
 }
 
 function dedupeApprovalTargets(targets: ChatApprovalTarget[]): ChatApprovalTarget[] {
@@ -802,7 +422,7 @@ function dedupeApprovalApprovers(approvers: ChatApprovalApprover[]): ChatApprova
 }
 
 function mergeApprovalBridgeConfig(
-  derived: Pick<ResolvedApprovalBridge, "targets" | "approvers">,
+  derived: Pick<ResolvedApprovalBridge, "targets" | "approvers" | "locale">,
 ): ResolvedApprovalBridge {
   const targets = dedupeApprovalTargets(derived.targets);
   const approvers = dedupeApprovalApprovers(derived.approvers);
@@ -810,6 +430,7 @@ function mergeApprovalBridgeConfig(
     enabled: approvers.length > 0,
     targets,
     approvers,
+    locale: derived.locale,
   };
 }
 
@@ -854,59 +475,64 @@ function matchesApprover(approvers: ChatApprovalApprover[], ctx: SecurityClawApp
   });
 }
 
-function formatResourceScopeLabel(scope: ResourceScope): string {
+function formatResourceScopeLabel(scope: ResourceScope, locale = runtimeLocale): string {
   if (scope === "workspace_inside") {
-    return text("工作区内", "Inside workspace");
+    return textForLocale(locale, "工作区内", "Inside workspace");
   }
   if (scope === "workspace_outside") {
-    return text("工作区外", "Outside workspace");
+    return textForLocale(locale, "工作区外", "Outside workspace");
   }
   if (scope === "system") {
-    return text("系统目录", "System directory");
+    return textForLocale(locale, "系统目录", "System directory");
   }
-  return text("无路径", "No path");
+  return textForLocale(locale, "无路径", "No path");
 }
 
-function formatResourceScopeDetail(scope: ResourceScope): string {
-  return `${formatResourceScopeLabel(scope)} (${scope})`;
+function formatResourceScopeDetail(scope: ResourceScope, locale = runtimeLocale): string {
+  return `${formatResourceScopeLabel(scope, locale)} (${scope})`;
 }
 
-function formatApprovalPrompt(record: StoredApprovalRecord): string {
-  const paths = record.resource_paths.length > 0
-    ? trimText(record.resource_paths.slice(0, 3).join(" | "), 160)
-    : undefined;
-  const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : undefined;
-  const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : text("策略要求复核", "Policy review required");
-  const summary = record.args_summary ? trimText(record.args_summary, 180) : undefined;
+function resolveApprovalChannelLabel(record: StoredApprovalRecord, locale = runtimeLocale): string {
+  const channel =
+    splitApprovalSubject(record.actor_id).channel ??
+    splitApprovalSubject(record.session_scope).channel;
+  return channel ?? textForLocale(locale, "未知", "Unknown");
+}
 
+function formatApprovalPermission(record: StoredApprovalRecord, locale = runtimeLocale): string {
+  return `${record.tool_name} · ${formatResourceScopeLabel(record.resource_scope, locale)} · ${record.scope}`;
+}
+
+function formatApprovalPrompt(record: StoredApprovalRecord, locale = runtimeLocale): string {
   return [
-    text("SecurityClaw 审批请求", "SecurityClaw Approval"),
-    `${text("对象", "Subject")}: ${record.actor_id}`,
-    `${text("工具", "Tool")}: ${record.tool_name}`,
-    `${text("范围", "Scope")}: ${record.scope}`,
-    `${text("资源", "Resource")}: ${formatResourceScopeDetail(record.resource_scope)}`,
-    `${text("原因", "Reason")}: ${reasons}`,
-    `${text("请求截止", "Request expires")}: ${formatTimestampForApproval(record.expires_at)}`,
-    `${text("审批单", "Request ID")}: ${record.approval_id}`,
-    ...(paths ? [`${text("路径", "Paths")}: ${paths}`] : []),
-    ...(summary ? [`${text("参数", "Args")}: ${summary}`] : []),
-    ...(rules ? [`${text("规则", "Policy")}: ${rules}`] : []),
+    textForLocale(locale, "SecurityClaw 审批请求", "SecurityClaw Approval"),
+    `${textForLocale(locale, "谁", "Who")}: ${record.actor_id}`,
+    `${textForLocale(locale, "时间", "When")}: ${formatTimestampForApproval(record.requested_at, APPROVAL_DISPLAY_TIMEZONE, locale)}`,
+    `${textForLocale(locale, "通道", "Channel")}: ${resolveApprovalChannelLabel(record, locale)}`,
+    `${textForLocale(locale, "权限", "Permission")}: ${formatApprovalPermission(record, locale)}`,
+    `${textForLocale(locale, "请求截止", "Request expires")}: ${formatTimestampForApproval(record.expires_at, APPROVAL_DISPLAY_TIMEZONE, locale)}`,
+    `${textForLocale(locale, "审批单", "Request ID")}: ${record.approval_id}`,
     "",
-    text("操作", "Actions"),
-    `- ${text("批准", "Approve")} ${formatApprovalGrantDuration(record, "temporary")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
-    `- ${text("批准", "Approve")} ${formatApprovalGrantDuration(record, "longterm")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
-    `- ${text("拒绝", "Reject")}: /${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
+    textForLocale(locale, "选项", "Options"),
+    `1. ${textForLocale(locale, "批准", "Approve")} ${formatApprovalGrantDuration(record, "temporary", locale)}`,
+    `2. ${textForLocale(locale, "批准", "Approve")} ${formatApprovalGrantDuration(record, "longterm", locale)}`,
+    `3. ${textForLocale(locale, "拒绝", "Reject")}`,
+    textForLocale(
+      locale,
+      "可直接点击下方按钮；也可以在只有一条待审批时回复 1、2 或 3。",
+      "Tap a button below, or reply with 1, 2, or 3 when there is only one pending request.",
+    ),
   ].join("\n");
 }
 
-function formatPendingApprovals(records: StoredApprovalRecord[]): string {
+function formatPendingApprovals(records: StoredApprovalRecord[], locale = runtimeLocale): string {
   if (records.length === 0) {
-    return text("当前没有待审批请求。", "No pending approval requests.");
+    return textForLocale(locale, "当前没有待审批请求。", "No pending approval requests.");
   }
   return [
-    text(`待审批请求 ${records.length} 条:`, `Pending approval requests (${records.length}):`),
-    ...records.map((record) =>
-      `- ${record.approval_id} | ${record.actor_id} | ${record.scope} | ${record.tool_name} | ${formatTimestampForApproval(record.requested_at)}`,
+    textForLocale(locale, `待审批请求 ${records.length} 条:`, `Pending approval requests (${records.length}):`),
+    ...records.map((record, index) =>
+      `${index + 1}. ${record.approval_id} | ${record.actor_id} | ${resolveApprovalChannelLabel(record, locale)} | ${formatApprovalPermission(record, locale)} | ${formatTimestampForApproval(record.requested_at, APPROVAL_DISPLAY_TIMEZONE, locale)}`,
     ),
   ].join("\n");
 }
@@ -919,27 +545,31 @@ function parseTimestampMs(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function formatDurationMs(durationMs: number): string {
+function formatDurationMs(durationMs: number, locale = runtimeLocale): string {
   const totalMinutes = Math.max(1, Math.round(durationMs / 60_000));
   const totalHours = totalMinutes / 60;
   const totalDays = totalHours / 24;
   if (Number.isInteger(totalDays) && totalDays >= 1) {
-    return text(`${totalDays}天`, plural(totalDays, "day"));
+    return textForLocale(locale, `${totalDays}天`, plural(totalDays, "day"));
   }
   if (Number.isInteger(totalHours) && totalHours >= 1) {
-    return text(`${totalHours}小时`, plural(totalHours, "hour"));
+    return textForLocale(locale, `${totalHours}小时`, plural(totalHours, "hour"));
   }
-  return text(`${totalMinutes}分钟`, plural(totalMinutes, "minute"));
+  return textForLocale(locale, `${totalMinutes}分钟`, plural(totalMinutes, "minute"));
 }
 
-function formatTimestampForApproval(value: string | undefined, timeZone = APPROVAL_DISPLAY_TIMEZONE): string {
+function formatTimestampForApproval(
+  value: string | undefined,
+  timeZone = APPROVAL_DISPLAY_TIMEZONE,
+  locale = runtimeLocale,
+): string {
   const timestamp = parseTimestampMs(value);
   if (timestamp === undefined) {
-    return value ?? text("未知", "Unknown");
+    return value ?? textForLocale(locale, "未知", "Unknown");
   }
 
   try {
-    const parts = new Intl.DateTimeFormat(localeForIntl(runtimeLocale), {
+    const parts = new Intl.DateTimeFormat(localeForIntl(locale), {
       timeZone,
       year: "numeric",
       month: "2-digit",
@@ -966,13 +596,13 @@ function resolveTemporaryGrantDurationMs(record: StoredApprovalRecord): number {
   return Math.max(60_000, expiresAt - requestedAt);
 }
 
-function formatApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+function formatApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode, locale = runtimeLocale): string {
   return mode === "longterm"
-    ? formatDurationMs(APPROVAL_LONG_GRANT_TTL_MS)
-    : formatDurationMs(resolveTemporaryGrantDurationMs(record));
+    ? formatDurationMs(APPROVAL_LONG_GRANT_TTL_MS, locale)
+    : formatDurationMs(resolveTemporaryGrantDurationMs(record), locale);
 }
 
-function formatCompactApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+function formatCompactApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode, locale = runtimeLocale): string {
   const durationMs = mode === "longterm"
     ? APPROVAL_LONG_GRANT_TTL_MS
     : resolveTemporaryGrantDurationMs(record);
@@ -980,35 +610,43 @@ function formatCompactApprovalGrantDuration(record: StoredApprovalRecord, mode: 
   const totalHours = totalMinutes / 60;
   const totalDays = totalHours / 24;
   if (Number.isInteger(totalDays) && totalDays >= 1) {
-    return text(`${totalDays}天`, `${totalDays}d`);
+    return textForLocale(locale, `${totalDays}天`, `${totalDays}d`);
   }
   if (Number.isInteger(totalHours) && totalHours >= 1) {
-    return text(`${totalHours}小时`, `${totalHours}h`);
+    return textForLocale(locale, `${totalHours}小时`, `${totalHours}h`);
   }
-  return text(`${totalMinutes}分钟`, `${totalMinutes}m`);
+  return textForLocale(locale, `${totalMinutes}分钟`, `${totalMinutes}m`);
 }
 
-function formatApprovalButtonLabel(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
-  return `${text("批准", "Approve")} ${formatCompactApprovalGrantDuration(record, mode)}`;
+function formatApprovalButtonLabel(
+  record: StoredApprovalRecord,
+  mode: ApprovalGrantMode,
+  locale = runtimeLocale,
+): string {
+  const optionIndex = mode === "temporary" ? "1" : "2";
+  return `${optionIndex}. ${textForLocale(locale, "批准", "Approve")} ${formatCompactApprovalGrantDuration(record, mode, locale)}`;
 }
 
-function buildApprovalNotificationButtons(record: StoredApprovalRecord): NonNullable<ChatNotificationOptions["buttons"]> {
+function buildApprovalNotificationButtons(
+  record: StoredApprovalRecord,
+  locale = runtimeLocale,
+): NonNullable<ChatNotificationOptions["buttons"]> {
   return [
     [
       {
-        text: formatApprovalButtonLabel(record, "temporary"),
+        text: formatApprovalButtonLabel(record, "temporary", locale),
         callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
         style: "success",
       },
       {
-        text: formatApprovalButtonLabel(record, "longterm"),
+        text: formatApprovalButtonLabel(record, "longterm", locale),
         callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
         style: "primary",
       },
     ],
     [
       {
-        text: text("拒绝", "Reject"),
+        text: `3. ${textForLocale(locale, "拒绝", "Reject")}`,
         callback_data: `/${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
         style: "danger",
       },
@@ -1026,25 +664,15 @@ function formatWarnNotificationPrompt(params: {
   rules: string;
   resourcePaths: string[];
   argsSummary: string;
-}): string {
-  const reasons = params.reasonCodes.join(", ") || text("策略提醒", "Policy warning");
-  const paths = params.resourcePaths.length > 0
-    ? trimText(params.resourcePaths.slice(0, 3).join(" | "), 160)
-    : undefined;
-  const summary = params.argsSummary ? trimText(params.argsSummary, 180) : undefined;
-
+  occurredAt?: string;
+}, locale = runtimeLocale): string {
   return [
-    text("SecurityClaw 风险提醒", "SecurityClaw Warning"),
-    `${text("对象", "Subject")}: ${params.actorId}`,
-    `${text("工具", "Tool")}: ${params.toolName}`,
-    `${text("范围", "Scope")}: ${params.scope}`,
-    `${text("资源", "Resource")}: ${formatResourceScopeDetail(params.resourceScope)}`,
-    `${text("原因", "Reason")}: ${reasons}`,
-    ...(paths ? [`${text("路径", "Paths")}: ${paths}`] : []),
-    ...(summary ? [`${text("参数", "Args")}: ${summary}`] : []),
-    ...(params.rules && params.rules !== "-" ? [`${text("规则", "Policy")}: ${params.rules}`] : []),
-    `${text("动作", "Action")}: ${text("本次已按提醒继续执行，请管理员关注。", "Execution continued with a warning. Admin attention recommended.")}`,
-    `${text("追踪", "Trace")}: ${params.traceId}`,
+    textForLocale(locale, "SecurityClaw 风险提醒", "SecurityClaw Warning"),
+    `${textForLocale(locale, "谁", "Who")}: ${params.actorId}`,
+    `${textForLocale(locale, "时间", "When")}: ${formatTimestampForApproval(params.occurredAt ?? nowIsoString(), APPROVAL_DISPLAY_TIMEZONE, locale)}`,
+    `${textForLocale(locale, "通道", "Channel")}: ${splitApprovalSubject(params.actorId).channel ?? textForLocale(locale, "未知", "Unknown")}`,
+    `${textForLocale(locale, "权限", "Permission")}: ${params.toolName} · ${formatResourceScopeLabel(params.resourceScope, locale)} · ${params.scope}`,
+    `${textForLocale(locale, "处理", "Action")}: ${textForLocale(locale, "本次已按提醒继续执行，请管理员关注。", "Execution continued with a warning. Admin attention recommended.")}`,
   ].join("\n");
 }
 
@@ -1091,14 +719,32 @@ function nowIsoString(): string {
 function parseApprovalGrantMode(args: string | undefined): ApprovalGrantMode {
   const value = args?.trim();
   const mode = value ? value.split(/\s+/)[1]?.toLowerCase() : undefined;
-  if (mode === "long" || mode === "longterm" || mode === "permanent" || mode === "长期") {
+  if (mode === "2" || mode === "long" || mode === "longterm" || mode === "permanent" || mode === "长期") {
     return "longterm";
   }
   return "temporary";
 }
 
-function formatGrantModeLabel(mode: ApprovalGrantMode): string {
-  return text(mode === "longterm" ? "长期授权" : "临时授权", mode === "longterm" ? "Long-lived grant" : "Temporary grant");
+function formatGrantModeLabel(mode: ApprovalGrantMode, locale = runtimeLocale): string {
+  return textForLocale(
+    locale,
+    mode === "longterm" ? "长期授权" : "临时授权",
+    mode === "longterm" ? "Long-lived grant" : "Temporary grant",
+  );
+}
+
+function parseApprovalReplyChoice(value: string | undefined): ApprovalGrantMode | "reject" | undefined {
+  const normalized = value?.trim();
+  if (normalized === "1") {
+    return "temporary";
+  }
+  if (normalized === "2") {
+    return "longterm";
+  }
+  if (normalized === "3") {
+    return "reject";
+  }
+  return undefined;
 }
 
 function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
@@ -1106,6 +752,64 @@ function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: Approval
     return new Date(Date.now() + APPROVAL_LONG_GRANT_TTL_MS).toISOString();
   }
   return new Date(Date.now() + resolveTemporaryGrantDurationMs(record)).toISOString();
+}
+
+function buildApprovalConversationKey(params: {
+  channelId?: string;
+  accountId?: string;
+  conversationId?: string;
+}): string | undefined {
+  const channelId = params.channelId?.trim();
+  const conversationId = params.conversationId?.trim();
+  if (!channelId || !conversationId) {
+    return undefined;
+  }
+  return [channelId, params.accountId?.trim() ?? "", conversationId].join("|");
+}
+
+function normalizeApprovalConversationTarget(value: string | undefined): string | undefined {
+  const candidate = value?.trim();
+  if (!candidate) {
+    return undefined;
+  }
+  const match = /^(user|chat|channel|direct|dm):(.+)$/i.exec(candidate);
+  if (!match) {
+    return candidate;
+  }
+  const normalized = match[2]?.trim();
+  return normalized || candidate;
+}
+
+function buildApprovalConversationTargets(value: string | undefined): string[] {
+  const candidates = new Set<string>();
+  const direct = normalizeApprovalConversationTarget(value);
+  if (direct) {
+    candidates.add(direct);
+  }
+  const raw = value?.trim();
+  if (raw) {
+    candidates.add(raw);
+  }
+  return Array.from(candidates);
+}
+
+function buildApprovalConversationKeys(params: {
+  channelId?: string;
+  accountId?: string;
+  conversationId?: string;
+}): string[] {
+  const keys = new Set<string>();
+  for (const conversationId of buildApprovalConversationTargets(params.conversationId)) {
+    const key = buildApprovalConversationKey({
+      ...(params.channelId !== undefined ? { channelId: params.channelId } : {}),
+      conversationId,
+      ...(params.accountId !== undefined ? { accountId: params.accountId } : {}),
+    });
+    if (key) {
+      keys.add(key);
+    }
+  }
+  return Array.from(keys);
 }
 
 type ChannelSendMessageFn = (
@@ -1691,11 +1395,12 @@ async function notifyApprovalTargets(
   api: OpenClawPluginApi,
   targets: ChatApprovalTarget[],
   record: StoredApprovalRecord,
+  locale: SecurityClawLocale,
 ): Promise<ApprovalNotificationResult> {
-  return notifyChatTargets(api, targets, formatApprovalPrompt(record), {
+  return notifyChatTargets(api, targets, formatApprovalPrompt(record, locale), {
     label: `approval prompt approval_id=${record.approval_id}`,
     options: {
-      buttons: buildApprovalNotificationButtons(record),
+      buttons: buildApprovalNotificationButtons(record, locale),
     },
   });
 }
@@ -1705,6 +1410,7 @@ async function notifyApprovalTargetsOnce(
   targets: ChatApprovalTarget[],
   record: StoredApprovalRecord,
   inflight: Map<string, Promise<ApprovalNotificationResult>>,
+  locale: SecurityClawLocale,
 ): Promise<ApprovalNotificationResult> {
   const pending = inflight.get(record.approval_id);
   if (pending) {
@@ -1713,7 +1419,7 @@ async function notifyApprovalTargetsOnce(
 
   const current = (async () => {
     try {
-      return await notifyApprovalTargets(api, targets, record);
+      return await notifyApprovalTargets(api, targets, record, locale);
     } finally {
       inflight.delete(record.approval_id);
     }
@@ -1823,80 +1529,6 @@ function evaluateProtectedStorageAccess(
   };
 }
 
-function isOpenClawSkillSupportPath(candidate: string): boolean {
-  const normalized = path.normalize(candidate);
-  const openClawHome = path.join(HOME_DIR, ".openclaw");
-  const bundledSkillSegment = `${path.sep}node_modules${path.sep}`;
-
-  if (isPathInside(path.join(openClawHome, "skills"), normalized)) {
-    return true;
-  }
-
-  const extensionsRoot = path.join(openClawHome, "extensions");
-  if (isPathInside(extensionsRoot, normalized) && normalized.includes(`${path.sep}skills${path.sep}`)) {
-    return true;
-  }
-
-  return normalized.includes(`${bundledSkillSegment}openclaw${path.sep}skills${path.sep}`) ||
-    normalized.includes(`${bundledSkillSegment}openclaw-lark${path.sep}skills${path.sep}`) ||
-    normalized.includes(`${bundledSkillSegment}@larksuite${path.sep}openclaw-lark${path.sep}skills${path.sep}`);
-}
-
-function isOpenClawWorkspaceBootstrapPath(candidate: string, workspaceDir?: string): boolean {
-  if (!workspaceDir) {
-    return false;
-  }
-
-  const normalizedWorkspace = path.normalize(workspaceDir);
-  const normalizedCandidate = path.normalize(candidate);
-  if (!isPathInside(normalizedWorkspace, normalizedCandidate)) {
-    return false;
-  }
-
-  const relative = path.relative(normalizedWorkspace, normalizedCandidate);
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-    return false;
-  }
-
-  const segments = relative.split(path.sep);
-  if (segments.length === 1) {
-    return OPENCLAW_WORKSPACE_BOOTSTRAP_FILES.has(segments[0]);
-  }
-
-  return segments[0] === "memory" && normalizedCandidate.endsWith(".md");
-}
-
-function evaluateOpenClawContextReadAccess(
-  decisionContext: DecisionContext,
-  workspaceDir?: string,
-): {
-  decision: Decision;
-  decisionSource: DecisionSource;
-  reasonCodes: string[];
-  rules: string;
-} | undefined {
-  if (decisionContext.tool_group !== "filesystem" || decisionContext.operation !== "read") {
-    return undefined;
-  }
-  if (decisionContext.resource_paths.length === 0) {
-    return undefined;
-  }
-
-  const allContextPaths = decisionContext.resource_paths.every((candidate) =>
-    isOpenClawSkillSupportPath(candidate) || isOpenClawWorkspaceBootstrapPath(candidate, workspaceDir)
-  );
-  if (!allContextPaths) {
-    return undefined;
-  }
-
-  return {
-    decision: "allow",
-    decisionSource: "default",
-    reasonCodes: [OPENCLAW_CONTEXT_READ_REASON],
-    rules: OPENCLAW_CONTEXT_READ_RULE_ID,
-  };
-}
-
 function parseApprovalId(args: string | undefined): string | undefined {
   const value = args?.trim();
   return value ? value.split(/\s+/)[0] : undefined;
@@ -1965,8 +1597,9 @@ function buildDecisionContext(
   resourcePaths: string[] = [],
   args?: unknown,
   toolArgsSummary?: string,
+  workspaceDir?: string,
 ): DecisionContext {
-  const workspace = "workspaceDir" in ctx ? ctx.workspaceDir : undefined;
+  const workspace = workspaceDir ?? ("workspaceDir" in ctx ? ctx.workspaceDir : undefined);
   const runtimeScope = resolveScope({ workspaceDir: workspace, channelId: "channelId" in ctx ? ctx.channelId : undefined });
   const scope = config.environment || runtimeScope;
   const normalizedToolName = toolName ? normalizeToolName(toolName) : undefined;
@@ -1975,8 +1608,7 @@ function buildDecisionContext(
   const mergedTags = [...new Set([...tags, ...derivedToolContext.tags, `resource_scope:${derivedToolContext.resourceScope}`])];
   const toolGroup = derivedToolContext.toolGroup;
   const operation = derivedToolContext.operation;
-  const urlCandidates = args !== undefined ? collectUrlCandidates(args) : [];
-  const destination = classifyDestination(urlCandidates);
+  const destination = args !== undefined ? contextInference.inferDestinationContext(args) : {};
   const fileType = inferFileType(derivedToolContext.resourcePaths);
   const summary = toolArgsSummary ?? (args !== undefined ? summarizeForLog(args, 240) : undefined);
   const labels = inferLabels(config, toolGroup, derivedToolContext.resourcePaths, summary);
@@ -1995,9 +1627,9 @@ function buildDecisionContext(
     asset_labels: labels.asset_labels,
     data_labels: labels.data_labels,
     trust_level: mergedTags.includes("untrusted") ? "untrusted" : "unknown",
-    ...(destination.destination_type !== undefined ? { destination_type: destination.destination_type } : {}),
-    ...(destination.dest_domain !== undefined ? { dest_domain: destination.dest_domain } : {}),
-    ...(destination.dest_ip_class !== undefined ? { dest_ip_class: destination.dest_ip_class } : {}),
+    ...(destination.destinationType !== undefined ? { destination_type: destination.destinationType } : {}),
+    ...(destination.destDomain !== undefined ? { dest_domain: destination.destDomain } : {}),
+    ...(destination.destIpClass !== undefined ? { dest_ip_class: destination.destIpClass } : {}),
     ...(summary !== undefined ? { tool_args_summary: summary } : {}),
     volume,
     security_context: {
@@ -2130,6 +1762,7 @@ const plugin = {
     const pluginConfig = (api.pluginConfig ?? {}) as SecurityClawPluginConfig;
     const adminConsoleUrl = resolveAdminConsoleUrl(pluginConfig);
     const stateDir = resolvePluginStateDir(api);
+    const defaultWorkspaceDir = resolveConfiguredOpenClawWorkspace(stateDir);
     runtimeLocale = resolveRuntimeLocale();
     const adminAutoStart = pluginConfig.adminAutoStart ?? true;
     const decisionLogMaxLength = pluginConfig.decisionLogMaxLength ?? 240;
@@ -2235,6 +1868,7 @@ const plugin = {
     const approvalStore = new ChatApprovalStore(dbPath);
     const inflightApprovalNotifications = new Map<string, Promise<ApprovalNotificationResult>>();
     const warnNotificationSentAt = new Map<string, number>();
+    const autoHandledApprovalReplies = new Map<string, AutoHandledApprovalReply>();
     const initialApprovalBridge = resolveApprovalBridge(runtime);
     if (initialApprovalBridge.enabled) {
       api.logger.info?.(
@@ -2266,12 +1900,19 @@ const plugin = {
           return { text: text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
-          return { text: text("你无权审批 SecurityClaw 请求。", "You are not allowed to approve SecurityClaw requests.") };
+          return {
+            text: textForLocale(
+              approvalBridge.locale,
+              "你无权审批 SecurityClaw 请求。",
+              "You are not allowed to approve SecurityClaw requests.",
+            ),
+          };
         }
         const approvalId = parseApprovalId(commandContext.args);
         if (!approvalId) {
           return {
-            text: text(
+            text: textForLocale(
+              approvalBridge.locale,
               `用法: /${APPROVAL_APPROVE_COMMAND} <approval_id> [long]`,
               `Usage: /${APPROVAL_APPROVE_COMMAND} <approval_id> [long]`,
             ),
@@ -2279,11 +1920,18 @@ const plugin = {
         }
         const existing = approvalStore.getById(approvalId);
         if (!existing) {
-          return { text: text(`审批请求不存在: ${approvalId}`, `Approval request not found: ${approvalId}`) };
+          return {
+            text: textForLocale(
+              approvalBridge.locale,
+              `审批请求不存在: ${approvalId}`,
+              `Approval request not found: ${approvalId}`,
+            ),
+          };
         }
         if (existing.status !== "pending") {
           return {
-            text: text(
+            text: textForLocale(
+              approvalBridge.locale,
               `审批请求当前状态为 ${existing.status}，无法重复批准。`,
               `Approval request is ${existing.status}; it cannot be approved again.`,
             ),
@@ -2298,9 +1946,10 @@ const plugin = {
           { expires_at: grantExpiresAt },
         );
         return {
-          text: text(
-            `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt)}。`,
-            `${formatGrantModeLabel(grantMode)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${formatTimestampForApproval(grantExpiresAt)}.`,
+          text: textForLocale(
+            approvalBridge.locale,
+            `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode, approvalBridge.locale)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}。`,
+            `${formatGrantModeLabel(grantMode, approvalBridge.locale)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}.`,
           ),
         };
       },
@@ -2326,19 +1975,38 @@ const plugin = {
           return { text: text("SecurityClaw 审批桥接未启用。", "SecurityClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
-          return { text: text("你无权审批 SecurityClaw 请求。", "You are not allowed to approve SecurityClaw requests.") };
+          return {
+            text: textForLocale(
+              approvalBridge.locale,
+              "你无权审批 SecurityClaw 请求。",
+              "You are not allowed to approve SecurityClaw requests.",
+            ),
+          };
         }
         const approvalId = parseApprovalId(commandContext.args);
         if (!approvalId) {
-          return { text: text(`用法: /${APPROVAL_REJECT_COMMAND} <approval_id>`, `Usage: /${APPROVAL_REJECT_COMMAND} <approval_id>`) };
+          return {
+            text: textForLocale(
+              approvalBridge.locale,
+              `用法: /${APPROVAL_REJECT_COMMAND} <approval_id>`,
+              `Usage: /${APPROVAL_REJECT_COMMAND} <approval_id>`,
+            ),
+          };
         }
         const existing = approvalStore.getById(approvalId);
         if (!existing) {
-          return { text: text(`审批请求不存在: ${approvalId}`, `Approval request not found: ${approvalId}`) };
+          return {
+            text: textForLocale(
+              approvalBridge.locale,
+              `审批请求不存在: ${approvalId}`,
+              `Approval request not found: ${approvalId}`,
+            ),
+          };
         }
         if (existing.status !== "pending") {
           return {
-            text: text(
+            text: textForLocale(
+              approvalBridge.locale,
               `审批请求当前状态为 ${existing.status}，无法重复拒绝。`,
               `Approval request is ${existing.status}; it cannot be rejected again.`,
             ),
@@ -2350,7 +2018,8 @@ const plugin = {
           "rejected",
         );
         return {
-          text: text(
+          text: textForLocale(
+            approvalBridge.locale,
             `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。`,
             `Rejected ${approvalId}. No grant was added for ${existing.actor_id}.`,
           ),
@@ -2379,14 +2048,146 @@ const plugin = {
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
           return {
-            text: text(
+            text: textForLocale(
+              approvalBridge.locale,
               "你无权查看 SecurityClaw 待审批请求。",
               "You are not allowed to view pending SecurityClaw approvals.",
             ),
           };
         }
-        return { text: formatPendingApprovals(approvalStore.listPending(10)) };
+        return { text: formatPendingApprovals(approvalStore.listPending(10), approvalBridge.locale) };
       },
+    });
+
+    api.on("message_received", async (event, ctx) => {
+      const approvalBridge = resolveApprovalBridge();
+      const choice = parseApprovalReplyChoice(event.content);
+      if (!approvalBridge.enabled || !choice) {
+        return;
+      }
+
+      const metadata =
+        event.metadata && typeof event.metadata === "object"
+          ? event.metadata as Record<string, unknown>
+          : {};
+      const commandContext: SecurityClawApprovalCommandContext = {
+        channel: ctx.channelId,
+        from: event.from,
+        ...(typeof metadata.senderId === "string" ? { senderId: metadata.senderId } : {}),
+        ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
+        isAuthorizedSender: true,
+      };
+      if (!matchesApprover(approvalBridge.approvers, commandContext)) {
+        return;
+      }
+
+      const conversationId = ctx.conversationId?.trim();
+      if (!conversationId) {
+        return;
+      }
+      const conversationTargets = buildApprovalConversationTargets(conversationId);
+      const conversationKeys = buildApprovalConversationKeys({
+        ...(ctx.channelId !== undefined ? { channelId: ctx.channelId } : {}),
+        conversationId,
+        ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
+      });
+
+      const replyTargetTo = conversationTargets[0] ?? conversationId;
+      const replyTarget: ChatApprovalTarget = {
+        channel: ctx.channelId,
+        to: replyTargetTo,
+        ...(ctx.accountId ? { account_id: ctx.accountId } : {}),
+      };
+      const markAutoHandled = () => {
+        if (conversationKeys.length === 0) {
+          return;
+        }
+        const nextEntry: AutoHandledApprovalReply = {
+          expiresAt: Date.now() + AUTO_HANDLED_ADMIN_REPLY_TTL_MS,
+          remainingCancels: AUTO_HANDLED_ADMIN_REPLY_CANCELS,
+          aliases: conversationKeys,
+        };
+        for (const key of conversationKeys) {
+          autoHandledApprovalReplies.set(key, nextEntry);
+        }
+      };
+      const sendAutoReply = async (message: string) => {
+        markAutoHandled();
+        try {
+          await sendChatNotification(api, replyTarget, message);
+        } catch (error) {
+          api.logger.warn?.(`securityclaw: failed to send auto approval reply channel=${ctx.channelId} to=${conversationId} (${String(error)})`);
+        }
+      };
+
+      const pendingRecords = approvalStore
+        .listPending(20)
+        .filter((record) =>
+          record.notifications.some((notification) =>
+            notification.channel === ctx.channelId && conversationTargets.includes(notification.to)
+          )
+        );
+
+      if (pendingRecords.length === 0) {
+        api.logger.info?.(
+          `securityclaw: numeric approval reply found no pending request channel=${ctx.channelId} conversation=${conversationId} targets=${conversationTargets.join(",")}`,
+        );
+        await sendAutoReply(
+          textForLocale(
+            approvalBridge.locale,
+            "当前没有可直接处理的待审批请求。",
+            "There is no pending approval request ready for a numeric reply.",
+          ),
+        );
+        return;
+      }
+
+      if (pendingRecords.length > 1) {
+        api.logger.info?.(
+          `securityclaw: numeric approval reply matched multiple pending requests channel=${ctx.channelId} conversation=${conversationId} count=${pendingRecords.length}`,
+        );
+        await sendAutoReply(
+          textForLocale(
+            approvalBridge.locale,
+            "当前有多条待审批请求。请点击消息按钮，或先发送 /securityclaw-pending 查看审批单号。",
+            "Multiple approval requests are pending. Use the message buttons or send /securityclaw-pending first.",
+          ),
+        );
+        return;
+      }
+
+      const existing = pendingRecords[0]!;
+      const approverIdentity = `${ctx.channelId}:${commandContext.senderId ?? commandContext.from ?? "unknown"}`;
+
+      if (choice === "reject") {
+        approvalStore.resolve(existing.approval_id, approverIdentity, "rejected");
+        api.logger.info?.(
+          `securityclaw: numeric approval reply rejected approval_id=${existing.approval_id} approver=${approverIdentity}`,
+        );
+        await sendAutoReply(
+          textForLocale(
+            approvalBridge.locale,
+            `已拒绝 ${existing.approval_id}，不会为 ${existing.actor_id} 增加授权。`,
+            `Rejected ${existing.approval_id}. No grant was added for ${existing.actor_id}.`,
+          ),
+        );
+        return;
+      }
+
+      const grantExpiresAt = resolveApprovalGrantExpiry(existing, choice);
+      approvalStore.resolve(existing.approval_id, approverIdentity, "approved", {
+        expires_at: grantExpiresAt,
+      });
+      api.logger.info?.(
+        `securityclaw: numeric approval reply approved approval_id=${existing.approval_id} approver=${approverIdentity} mode=${choice}`,
+      );
+      await sendAutoReply(
+        textForLocale(
+          approvalBridge.locale,
+          `已为 ${existing.actor_id} 添加${formatGrantModeLabel(choice, approvalBridge.locale)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}。`,
+          `${formatGrantModeLabel(choice, approvalBridge.locale)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}.`,
+        ),
+      );
     });
 
     api.on(
@@ -2430,7 +2231,12 @@ const plugin = {
         const approvalBridge = resolveApprovalBridge(current);
         const normalizedToolName = normalizeToolName(event.toolName);
         const rawArguments = event.params;
-        const resource = extractResourceContext(rawArguments, hookContext.workspaceDir);
+        const effectiveWorkspaceDir = resolveEffectiveWorkspaceDir(
+          hookContext,
+          rawArguments,
+          defaultWorkspaceDir,
+        );
+        const resource = extractResourceContext(rawArguments, effectiveWorkspaceDir);
         const argsSummary = summarizeForLog(rawArguments, decisionLogMaxLength);
         const decisionContext = buildDecisionContext(
           current.config,
@@ -2441,22 +2247,22 @@ const plugin = {
           resource.resourcePaths,
           rawArguments,
           argsSummary,
+          effectiveWorkspaceDir,
         );
         const traceId = decisionContext.security_context.trace_id;
         const effectiveToolName = decisionContext.tool_name ?? normalizedToolName ?? "unknown-tool";
         const approvalSubject = resolveApprovalSubject(hookContext);
         const accountPolicy = current.accountPolicyEngine.getPolicy(approvalSubject);
-        const openClawContextRead = evaluateOpenClawContextReadAccess(decisionContext, hookContext.workspaceDir);
         const protectedStorageAccess = evaluateProtectedStorageAccess(normalizedToolName, decisionContext, resolved);
-        let rules = openClawContextRead?.rules ?? protectedStorageAccess?.rules ?? "-";
-        let effectiveDecision = openClawContextRead?.decision ?? protectedStorageAccess?.decision ?? "allow";
-        let effectiveDecisionSource = openClawContextRead?.decisionSource ?? protectedStorageAccess?.decisionSource ?? "default";
-        let effectiveReasonCodes = [...(openClawContextRead?.reasonCodes ?? protectedStorageAccess?.reasonCodes ?? ["ALLOW"])];
+        let rules = protectedStorageAccess?.rules ?? "-";
+        let effectiveDecision = protectedStorageAccess?.decision ?? "allow";
+        let effectiveDecisionSource = protectedStorageAccess?.decisionSource ?? "default";
+        let effectiveReasonCodes = [...(protectedStorageAccess?.reasonCodes ?? ["ALLOW"])];
         let accountOverride: ReturnType<AccountPolicyEngine["evaluate"]> | undefined;
         let approvalBlockReason: string | undefined;
         let approvalRequestKey: string | undefined;
 
-        if (!openClawContextRead && !protectedStorageAccess) {
+        if (!protectedStorageAccess) {
           const outcome = current.policyPipeline.evaluate(decisionContext, current.config.file_rules);
           const ruleIds = matchedPolicyRuleIds(outcome);
           rules = ruleIds.length > 0 ? ruleIds.join(",") : "-";
@@ -2518,6 +2324,7 @@ const plugin = {
                   approvalBridge.targets,
                   pending,
                   inflightApprovalNotifications,
+                  approvalBridge.locale,
                 );
                 if (notificationResult.notifications.length > 0) {
                   pending =
@@ -2555,7 +2362,7 @@ const plugin = {
                 rules,
                 resourcePaths: decisionContext.resource_paths,
                 argsSummary,
-              });
+              }, approvalBridge.locale);
               const warningSent = await notifyWarnTargets(api, approvalBridge.targets, warningPrompt, traceId);
               if (warningSent) {
                 warnNotificationSentAt.set(approvalRequestKey, nowMs);
@@ -2786,6 +2593,52 @@ const plugin = {
     api.on(
       "message_sending",
       async (event, ctx) => {
+        const conversationKeys = new Set<string>();
+        for (const key of buildApprovalConversationKeys({
+          ...(ctx.channelId !== undefined ? { channelId: ctx.channelId } : {}),
+          ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
+          ...(ctx.conversationId !== undefined ? { conversationId: ctx.conversationId } : {}),
+        })) {
+          conversationKeys.add(key);
+        }
+        for (const key of buildApprovalConversationKeys({
+          ...(ctx.channelId !== undefined ? { channelId: ctx.channelId } : {}),
+          ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
+          ...(typeof event.to === "string" ? { conversationId: event.to } : {}),
+        })) {
+          conversationKeys.add(key);
+        }
+
+        for (const conversationKey of conversationKeys) {
+          const pendingAutoReply = autoHandledApprovalReplies.get(conversationKey);
+          if (!pendingAutoReply) {
+            continue;
+          }
+          if (Date.now() > pendingAutoReply.expiresAt) {
+            for (const alias of pendingAutoReply.aliases) {
+              autoHandledApprovalReplies.delete(alias);
+            }
+            continue;
+          }
+          if (pendingAutoReply.remainingCancels <= 1) {
+            for (const alias of pendingAutoReply.aliases) {
+              autoHandledApprovalReplies.delete(alias);
+            }
+          } else {
+            const nextEntry: AutoHandledApprovalReply = {
+              ...pendingAutoReply,
+              remainingCancels: pendingAutoReply.remainingCancels - 1,
+            };
+            for (const alias of pendingAutoReply.aliases) {
+              autoHandledApprovalReplies.set(alias, nextEntry);
+            }
+          }
+          api.logger.info?.(
+            `securityclaw: suppressing outbound reply after numeric approval channel=${ctx.channelId} key=${conversationKey} to=${typeof event.to === "string" ? event.to : "unknown"}`,
+          );
+          return { cancel: true };
+        }
+
         const current = getRuntime();
         const traceId = ctx.conversationId ?? ctx.accountId ?? `trace-${Date.now()}`;
         const sanitized = sanitizeUnknown(current.dlpEngine, event.content);

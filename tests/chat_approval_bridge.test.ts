@@ -5,8 +5,10 @@ import path from "node:path";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { SecurityClawLocale } from "../src/i18n/locale.ts";
 
 import plugin from "../index.ts";
+import { ChatApprovalStore } from "../src/approvals/chat_approval_store.ts";
 import { ConfigManager } from "../src/config/loader.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 import { buildStrategyV2FromConfig } from "../src/domain/services/strategy_model.ts";
@@ -17,6 +19,14 @@ type BeforeToolCallHook = (
   event: { toolName: string; params: Record<string, unknown> },
   ctx: Record<string, unknown>,
 ) => Promise<{ block?: boolean; blockReason?: string } | undefined>;
+type MessageReceivedHook = (
+  event: { from: string; content: string; metadata?: Record<string, unknown> },
+  ctx: { channelId: string; conversationId?: string; accountId?: string },
+) => Promise<unknown> | unknown;
+type MessageSendingHook = (
+  event: Record<string, unknown>,
+  ctx: { channelId: string; conversationId?: string; accountId?: string },
+) => Promise<{ cancel?: boolean } | undefined> | { cancel?: boolean } | undefined;
 type GatewayStopHook = (event?: Record<string, unknown>, ctx?: Record<string, unknown>) => Promise<unknown> | unknown;
 
 function extractApprovalId(value: unknown): string | undefined {
@@ -226,7 +236,11 @@ function createPluginApiHarness(paths: {
   return { api, hooks, commands, sentMessages, getTelegramSendAttempts: () => telegramSendAttempts };
 }
 
-function seedAdminAccountPolicy(dbPath: string, subject = "telegram:secops-admin"): void {
+function seedAdminAccountPolicy(
+  dbPath: string,
+  subject = "telegram:secops-admin",
+  approvalLocale?: SecurityClawLocale,
+): void {
   const writer = new StrategyStore(dbPath);
   try {
     writer.writeOverride({
@@ -235,6 +249,7 @@ function seedAdminAccountPolicy(dbPath: string, subject = "telegram:secops-admin
           subject,
           mode: "apply_rules",
           is_admin: true,
+          ...(approvalLocale ? { approval_locale: approvalLocale } : {}),
         },
       ],
     });
@@ -765,6 +780,58 @@ test("warn decisions notify the admin without creating approval buttons", async 
   }
 });
 
+test("chat approval bridge localizes approval prompts with the admin approval language", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-locale-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath, "telegram:secops-admin", "zh-CN");
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    assert.ok(beforeToolCall);
+
+    const blocked = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "/Users/demo/.ssh" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-locale-1",
+        sessionKey: "telegram:chat-locale",
+        runId: "run-locale-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "telegram",
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.equal(harness.sentMessages.length, 1);
+    assert.match(String(harness.sentMessages[0]?.text), /SecurityClaw 审批请求/);
+    assert.match(String(harness.sentMessages[0]?.text), /谁: telegram:chat-locale/);
+    assert.match(String(harness.sentMessages[0]?.text), /通道: telegram/);
+    assert.match(String(harness.sentMessages[0]?.text), /权限: filesystem\.list · /);
+    assert.match(String(harness.sentMessages[0]?.text), /可直接点击下方按钮；也可以在只有一条待审批时回复 1、2 或 3。/);
+    const buttons = harness.sentMessages[0]?.opts?.buttons as Array<Array<{ text: string }>> | undefined;
+    assert.match(String(buttons?.[0]?.[0]?.text), /1\. 批准/);
+    assert.match(String(buttons?.[0]?.[1]?.text), /2\. 批准/);
+    assert.match(String(buttons?.[1]?.[0]?.text), /3\. 拒绝/);
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("challenge policy matrix runs full approval flow for every challenge rule", async (t) => {
   const config = ConfigManager.fromFile("./config/policy.default.yaml").getConfig();
   const challengePolicies = config.policies
@@ -884,12 +951,16 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     assert.match(String(first?.blockReason), /(Status|状态): /);
     assert.equal(harness.sentMessages.length, 1);
     assert.match(harness.sentMessages[0].text, /(SecurityClaw Approval|SecurityClaw 审批请求)/);
+    assert.match(harness.sentMessages[0].text, /(Who|谁): telegram:chat-42/);
+    assert.match(harness.sentMessages[0].text, /(Channel|通道): telegram/);
+    assert.match(harness.sentMessages[0].text, /(Permission|权限): filesystem\.list · /);
     assert.match(harness.sentMessages[0].text, /(Request expires|请求截止): .+\(.+\)/);
-    assert.match(harness.sentMessages[0].text, /(Actions|操作)/);
-    assert.match(harness.sentMessages[0].text, /\/securityclaw-approve .* long/);
+    assert.match(harness.sentMessages[0].text, /(Options|选项)/);
+    assert.match(harness.sentMessages[0].text, /(reply with 1, 2, or 3|回复 1、2 或 3)/);
     const buttons = harness.sentMessages[0].opts?.buttons as Array<Array<{ text: string }>> | undefined;
-    assert.match(String(buttons?.[0]?.[0]?.text), /(Approve 10m|批准 10分钟)/);
-    assert.match(String(buttons?.[0]?.[1]?.text), /(Approve 30d|批准 30天)/);
+    assert.match(String(buttons?.[0]?.[0]?.text), /(1\. Approve 10m|1\. 批准 10分钟)/);
+    assert.match(String(buttons?.[0]?.[1]?.text), /(2\. Approve 30d|2\. 批准 30天)/);
+    assert.match(String(buttons?.[1]?.[0]?.text), /(3\. Reject|3\. 拒绝)/);
 
     const secondPending = await beforeToolCall(
       {
@@ -923,7 +994,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
       config: harness.api.config,
     });
     assert.match(String(pendingReply.text), /filesystem\.list/);
-    assert.match(String(pendingReply.text), /\(.+\)/);
+    assert.match(String(pendingReply.text), /1\. [a-f0-9-]+ \| telegram:chat-42 \| telegram \| filesystem\.list/);
 
     const approveCommand = harness.commands.get("securityclaw-approve");
     assert.ok(approveCommand);
@@ -961,6 +1032,200 @@ test("chat approval bridge reuses pending authorization and allows the same subj
       await gatewayStop({}, {});
     }
   } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("chat approval bridge supports numeric replies for a single pending request", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-numeric-reply-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    const messageReceived = harness.hooks.get("message_received") as MessageReceivedHook | undefined;
+    const messageSending = harness.hooks.get("message_sending") as MessageSendingHook | undefined;
+    assert.ok(beforeToolCall);
+    assert.ok(messageReceived);
+    assert.ok(messageSending);
+
+    const blocked = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-numeric-1",
+        sessionKey: "telegram:chat-numeric",
+        runId: "run-numeric-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "telegram",
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.equal(harness.sentMessages.length, 1);
+
+    await messageReceived!(
+      {
+        from: "telegram:secops-admin",
+        content: "1",
+        metadata: {
+          senderId: "secops-admin",
+        },
+      },
+      {
+        channelId: "telegram",
+        conversationId: "secops-admin",
+      },
+    );
+
+    assert.equal(harness.sentMessages.length, 2);
+    assert.equal(harness.sentMessages[1]?.to, "secops-admin");
+    assert.match(String(harness.sentMessages[1]?.text), /(Temporary grant|临时授权)/);
+
+    const sendingDecision = await messageSending!({}, {
+      channelId: "telegram",
+      conversationId: "secops-admin",
+    });
+    assert.deepEqual(sendingDecision, { cancel: true });
+
+    const approved = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "/tmp/workspace/Downloads/after-numeric-reply" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-numeric-2",
+        sessionKey: "telegram:chat-numeric",
+        runId: "run-numeric-2",
+        workspaceDir: "/tmp/workspace",
+        channelId: "telegram",
+      },
+    );
+
+    assert.equal(approved, undefined);
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("chat approval bridge accepts numeric replies from feishu direct conversation ids", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-feishu-reply-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+  const originalFetch = globalThis.fetch;
+
+  try {
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.includes("/tenant_access_token/internal")) {
+        return new Response(
+          JSON.stringify({ code: 0, tenant_access_token: "tenant-token" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/open-apis/im/v1/messages")) {
+        return new Response(
+          JSON.stringify({ code: 0, data: { message_id: `om_${Date.now()}` } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath, "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1");
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    harness.api.config = {
+      channels: {
+        feishu: {
+          appId: "cli_test_app",
+          appSecret: "test-secret",
+          domain: "feishu",
+        },
+      },
+    };
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    const messageReceived = harness.hooks.get("message_received") as MessageReceivedHook | undefined;
+    const messageSending = harness.hooks.get("message_sending") as MessageSendingHook | undefined;
+    assert.ok(beforeToolCall);
+    assert.ok(messageReceived);
+    assert.ok(messageSending);
+
+    const blocked = await beforeToolCall(
+      {
+        toolName: "filesystem.search",
+        params: { path: "/Users/demo/.ssh", query: "id_rsa" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-feishu-reply-1",
+        sessionKey: "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        runId: "run-feishu-reply-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "feishu",
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    const approvalId = extractApprovalId(blocked?.blockReason);
+    assert.ok(approvalId);
+
+    await messageReceived!(
+      {
+        from: "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        content: "1",
+        metadata: {
+          senderId: "ou_20d3dfae71b68bb041bff70111fd3fb1",
+        },
+      },
+      {
+        channelId: "feishu",
+        conversationId: "user:ou_20d3dfae71b68bb041bff70111fd3fb1",
+      },
+    );
+
+    const store = new ChatApprovalStore(dbPath);
+    try {
+      assert.equal(store.getById(approvalId)?.status, "approved");
+    } finally {
+      store.close();
+    }
+
+    const sendingDecision = await messageSending!(
+      {
+        to: "user:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        content: "This reply should be suppressed.",
+      },
+      {
+        channelId: "feishu",
+      },
+    );
+    assert.deepEqual(sendingDecision, { cancel: true });
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
     rmSync(tempDir, { recursive: true, force: true });
   }
 });

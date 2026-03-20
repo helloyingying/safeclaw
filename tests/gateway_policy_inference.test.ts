@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
@@ -212,14 +212,21 @@ function createPluginApiHarness(paths: {
   return { api, hooks };
 }
 
-async function createBeforeToolCallHook() {
+async function createBeforeToolCallHook(options?: { openClawConfig?: unknown }) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-gateway-inference-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
   const dbPath = path.join(tempDir, "securityclaw.db");
   const statusPath = path.join(tempDir, "securityclaw-status.json");
 
   copyFileSync("./config/policy.default.yaml", configPath);
-  const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+  if (options?.openClawConfig !== undefined) {
+    writeFileSync(
+      path.join(tempDir, "openclaw.json"),
+      JSON.stringify(options.openClawConfig, null, 2),
+      "utf8",
+    );
+  }
+  const harness = createPluginApiHarness({ configPath, dbPath, statusPath, stateDir: tempDir });
   await plugin.register(harness.api);
 
   const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
@@ -229,10 +236,39 @@ async function createBeforeToolCallHook() {
     beforeToolCall,
     dbPath,
     statusPath,
+    tempDir,
     cleanup() {
       rmSync(tempDir, { recursive: true, force: true });
     },
   };
+}
+
+function writeDirectoryOverride(dbPath: string, directory: string, operations: string[] = ["read"]) {
+  const writer = new StrategyStore(dbPath);
+  try {
+    const strategy = buildStrategyV2FromConfig(ConfigManager.fromFile("./config/policy.default.yaml").getConfig());
+    strategy.exceptions.directory_overrides = [
+      {
+        id: "workspace-bootstrap-review",
+        directory,
+        decision: "challenge",
+        operations,
+        reason_codes: ["USER_FILE_RULE_CHALLENGE"],
+      },
+    ];
+    writer.writeOverride({
+      strategy,
+      account_policies: [
+        {
+          subject: "telegram:chat-42",
+          mode: "apply_rules",
+          is_admin: true,
+        },
+      ],
+    });
+  } finally {
+    writer.close();
+  }
 }
 
 async function createProtectedStorageHook() {
@@ -576,6 +612,62 @@ test("gateway directory overrides can be scoped to read-only access", async () =
     );
 
     assert.deepEqual(stillBlocked?.block, true);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway applies file rules to workspace bootstrap reads", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    writeDirectoryOverride(harness.dbPath, DEFAULT_GATEWAY_CTX.workspaceDir);
+
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.read",
+        params: {
+          path: "SOUL.md",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /USER_FILE_RULE_CHALLENGE/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway resolves relative reads against configured default workspace", async () => {
+  const workspaceDir = path.join(os.tmpdir(), `securityclaw-relative-workspace-${Date.now()}`);
+  const harness = await createBeforeToolCallHook({
+    openClawConfig: {
+      agents: {
+        defaults: {
+          workspace: workspaceDir,
+        },
+      },
+    },
+  });
+  try {
+    writeDirectoryOverride(harness.dbPath, workspaceDir);
+
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "read",
+        params: {
+          file_path: "SOUL.md",
+        },
+      },
+      {
+        ...DEFAULT_GATEWAY_CTX,
+        workspaceDir: undefined,
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /USER_FILE_RULE_CHALLENGE/);
   } finally {
     harness.cleanup();
   }

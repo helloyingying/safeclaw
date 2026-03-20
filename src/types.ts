@@ -1,3 +1,5 @@
+import type { SecurityClawLocale } from "./i18n/locale.ts";
+
 export type HookName =
   | "before_prompt_build"
   | "before_tool_call"
@@ -60,6 +62,7 @@ export interface AccountPolicyRecord {
   subject: string;
   mode: AccountPolicyMode;
   is_admin: boolean;
+  approval_locale?: SecurityClawLocale;
   label?: string;
   session_key?: string;
   session_id?: string;

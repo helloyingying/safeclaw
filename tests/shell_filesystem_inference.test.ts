@@ -38,3 +38,18 @@ test("inferShellFilesystemSemantic returns undefined for non-filesystem shell co
   const semantic = inferShellFilesystemSemantic("sleep 1", []);
   assert.equal(semantic, undefined);
 });
+
+test("inferShellFilesystemSemantic ignores heredoc body operators and falls back to read", () => {
+  const semantic = inferShellFilesystemSemantic(
+    [
+      "python3 - <<'PY'",
+      "depth = 3",
+      "max_depth = 2",
+      "if depth>max_depth:",
+      "    print('skip')",
+      "PY",
+    ].join("\n"),
+    ["/Users/liuzhuangm4/.openclaw"],
+  );
+  assert.deepEqual(semantic, { operation: "read", toolName: "filesystem.read" });
+});

@@ -5,7 +5,7 @@ import path from "node:path";
 import { ConfigManager } from "../config/loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "../config/runtime_override.ts";
 import { StrategyStore } from "../config/strategy_store.ts";
-import { AccountPolicyEngine } from "../domain/services/account_policy_engine.ts";
+import { AccountPolicyEngine, sanitizeAccountPoliciesWithOptions } from "../domain/services/account_policy_engine.ts";
 import {
   compileStrategyV2,
   normalizeStrategyV2,
@@ -695,7 +695,9 @@ export function handleApi(
         const nextOverride: RuntimeOverride = {
           ...current,
           updated_at: new Date().toISOString(),
-          account_policies: AccountPolicyEngine.sanitize(body.account_policies),
+          account_policies: sanitizeAccountPoliciesWithOptions(body.account_policies, {
+            defaultAdminApprovalLocale: locale,
+          }),
         };
 
         const base = ConfigManager.fromFile(runtime.configPath).getConfig();
