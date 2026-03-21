@@ -123,6 +123,12 @@ type GroupDraft = {
   recommendedFindingId?: string;
 };
 
+type ConfiguredChannelSnapshot = {
+  channelId: string;
+  channel: Record<string, unknown>;
+  basePath: string;
+};
+
 function text(locale: SecurityClawLocale, zhText: string, enText: string): string {
   return locale === "zh-CN" ? zhText : enText;
 }
@@ -336,6 +342,101 @@ function hasEffectiveAllowlist(channel: Record<string, unknown>): boolean {
 
 function hasEffectiveDmAllowlist(channel: Record<string, unknown>): boolean {
   return hasRestrictedAllowlistEntries(channel.allowFrom);
+}
+
+function hasDiscordExplicitRequireMentionDisabled(channel: Record<string, unknown>): boolean {
+  const guilds = asRecord(channel.guilds);
+  return Object.values(guilds).some((rawGuild) => {
+    const guild = asRecord(rawGuild);
+    if (readBoolean(guild.requireMention) === false) {
+      return true;
+    }
+    const channels = asRecord(guild.channels);
+    return Object.values(channels).some((rawChannel) => readBoolean(asRecord(rawChannel).requireMention) === false);
+  });
+}
+
+function hasDiscordGuildAllowlist(channel: Record<string, unknown>): boolean {
+  const guilds = asRecord(channel.guilds);
+  return Object.keys(guilds).some((guildId) => guildId.trim().length > 0);
+}
+
+function collectDiscordRequireMentionConfigPaths(channel: Record<string, unknown>): string[] {
+  const paths: string[] = [];
+  const guilds = asRecord(channel.guilds);
+
+  for (const [guildId, rawGuild] of Object.entries(guilds)) {
+    if (!guildId.trim()) {
+      continue;
+    }
+    const guild = asRecord(rawGuild);
+    if (readBoolean(guild.requireMention) === false) {
+      paths.push(`channels.discord.guilds.${guildId}.requireMention`);
+    }
+
+    const channels = asRecord(guild.channels);
+    for (const [channelId, rawChannel] of Object.entries(channels)) {
+      if (readBoolean(asRecord(rawChannel).requireMention) === false) {
+        paths.push(`channels.discord.guilds.${guildId}.channels.${channelId}.requireMention`);
+      }
+    }
+  }
+
+  return paths;
+}
+
+function readChannelRequireMention(channelId: string, channel: Record<string, unknown>): boolean {
+  if (channelId === "discord") {
+    return !hasDiscordExplicitRequireMentionDisabled(channel);
+  }
+  return readChannelWildcardRequireMention(channel);
+}
+
+function readChannelAllowlist(channelId: string, channel: Record<string, unknown>): boolean {
+  if (channelId === "discord") {
+    return hasDiscordGuildAllowlist(channel);
+  }
+  return hasEffectiveAllowlist(channel);
+}
+
+function readChannelRequireMentionConfigPaths(channelId: string, basePath: string): string[] {
+  if (channelId === "discord") {
+    return [`${basePath}.guilds`];
+  }
+  return [`${basePath}.groups.*.requireMention`];
+}
+
+function readChannelAllowlistConfigPaths(channelId: string, basePath: string): string[] {
+  if (channelId === "discord") {
+    return [`${basePath}.groupPolicy`, `${basePath}.guilds`];
+  }
+  return [`${basePath}.groupPolicy`, `${basePath}.groupAllowFrom`];
+}
+
+function collectConfiguredChannels(config: Record<string, unknown>): ConfiguredChannelSnapshot[] {
+  const snapshots: ConfiguredChannelSnapshot[] = [];
+  const seen = new Set<string>();
+  const append = (channelId: string, rawChannel: unknown, basePath: string) => {
+    if (seen.has(channelId)) {
+      return;
+    }
+    const channel = asRecord(rawChannel);
+    if (Object.keys(channel).length === 0) {
+      return;
+    }
+    seen.add(channelId);
+    snapshots.push({ channelId, channel, basePath });
+  };
+
+  for (const [channelId, rawChannel] of Object.entries(asRecord(config.channels))) {
+    append(channelId, rawChannel, `channels.${channelId}`);
+  }
+
+  for (const channelId of Object.keys(CHANNEL_LABELS)) {
+    append(channelId, config[channelId], channelId);
+  }
+
+  return snapshots;
 }
 
 function collectSandboxToolPolicyGaps(config: Record<string, unknown>): {
@@ -770,9 +871,8 @@ export function buildClawGuardFindings(
     });
   }
 
-  const channels = asRecord(config.channels);
-  for (const [channelId, rawChannel] of Object.entries(channels)) {
-    const channel = asRecord(rawChannel);
+  const channels = collectConfiguredChannels(config);
+  for (const { channelId, channel, basePath } of channels) {
     if (Object.keys(channel).length === 0 || !isChannelEnabled(channel)) {
       continue;
     }
@@ -780,8 +880,8 @@ export function buildClawGuardFindings(
     const label = channelLabel(channelId, locale);
     const dmPolicy = readString(channel.dmPolicy);
     const groupPolicy = readString(channel.groupPolicy);
-    const mentionRequired = readChannelWildcardRequireMention(channel);
-    const allowlistAvailable = hasEffectiveAllowlist(channel);
+    const mentionRequired = readChannelRequireMention(channelId, channel);
+    const allowlistAvailable = readChannelAllowlist(channelId, channel);
     const dmAllowlistAvailable = hasEffectiveDmAllowlist(channel);
     const channelGroupId = ensureGroup("channel", channelId).id;
     const dmAllowlistFindingId = buildFindingId("dm_allowlist_missing", channelId);
@@ -804,7 +904,7 @@ export function buildClawGuardFindings(
         ),
         currentSummary: "open",
         recommendationSummary: text(locale, "默认收紧到 pairing", 'Change `dmPolicy` to `pairing`'),
-        configPaths: [`channels.${channelId}.dmPolicy`],
+        configPaths: [`${basePath}.dmPolicy`],
         repairKind: "direct",
         repairChoices: [],
         restartRequired: true,
@@ -818,7 +918,7 @@ export function buildClawGuardFindings(
         id: buildFindingId("dm_policy_too_open", channelId),
         title: text(locale, `${label} 私信入口没有对所有人开放`, `${label} DM access is not open to everyone`),
         summary: dmPolicy,
-        configPaths: [`channels.${channelId}.dmPolicy`],
+        configPaths: [`${basePath}.dmPolicy`],
       });
     }
 
@@ -837,7 +937,7 @@ export function buildClawGuardFindings(
         ),
         currentSummary: text(locale, "dmPolicy=allowlist，但 allowFrom 为空或只有 *", "dmPolicy=allowlist, but allowFrom is empty or only contains *"),
         recommendationSummary: text(locale, "补上 allowFrom；如果还没准备好，先改回 pairing", "Add allowFrom entries, or switch back to pairing until the allowlist is ready"),
-        configPaths: [`channels.${channelId}.dmPolicy`, `channels.${channelId}.allowFrom`],
+        configPaths: [`${basePath}.dmPolicy`, `${basePath}.allowFrom`],
         repairKind: "direct",
         repairChoices: [],
         restartRequired: true,
@@ -851,7 +951,7 @@ export function buildClawGuardFindings(
         id: dmAllowlistFindingId,
         title: text(locale, `${label} 私信 allowlist 已生效`, `${label} DM allowlist is in effect`),
         summary: text(locale, "allowFrom 已配置", "allowFrom is configured"),
-        configPaths: [`channels.${channelId}.dmPolicy`, `channels.${channelId}.allowFrom`],
+        configPaths: [`${basePath}.dmPolicy`, `${basePath}.allowFrom`],
       });
     }
 
@@ -900,7 +1000,7 @@ export function buildClawGuardFindings(
         ),
         currentSummary: "open",
         recommendationSummary: text(locale, "默认改为 disabled", 'Default fix: change `groupPolicy` to `disabled`'),
-        configPaths: [`channels.${channelId}.groupPolicy`],
+        configPaths: [`${basePath}.groupPolicy`],
         repairKind: "direct",
         repairChoices: groupChoices,
         defaultOptions: { choice: "disable_groups" },
@@ -919,7 +1019,7 @@ export function buildClawGuardFindings(
         id: groupPolicyFindingId,
         title: text(locale, `${label} 群聊入口不是完全开放`, `${label} group access is not fully open`),
         summary: groupPolicy,
-        configPaths: [`channels.${channelId}.groupPolicy`],
+        configPaths: [`${basePath}.groupPolicy`],
       });
     }
 
@@ -937,9 +1037,15 @@ export function buildClawGuardFindings(
             "普通群聊对话也可能触发机器人，噪声和误触发会更多。",
             "Regular group chatter can trigger the bot, which raises noise and accidental replies.",
           ),
-          currentSummary: text(locale, "requireMention 未开启", "requireMention is not enabled"),
+          currentSummary: channelId === "discord"
+            ? text(locale, "某些 guild 或 channel 显式关闭了 requireMention", "Some guild or channel entries explicitly set requireMention=false")
+            : text(locale, "requireMention 未开启", "requireMention is not enabled"),
           recommendationSummary: text(locale, "默认要求先 @ 机器人", "Require mentioning the bot before it replies"),
-          configPaths: [`channels.${channelId}.groups.*.requireMention`],
+          configPaths: channelId === "discord"
+            ? collectDiscordRequireMentionConfigPaths(channel).length > 0
+              ? collectDiscordRequireMentionConfigPaths(channel)
+              : readChannelRequireMentionConfigPaths(channelId, basePath)
+            : readChannelRequireMentionConfigPaths(channelId, basePath),
           repairKind: "direct",
           repairChoices: [],
           restartRequired: true,
@@ -953,8 +1059,10 @@ export function buildClawGuardFindings(
         recordPassed({
           id: requireMentionFindingId,
           title: text(locale, `${label} 群聊已要求 @ 机器人`, `${label} groups require mentioning the bot`),
-          summary: text(locale, "requireMention=true", "requireMention=true"),
-          configPaths: [`channels.${channelId}.groups.*.requireMention`],
+          summary: channelId === "discord"
+            ? text(locale, "Discord 默认 mention gating 生效", "Discord default mention gating is active")
+            : text(locale, "requireMention=true", "requireMention=true"),
+          configPaths: readChannelRequireMentionConfigPaths(channelId, basePath),
         });
       }
 
@@ -977,7 +1085,7 @@ export function buildClawGuardFindings(
             "推荐禁用群聊；若已有白名单，也可以切到 allowlist",
             "Recommended: disable groups. If you already have allowlists, switch to allowlist mode.",
           ),
-          configPaths: [`channels.${channelId}.groupPolicy`, `channels.${channelId}.groupAllowFrom`],
+          configPaths: readChannelAllowlistConfigPaths(channelId, basePath),
           repairKind: "guided",
           repairChoices: groupChoices,
           defaultOptions: { choice: "disable_groups" },
@@ -993,8 +1101,10 @@ export function buildClawGuardFindings(
         recordPassed({
           id: allowlistFindingId,
           title: text(locale, `${label} 群聊已经有白名单约束`, `${label} group access already has allowlist controls`),
-          summary: text(locale, "群或成员白名单已配置", "Group or sender allowlists are configured"),
-          configPaths: [`channels.${channelId}.groupPolicy`, `channels.${channelId}.groupAllowFrom`],
+          summary: channelId === "discord"
+            ? text(locale, "guild allowlist 已配置", "guild allowlist is configured")
+            : text(locale, "群或成员白名单已配置", "Group or sender allowlists are configured"),
+          configPaths: readChannelAllowlistConfigPaths(channelId, basePath),
         });
       }
     }

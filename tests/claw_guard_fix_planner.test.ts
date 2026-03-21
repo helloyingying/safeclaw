@@ -104,6 +104,92 @@ test("group allowlist wizard falls back to disabling groups when no allowlist ex
   assert.match(String(allowlistPlan.applyDisabledReason), /allowlist/i);
 });
 
+test("discord guild requireMention fix patches guild and channel paths", () => {
+  const plan = buildClawGuardFixPlan({
+    snapshot: createSnapshot({
+      channels: {
+        discord: {
+          enabled: true,
+          groupPolicy: "allowlist",
+          guilds: {
+            "1484822413131911189": {
+              channels: {
+                "1484822413735624748": {
+                  allow: true,
+                  requireMention: false,
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    findingId: "group_missing_require_mention::discord",
+    locale: "en",
+    environment: {
+      sandboxImageReady: true,
+      browserSandboxImageReady: true,
+    },
+  });
+
+  assert.equal(plan.canApply, true);
+  assert.deepEqual(plan.configPaths, [
+    "channels.discord.guilds.1484822413131911189.channels.1484822413735624748.requireMention",
+  ]);
+  assert.deepEqual(plan.patch, {
+    channels: {
+      discord: {
+        guilds: {
+          "1484822413131911189": {
+            channels: {
+              "1484822413735624748": {
+                allow: true,
+                requireMention: true,
+              },
+            },
+            requireMention: true,
+          },
+        },
+      },
+    },
+  });
+});
+
+test("discord guild allowlist wizard points at guild config paths", () => {
+  const plan = buildClawGuardFixPlan({
+    snapshot: createSnapshot({
+      channels: {
+        discord: {
+          enabled: true,
+          groupPolicy: "allowlist",
+        },
+      },
+    }),
+    findingId: "group_missing_allowlist::discord",
+    locale: "en",
+    options: {
+      choice: "disable_groups",
+    },
+    environment: {
+      sandboxImageReady: true,
+      browserSandboxImageReady: true,
+    },
+  });
+
+  assert.equal(plan.canApply, true);
+  assert.deepEqual(plan.configPaths, [
+    "channels.discord.groupPolicy",
+    "channels.discord.guilds",
+  ]);
+  assert.deepEqual(plan.patch, {
+    channels: {
+      discord: {
+        groupPolicy: "disabled",
+      },
+    },
+  });
+});
+
 test("sandbox fix stays blocked when sandbox image is not ready", () => {
   const plan = buildClawGuardFixPlan({
     snapshot: createSnapshot({

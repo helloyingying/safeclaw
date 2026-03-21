@@ -150,7 +150,10 @@ function readGuidedChoice(options: Record<string, unknown> | undefined): string 
   return choice || GUIDED_DISABLE_GROUPS;
 }
 
-function hasEffectiveAllowlist(channel: Record<string, unknown>): boolean {
+function hasEffectiveAllowlist(channel: Record<string, unknown>, channelId?: string): boolean {
+  if (channelId === "discord") {
+    return hasDiscordGuildAllowlist(channel);
+  }
   if (readStringArray(channel.groupAllowFrom).some((entry) => entry !== "*")) {
     return true;
   }
@@ -165,6 +168,65 @@ function hasEffectiveAllowlist(channel: Record<string, unknown>): boolean {
 
 function hasEffectiveDmAllowlist(channel: Record<string, unknown>): boolean {
   return readStringArray(channel.allowFrom).some((entry) => entry !== "*");
+}
+
+function hasDiscordGuildAllowlist(channel: Record<string, unknown>): boolean {
+  return Object.keys(asRecord(channel.guilds)).some((guildId) => guildId.trim().length > 0);
+}
+
+function collectDiscordGuildRequireMentionPaths(channel: Record<string, unknown>): string[] {
+  const paths: string[] = [];
+  const guilds = asRecord(channel.guilds);
+
+  for (const [guildId, rawGuild] of Object.entries(guilds)) {
+    if (!guildId.trim()) {
+      continue;
+    }
+    const guild = asRecord(rawGuild);
+    if (readBoolean(guild.requireMention) === false) {
+      paths.push(`channels.discord.guilds.${guildId}.requireMention`);
+    }
+
+    const guildChannels = asRecord(guild.channels);
+    for (const [channelId, rawChannel] of Object.entries(guildChannels)) {
+      if (readBoolean(asRecord(rawChannel).requireMention) === false) {
+        paths.push(`channels.discord.guilds.${guildId}.channels.${channelId}.requireMention`);
+      }
+    }
+  }
+
+  return paths;
+}
+
+function buildDiscordGuildRequireMentionPatch(channel: Record<string, unknown>): Record<string, unknown> {
+  const guilds = asRecord(channel.guilds);
+  const nextGuilds: Record<string, unknown> = {};
+
+  for (const [guildId, rawGuild] of Object.entries(guilds)) {
+    if (!guildId.trim()) {
+      continue;
+    }
+    const guild = asRecord(rawGuild);
+    const guildChannels = asRecord(guild.channels);
+    const nextChannels: Record<string, unknown> = {};
+
+    for (const [channelId, rawChannel] of Object.entries(guildChannels)) {
+      nextChannels[channelId] = {
+        ...asRecord(rawChannel),
+        requireMention: true,
+      };
+    }
+
+    nextGuilds[guildId] = {
+      ...guild,
+      requireMention: true,
+      ...(Object.keys(nextChannels).length > 0 ? { channels: nextChannels } : {}),
+    };
+  }
+
+  return {
+    guilds: nextGuilds,
+  };
 }
 
 function buildManualPlan(input: {
@@ -511,7 +573,7 @@ export function buildClawGuardFixPlan(input: {
 
   if (ruleId === "group_policy_too_open" && scopeId) {
     const choice = readGuidedChoice(options);
-    const allowlistAvailable = hasEffectiveAllowlist(channel);
+    const allowlistAvailable = hasEffectiveAllowlist(channel, scopeId);
     const patch = choice === GUIDED_USE_ALLOWLIST
       ? buildPatchForChannel(scopeId, { groupPolicy: "allowlist" })
       : buildPatchForChannel(scopeId, { groupPolicy: "disabled" });
@@ -563,10 +625,12 @@ export function buildClawGuardFixPlan(input: {
   }
 
   if (ruleId === "group_missing_require_mention" && scopeId) {
-    const groups = asRecord(channel.groups);
-    const patch = Object.keys(groups).length > 0
-      ? buildPatchForChannel(scopeId, { groups: { "*": { requireMention: true } } })
-      : buildPatchForChannel(scopeId, { requireMention: true });
+    const isDiscordChannel = scopeId === "discord";
+    const patch = isDiscordChannel
+      ? buildPatchForChannel(scopeId, buildDiscordGuildRequireMentionPatch(channel))
+      : Object.keys(asRecord(channel.groups)).length > 0
+        ? buildPatchForChannel(scopeId, { groups: { "*": { requireMention: true } } })
+        : buildPatchForChannel(scopeId, { requireMention: true });
     return finish({
       findingId,
       title: text(locale, "要求先 @ 机器人", "Require mentioning the bot"),
@@ -578,7 +642,11 @@ export function buildClawGuardFixPlan(input: {
         "应用后，普通群聊噪声不会再直接触发机器人，误回复会明显减少。",
         "After this change, ordinary group chatter no longer triggers the bot directly, which reduces accidental replies.",
       ),
-      configPaths: [`channels.${scopeId}.groups.*.requireMention`],
+      configPaths: isDiscordChannel
+        ? collectDiscordGuildRequireMentionPaths(channel).length > 0
+          ? collectDiscordGuildRequireMentionPaths(channel)
+          : [`channels.${scopeId}.guilds`]
+        : [`channels.${scopeId}.groups.*.requireMention`],
       repairChoices: [],
       patch,
       previewPatch: patch,
@@ -588,7 +656,7 @@ export function buildClawGuardFixPlan(input: {
   }
 
   if (ruleId === "group_missing_allowlist" && scopeId) {
-    const allowlistAvailable = hasEffectiveAllowlist(channel);
+    const allowlistAvailable = hasEffectiveAllowlist(channel, scopeId);
     const choice = readGuidedChoice(options);
     const canApply = choice !== GUIDED_USE_ALLOWLIST || allowlistAvailable;
     const patch = choice === GUIDED_USE_ALLOWLIST
@@ -607,7 +675,9 @@ export function buildClawGuardFixPlan(input: {
       impact: choice === GUIDED_USE_ALLOWLIST
         ? text(locale, "应用后，只有白名单里的群或成员可以触发机器人。", "After this change, only allowlisted groups or senders can trigger the bot.")
         : text(locale, "应用后，这个渠道的群聊入口会被关闭。", "After this change, group access on this channel is disabled."),
-      configPaths: [`channels.${scopeId}.groupPolicy`, `channels.${scopeId}.groupAllowFrom`],
+      configPaths: scopeId === "discord"
+        ? [`channels.${scopeId}.groupPolicy`, `channels.${scopeId}.guilds`]
+        : [`channels.${scopeId}.groupPolicy`, `channels.${scopeId}.groupAllowFrom`],
       repairChoices: [
         ensureChoice(locale, GUIDED_DISABLE_GROUPS, true),
         ensureChoice(

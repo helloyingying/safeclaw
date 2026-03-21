@@ -101,6 +101,130 @@ test("claw guard detector treats allowlisted group configs as passed", () => {
   assert.ok(passedIds.includes("group_missing_allowlist::telegram"));
 });
 
+test("claw guard detector accepts discord guild allowlists and default mention gating", () => {
+  const result = buildClawGuardFindings(
+    createSnapshot({
+      gateway: {
+        bind: "loopback",
+        auth: {
+          mode: "token",
+          token: "__OPENCLAW_REDACTED__",
+        },
+      },
+      channels: {
+        discord: {
+          enabled: true,
+          groupPolicy: "allowlist",
+          guilds: {
+            "1484822413131911189": {
+              channels: {
+                "1484822413735624748": {
+                  allow: true,
+                },
+              },
+            },
+          },
+          streaming: "off",
+        },
+      },
+    }),
+    "en",
+  );
+
+  const findingIds = result.findings.map((item) => item.id);
+  assert.equal(findingIds.includes("group_policy_too_open::discord"), false);
+  assert.equal(findingIds.includes("group_missing_require_mention::discord"), false);
+  assert.equal(findingIds.includes("group_missing_allowlist::discord"), false);
+
+  const passedIds = result.passed.map((item) => item.id);
+  assert.ok(passedIds.includes("group_policy_too_open::discord"));
+  assert.ok(passedIds.includes("group_missing_require_mention::discord"));
+  assert.ok(passedIds.includes("group_missing_allowlist::discord"));
+
+  const allowlistPass = result.passed.find((item) => item.id === "group_missing_allowlist::discord");
+  assert.deepEqual(allowlistPass?.configPaths, [
+    "channels.discord.groupPolicy",
+    "channels.discord.guilds",
+  ]);
+
+  const mentionPass = result.passed.find((item) => item.id === "group_missing_require_mention::discord");
+  assert.deepEqual(mentionPass?.configPaths, ["channels.discord.guilds"]);
+});
+
+test("claw guard detector flags explicit discord guild requireMention false at channel path", () => {
+  const result = buildClawGuardFindings(
+    createSnapshot({
+      gateway: {
+        bind: "loopback",
+        auth: {
+          mode: "token",
+          token: "__OPENCLAW_REDACTED__",
+        },
+      },
+      channels: {
+        discord: {
+          enabled: true,
+          groupPolicy: "allowlist",
+          guilds: {
+            "1484822413131911189": {
+              channels: {
+                "1484822413735624748": {
+                  allow: true,
+                  requireMention: false,
+                },
+              },
+            },
+          },
+          streaming: "off",
+        },
+      },
+    }),
+    "en",
+  );
+
+  const finding = result.findings.find((item) => item.id === "group_missing_require_mention::discord");
+  assert.ok(finding);
+  assert.deepEqual(finding?.configPaths, [
+    "channels.discord.guilds.1484822413131911189.channels.1484822413735624748.requireMention",
+  ]);
+});
+
+test("claw guard detector reads legacy top-level discord channel config", () => {
+  const result = buildClawGuardFindings(
+    createSnapshot({
+      gateway: {
+        bind: "loopback",
+        auth: {
+          mode: "token",
+          token: "__OPENCLAW_REDACTED__",
+        },
+      },
+      discord: {
+        enabled: true,
+        groupPolicy: "allowlist",
+        guilds: {
+          "1484822413131911189": {
+            channels: {
+              "1484822413735624748": {
+                allow: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+    "en",
+  );
+
+  const findingIds = result.findings.map((item) => item.id);
+  assert.equal(findingIds.includes("group_missing_allowlist::discord"), false);
+  assert.equal(findingIds.includes("group_missing_require_mention::discord"), false);
+
+  const passedIds = result.passed.map((item) => item.id);
+  assert.ok(passedIds.includes("group_missing_allowlist::discord"));
+  assert.ok(passedIds.includes("group_missing_require_mention::discord"));
+});
+
 test("claw guard detector only reports browser sandbox when browser config exists", () => {
   const withoutBrowser = buildClawGuardFindings(
     createSnapshot({

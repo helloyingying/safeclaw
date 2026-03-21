@@ -21,6 +21,17 @@ function nowIsoString(): string {
   return new Date(Date.now()).toISOString();
 }
 
+function normalizeDiscordTarget(target: string): string {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (/^(?:user|channel|discord):/i.test(trimmed) || /^<@!?\d+>$/.test(trimmed)) {
+    return trimmed;
+  }
+  return /^\d+$/.test(trimmed) ? `user:${trimmed}` : trimmed;
+}
+
 abstract class BaseNotificationAdapter implements NotificationPort {
   constructor(protected adapter: OpenClawAdapter) {}
 
@@ -62,7 +73,7 @@ class TelegramNotificationAdapter extends BaseNotificationAdapter {
 
 class DiscordNotificationAdapter extends BaseNotificationAdapter {
   async send(target: NotificationTarget, message: string, _options?: NotificationOptions): Promise<NotificationResult> {
-    const result = await this.adapter.sendDiscord(target.to, message, {
+    const result = await this.adapter.sendDiscord(normalizeDiscordTarget(target.to), message, {
       cfg: this.adapter.config,
       ...(target.accountId ? { accountId: target.accountId } : {})
     });

@@ -5,6 +5,7 @@ import type { NotificationPort, NotificationTarget } from "../ports/notification
 import type { OpenClawLogger } from "../ports/openclaw_adapter.ts";
 import type { SecurityClawLocale } from "../../i18n/locale.ts";
 import { localeForIntl, pickLocalized } from "../../i18n/locale.ts";
+import { UserApprovalContextService, type UserApprovalContextRepository } from "./user_approval_context_service.ts";
 
 const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
 const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
@@ -21,12 +22,34 @@ export interface ApprovalNotificationResult {
 }
 
 export class ApprovalService {
+  private userContextService: UserApprovalContextService;
+
   constructor(
     private repository: ApprovalRepository,
     private notificationAdapters: Map<string, NotificationPort>,
     private logger: OpenClawLogger,
     private locale: SecurityClawLocale = "en",
-  ) {}
+    userContextRepository?: UserApprovalContextRepository,
+  ) {
+    // If no explicit user context repository is provided, try to use the approval repository
+    // if it implements the UserApprovalContextRepository interface
+    const contextRepo = userContextRepository ?? 
+      (this.isUserApprovalContextRepository(repository) ? repository : undefined);
+    
+    if (!contextRepo) {
+      throw new Error("ApprovalService requires a UserApprovalContextRepository");
+    }
+    
+    this.userContextService = new UserApprovalContextService(contextRepo);
+  }
+
+  private isUserApprovalContextRepository(repo: ApprovalRepository): repo is ApprovalRepository & UserApprovalContextRepository {
+    return (
+      typeof (repo as unknown as UserApprovalContextRepository).setContext === "function" &&
+      typeof (repo as unknown as UserApprovalContextRepository).getContext === "function" &&
+      typeof (repo as unknown as UserApprovalContextRepository).clearContext === "function"
+    );
+  }
 
   async sendNotifications(
     targets: NotificationTarget[],
@@ -80,6 +103,15 @@ export class ApprovalService {
           notifications.push(notification);
           sent = true;
           delivered = true;
+
+          // Record user context for numeric shortcut responses
+          this.userContextService.recordApprovalSent(
+            record.approval_id,
+            target.channel,
+            target.to,
+            record.expires_at,
+            target.accountId,
+          );
 
           this.logger.info?.(
             `securityclaw: sent approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.messageId ? ` message_id=${notification.messageId}` : ""}`,
@@ -193,6 +225,10 @@ export class ApprovalService {
     ].join("\n");
   }
 
+  getUserContextService(): UserApprovalContextService {
+    return this.userContextService;
+  }
+
   private formatApprovalPrompt(record: StoredApprovalRecord): string {
     const paths = record.resource_paths.length > 0
       ? this.trimText(record.resource_paths.slice(0, 3).join(" | "), 160)
@@ -214,10 +250,19 @@ export class ApprovalService {
       ...(summary ? [`${this.text("参数", "Args")}: ${summary}`] : []),
       ...(rules ? [`${this.text("规则", "Policy")}: ${rules}`] : []),
       "",
-      this.text("操作", "Actions"),
-      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "temporary")}: /securityclaw-approve ${record.approval_id}`,
-      `- ${this.text("批准", "Approve")} ${this.formatApprovalGrantDuration(record, "longterm")}: /securityclaw-approve ${record.approval_id} long`,
-      `- ${this.text("拒绝", "Reject")}: /securityclaw-reject ${record.approval_id}`,
+      this.text("操作（回复数字或命令）", "Actions (reply with number or command)"),
+      this.text(
+        `- 回复 1 或 /securityclaw-approve ${record.approval_id} 批准 ${this.formatApprovalGrantDuration(record, "temporary")}`,
+        `- Reply 1 or /securityclaw-approve ${record.approval_id} to approve for ${this.formatApprovalGrantDuration(record, "temporary")}`,
+      ),
+      this.text(
+        `- 回复 2 或 /securityclaw-approve ${record.approval_id} long 批准 ${this.formatApprovalGrantDuration(record, "longterm")}`,
+        `- Reply 2 or /securityclaw-approve ${record.approval_id} long to approve for ${this.formatApprovalGrantDuration(record, "longterm")}`,
+      ),
+      this.text(
+        `- 回复 3 或 /securityclaw-reject ${record.approval_id} 拒绝`,
+        `- Reply 3 or /securityclaw-reject ${record.approval_id} to reject`,
+      ),
     ].join("\n");
   }
 

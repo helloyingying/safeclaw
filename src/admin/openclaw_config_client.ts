@@ -101,7 +101,46 @@ function summarizeCliFailure(raw: string): string {
 }
 
 function formatReadOnlyFallbackReason(error: unknown): string {
+  if (error instanceof InvalidRpcConfigError) {
+    return `Gateway config is invalid. Read-only fallback is active. ${String(error)}`;
+  }
   return `Gateway RPC is unavailable. Read-only fallback is active. ${String(error)}`;
+}
+
+class InvalidRpcConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidRpcConfigError";
+  }
+}
+
+function summarizeInvalidConfigIssue(issue: unknown): string | undefined {
+  const record = asRecord(issue);
+  const issuePath = typeof record.path === "string" ? record.path.trim() : "";
+  const message = typeof record.message === "string" ? record.message.trim() : "";
+  if (!issuePath && !message) {
+    return undefined;
+  }
+  if (issuePath && message) {
+    return `${issuePath}: ${message}`;
+  }
+  return issuePath || message || undefined;
+}
+
+function extractInvalidConfigError(payload: Record<string, unknown>): InvalidRpcConfigError | undefined {
+  if (payload.valid !== false) {
+    return undefined;
+  }
+  const configPath = typeof payload.path === "string" && payload.path.trim()
+    ? payload.path.trim()
+    : "OpenClaw config";
+  const issues = Array.isArray(payload.issues)
+    ? payload.issues
+        .map((issue) => summarizeInvalidConfigIssue(issue))
+        .filter((issue): issue is string => typeof issue === "string" && issue.length > 0)
+    : [];
+  const detail = issues.length > 0 ? issues.join("; ") : "Config validation failed";
+  return new InvalidRpcConfigError(`Invalid config at ${configPath}: ${detail}`);
 }
 
 function waitFor(ms: number): Promise<"timeout"> {
@@ -162,6 +201,11 @@ export class OpenClawConfigClient {
   constructor(runtime: AdminRuntime, deps: OpenClawConfigClientDeps = {}) {
     this.runtime = runtime;
     this.deps = deps;
+  }
+
+  private rememberSnapshot(snapshot: ClawGuardConfigSnapshot): ClawGuardConfigSnapshot {
+    this.deps.hardeningCache?.rememberSnapshot(snapshot);
+    return snapshot;
   }
 
   private runCliWithCommand(command: string, args: string[], timeoutMs: number): Promise<RunProcessSyncResult> {
@@ -258,8 +302,12 @@ export class OpenClawConfigClient {
 
   private async readRpcSnapshot(timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<ClawGuardConfigSnapshot> {
     const payload = asRecord(await this.parseCliJson(["gateway", "call", "config.get", "--params", "{}", "--json"], timeoutMs));
+    const invalidConfigError = extractInvalidConfigError(payload);
+    if (invalidConfigError) {
+      throw invalidConfigError;
+    }
     const config = asRecord(payload.config || payload.resolved || payload.parsed);
-    const snapshot = await this.enrichSnapshot({
+    return this.rememberSnapshot(await this.enrichSnapshot({
       config,
       ...(typeof payload.path === "string" ? { configPath: payload.path } : {}),
       source: "gateway-rpc",
@@ -269,23 +317,29 @@ export class OpenClawConfigClient {
       ...(typeof payload.hash === "string"
         ? {}
         : { writeReason: "Gateway config hash is unavailable, so patch writes are disabled." }),
-    });
-    this.deps.hardeningCache?.rememberSnapshot(snapshot);
-    return snapshot;
+    }));
   }
 
-  private async readLocalSnapshot(writeReason?: string): Promise<ClawGuardConfigSnapshot> {
+  private async readLocalSnapshot(options: {
+    writeReason?: string;
+    gatewayOnline?: boolean;
+  } = {}): Promise<ClawGuardConfigSnapshot> {
     const config = asRecord(await this.loadLocalConfig());
-    const snapshot = await this.enrichSnapshot({
+    return this.rememberSnapshot(await this.enrichSnapshot({
       config,
       configPath: path.join(this.runtime.openClawHome, "openclaw.json"),
       source: "local-file",
-      gatewayOnline: false,
+      gatewayOnline: options.gatewayOnline === true,
       writeSupported: false,
-      ...(writeReason ? { writeReason } : {}),
+      ...(options.writeReason ? { writeReason: options.writeReason } : {}),
+    }));
+  }
+
+  private async readFallbackSnapshot(error: unknown): Promise<ClawGuardConfigSnapshot> {
+    return this.readLocalSnapshot({
+      writeReason: formatReadOnlyFallbackReason(error),
+      gatewayOnline: error instanceof InvalidRpcConfigError,
     });
-    this.deps.hardeningCache?.rememberSnapshot(snapshot);
-    return snapshot;
   }
 
   async readConfigSnapshot(options: ReadConfigSnapshotOptions = {}): Promise<ClawGuardConfigSnapshot> {
@@ -307,10 +361,11 @@ export class OpenClawConfigClient {
           if (raced.kind === "rpc") {
             return raced.snapshot;
           }
-          return {
+          return this.rememberSnapshot({
             ...localSnapshot,
+            gatewayOnline: raced.error instanceof InvalidRpcConfigError,
             writeReason: formatReadOnlyFallbackReason(raced.error),
-          };
+          });
         }
         this.deps.hardeningCache?.scheduleRpcRefresh(() => this.readRpcSnapshot(FAST_RPC_TIMEOUT_MS));
         return localSnapshot;
@@ -325,7 +380,7 @@ export class OpenClawConfigClient {
       if (requireWritable) {
         throw error;
       }
-      return this.readLocalSnapshot(formatReadOnlyFallbackReason(error));
+      return this.readFallbackSnapshot(error);
     }
   }
 

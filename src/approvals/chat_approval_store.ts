@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { ApprovalStatus, ResourceScope } from "../types.ts";
+import type { UserApprovalContext, UserApprovalContextRepository } from "../domain/services/user_approval_context_service.ts";
 
 export type ApprovalChannel = string;
 
@@ -116,6 +117,19 @@ CREATE INDEX IF NOT EXISTS idx_chat_approval_session_request
 
 CREATE INDEX IF NOT EXISTS idx_chat_approval_status
   ON chat_approval_requests (status, requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_approval_contexts (
+  context_key TEXT PRIMARY KEY,
+  approval_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  account_id TEXT,
+  sent_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_approval_context_expires
+  ON user_approval_contexts (expires_at);
 `;
 
 function optionalString(value: unknown): string | undefined {
@@ -202,7 +216,7 @@ export function createApprovalRequestKey(input: {
   return createHash("sha256").update(payload).digest("hex");
 }
 
-export class ChatApprovalStore {
+export class ChatApprovalStore implements UserApprovalContextRepository {
   #db: DatabaseSync;
   #now: () => number;
 
@@ -348,6 +362,122 @@ export class ChatApprovalStore {
 
   close(): void {
     this.#db.close();
+  }
+
+  // User Approval Context methods (implements UserApprovalContextRepository)
+  setContext(context: UserApprovalContext): void {
+    this.setUserContext(context);
+  }
+
+  getContext(channel: string, userId: string, accountId?: string): UserApprovalContext | undefined {
+    return this.getUserContext(channel, userId, accountId);
+  }
+
+  clearContext(channel: string, userId: string, accountId?: string): void {
+    this.clearUserContext(channel, userId, accountId);
+  }
+
+  // Internal implementation
+  setUserContext(context: UserApprovalContext): void {
+    const contextKey = this.#buildContextKey(context.channel, context.user_id, context.account_id);
+    this.#db
+      .prepare(
+        `
+        INSERT INTO user_approval_contexts (
+          context_key,
+          approval_id,
+          channel,
+          user_id,
+          account_id,
+          sent_at,
+          expires_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(context_key) DO UPDATE SET
+          approval_id = excluded.approval_id,
+          channel = excluded.channel,
+          user_id = excluded.user_id,
+          account_id = excluded.account_id,
+          sent_at = excluded.sent_at,
+          expires_at = excluded.expires_at
+      `,
+      )
+      .run(
+        contextKey,
+        context.approval_id,
+        context.channel,
+        context.user_id,
+        context.account_id ?? null,
+        context.sent_at,
+        context.expires_at,
+      );
+  }
+
+  getUserContext(channel: string, userId: string, accountId?: string): UserApprovalContext | undefined {
+    const contextKey = this.#buildContextKey(channel, userId, accountId);
+    const row = this.#db
+      .prepare(
+        `
+        SELECT approval_id, channel, user_id, account_id, sent_at, expires_at
+        FROM user_approval_contexts
+        WHERE context_key = ?
+      `,
+      )
+      .get(contextKey) as
+      | {
+          approval_id: string;
+          channel: string;
+          user_id: string;
+          account_id: string | null;
+          sent_at: string;
+          expires_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      approval_id: row.approval_id,
+      channel: row.channel,
+      user_id: row.user_id,
+      account_id: row.account_id ?? undefined,
+      sent_at: row.sent_at,
+      expires_at: row.expires_at,
+    };
+  }
+
+  clearUserContext(channel: string, userId: string, accountId?: string): void {
+    const contextKey = this.#buildContextKey(channel, userId, accountId);
+    this.#db
+      .prepare(
+        `
+        DELETE FROM user_approval_contexts
+        WHERE context_key = ?
+      `,
+      )
+      .run(contextKey);
+  }
+
+  cleanupExpiredUserContexts(): number {
+    const now = new Date(this.#now()).toISOString();
+    const result = this.#db
+      .prepare(
+        `
+        DELETE FROM user_approval_contexts
+        WHERE expires_at < ?
+      `,
+      )
+      .run(now);
+    return typeof result.changes === "number" ? result.changes : 0;
+  }
+
+  #buildContextKey(channel: string, userId: string, accountId?: string): string {
+    // Normalize account_id: treat undefined, empty string, and "default" as equivalent (no suffix)
+    const normalizedAccountId = accountId?.trim() && accountId.trim() !== "default" ? accountId.trim() : undefined;
+    const normalized = `${channel.toLowerCase()}:${userId}${normalizedAccountId ? `:${normalizedAccountId}` : ""}`;
+    return normalized;
   }
 
   #expireIfNeeded(record: StoredApprovalRecord): StoredApprovalRecord {

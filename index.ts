@@ -101,12 +101,6 @@ type ResolvedApprovalBridge = {
   locale: SecurityClawLocale;
 };
 
-type AutoHandledApprovalReply = {
-  expiresAt: number;
-  remainingCancels: number;
-  aliases: string[];
-};
-
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME_DIR = os.homedir();
 const APPROVAL_APPROVE_COMMAND = "securityclaw-approve";
@@ -118,8 +112,6 @@ const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
 const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
 const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
 const APPROVAL_NOTIFICATION_HISTORY_LIMIT = 12;
-const AUTO_HANDLED_ADMIN_REPLY_TTL_MS = 10_000;
-const AUTO_HANDLED_ADMIN_REPLY_CANCELS = 3;
 const SECURITYCLAW_PROTECTED_STORAGE_RULE_ID = "internal:securityclaw-protected-storage";
 const SECURITYCLAW_PROTECTED_STORAGE_REASON = "SECURITYCLAW_STATE_STORAGE_PROTECTED";
 const CHANNEL_METHOD_SUFFIX_OVERRIDES: Record<string, string> = {
@@ -377,7 +369,7 @@ function deriveApprovalBridgeFromAdminPolicies(
     for (const identity of identities) {
       targets.push({
         channel,
-        to: identity,
+        to: channel === "discord" ? normalizeDiscordApprovalTarget(identity) : identity,
       });
       approvers.push({
         channel,
@@ -519,8 +511,8 @@ function formatApprovalPrompt(record: StoredApprovalRecord, locale = runtimeLoca
     `3. ${textForLocale(locale, "拒绝", "Reject")}`,
     textForLocale(
       locale,
-      "可直接点击下方按钮；也可以在只有一条待审批时回复 1、2 或 3。",
-      "Tap a button below, or reply with 1, 2, or 3 when there is only one pending request.",
+      "按这条消息里的操作审批；不要单独发送 1、2、3。",
+      "Use the approval actions in this message; do not send 1, 2, or 3 by itself.",
     ),
   ].join("\n");
 }
@@ -747,69 +739,66 @@ function parseApprovalReplyChoice(value: string | undefined): ApprovalGrantMode 
   return undefined;
 }
 
+function readMetadataString(
+  metadata: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return undefined;
+}
+
+function extractApprovalReplyMessageId(metadata: Record<string, unknown>): string | undefined {
+  return readMetadataString(
+    metadata,
+    "replyToMessageId",
+    "replyToId",
+    "reply_to_message_id",
+    "reply_to_id",
+    "quotedMessageId",
+    "quoted_message_id",
+  );
+}
+
+function normalizeApprovalAccountId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "default") {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function normalizeDiscordApprovalTarget(to: string): string {
+  const trimmed = to.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("discord:")) {
+    const unscoped = trimmed.slice("discord:".length).trim();
+    return unscoped ? normalizeDiscordApprovalTarget(unscoped) : trimmed;
+  }
+  if (lower.startsWith("user:") || lower.startsWith("channel:")) {
+    return trimmed;
+  }
+  if (/^<@!?\d+>$/.test(trimmed)) {
+    return `user:${trimmed.slice(2, -1).replace(/^!/, "")}`;
+  }
+  return /^\d+$/.test(trimmed) ? `user:${trimmed}` : trimmed;
+}
+
 function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
   if (mode === "longterm") {
     return new Date(Date.now() + APPROVAL_LONG_GRANT_TTL_MS).toISOString();
   }
   return new Date(Date.now() + resolveTemporaryGrantDurationMs(record)).toISOString();
-}
-
-function buildApprovalConversationKey(params: {
-  channelId?: string;
-  accountId?: string;
-  conversationId?: string;
-}): string | undefined {
-  const channelId = params.channelId?.trim();
-  const conversationId = params.conversationId?.trim();
-  if (!channelId || !conversationId) {
-    return undefined;
-  }
-  return [channelId, params.accountId?.trim() ?? "", conversationId].join("|");
-}
-
-function normalizeApprovalConversationTarget(value: string | undefined): string | undefined {
-  const candidate = value?.trim();
-  if (!candidate) {
-    return undefined;
-  }
-  const match = /^(user|chat|channel|direct|dm):(.+)$/i.exec(candidate);
-  if (!match) {
-    return candidate;
-  }
-  const normalized = match[2]?.trim();
-  return normalized || candidate;
-}
-
-function buildApprovalConversationTargets(value: string | undefined): string[] {
-  const candidates = new Set<string>();
-  const direct = normalizeApprovalConversationTarget(value);
-  if (direct) {
-    candidates.add(direct);
-  }
-  const raw = value?.trim();
-  if (raw) {
-    candidates.add(raw);
-  }
-  return Array.from(candidates);
-}
-
-function buildApprovalConversationKeys(params: {
-  channelId?: string;
-  accountId?: string;
-  conversationId?: string;
-}): string[] {
-  const keys = new Set<string>();
-  for (const conversationId of buildApprovalConversationTargets(params.conversationId)) {
-    const key = buildApprovalConversationKey({
-      ...(params.channelId !== undefined ? { channelId: params.channelId } : {}),
-      conversationId,
-      ...(params.accountId !== undefined ? { accountId: params.accountId } : {}),
-    });
-    if (key) {
-      keys.add(key);
-    }
-  }
-  return Array.from(keys);
 }
 
 type ChannelSendMessageFn = (
@@ -1196,7 +1185,7 @@ async function sendChatNotification(
       text: string,
       opts?: Record<string, unknown>,
     ) => Promise<{ messageId?: string }>;
-    const result = await sendDiscord(target.to, message, {
+    const result = await sendDiscord(normalizeDiscordApprovalTarget(target.to), message, {
       cfg: api.config,
       ...(target.account_id ? { accountId: target.account_id } : {}),
     });
@@ -1868,7 +1857,6 @@ const plugin = {
     const approvalStore = new ChatApprovalStore(dbPath);
     const inflightApprovalNotifications = new Map<string, Promise<ApprovalNotificationResult>>();
     const warnNotificationSentAt = new Map<string, number>();
-    const autoHandledApprovalReplies = new Map<string, AutoHandledApprovalReply>();
     const initialApprovalBridge = resolveApprovalBridge(runtime);
     if (initialApprovalBridge.enabled) {
       api.logger.info?.(
@@ -2081,77 +2069,33 @@ const plugin = {
         return;
       }
 
-      const conversationId = ctx.conversationId?.trim();
-      if (!conversationId) {
+      const replyMessageId = extractApprovalReplyMessageId(metadata);
+      if (!replyMessageId) {
+        api.logger.info?.(
+          `securityclaw: ignoring numeric approval reply without reply target channel=${ctx.channelId ?? "unknown"} from=${event.from}`,
+        );
         return;
       }
-      const conversationTargets = buildApprovalConversationTargets(conversationId);
-      const conversationKeys = buildApprovalConversationKeys({
-        ...(ctx.channelId !== undefined ? { channelId: ctx.channelId } : {}),
-        conversationId,
-        ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
-      });
-
-      const replyTargetTo = conversationTargets[0] ?? conversationId;
-      const replyTarget: ChatApprovalTarget = {
-        channel: ctx.channelId,
-        to: replyTargetTo,
-        ...(ctx.accountId ? { account_id: ctx.accountId } : {}),
-      };
-      const markAutoHandled = () => {
-        if (conversationKeys.length === 0) {
-          return;
-        }
-        const nextEntry: AutoHandledApprovalReply = {
-          expiresAt: Date.now() + AUTO_HANDLED_ADMIN_REPLY_TTL_MS,
-          remainingCancels: AUTO_HANDLED_ADMIN_REPLY_CANCELS,
-          aliases: conversationKeys,
-        };
-        for (const key of conversationKeys) {
-          autoHandledApprovalReplies.set(key, nextEntry);
-        }
-      };
-      const sendAutoReply = async (message: string) => {
-        markAutoHandled();
-        try {
-          await sendChatNotification(api, replyTarget, message);
-        } catch (error) {
-          api.logger.warn?.(`securityclaw: failed to send auto approval reply channel=${ctx.channelId} to=${conversationId} (${String(error)})`);
-        }
-      };
-
       const pendingRecords = approvalStore
         .listPending(20)
         .filter((record) =>
           record.notifications.some((notification) =>
-            notification.channel === ctx.channelId && conversationTargets.includes(notification.to)
+            notification.channel === ctx.channelId &&
+            normalizeApprovalAccountId(notification.account_id) === normalizeApprovalAccountId(ctx.accountId) &&
+            notification.message_id?.trim() === replyMessageId
           )
         );
 
       if (pendingRecords.length === 0) {
         api.logger.info?.(
-          `securityclaw: numeric approval reply found no pending request channel=${ctx.channelId} conversation=${conversationId} targets=${conversationTargets.join(",")}`,
-        );
-        await sendAutoReply(
-          textForLocale(
-            approvalBridge.locale,
-            "当前没有可直接处理的待审批请求。",
-            "There is no pending approval request ready for a numeric reply.",
-          ),
+          `securityclaw: numeric approval reply found no pending request channel=${ctx.channelId} reply_message_id=${replyMessageId}`,
         );
         return;
       }
 
       if (pendingRecords.length > 1) {
         api.logger.info?.(
-          `securityclaw: numeric approval reply matched multiple pending requests channel=${ctx.channelId} conversation=${conversationId} count=${pendingRecords.length}`,
-        );
-        await sendAutoReply(
-          textForLocale(
-            approvalBridge.locale,
-            "当前有多条待审批请求。请点击消息按钮，或先发送 /securityclaw-pending 查看审批单号。",
-            "Multiple approval requests are pending. Use the message buttons or send /securityclaw-pending first.",
-          ),
+          `securityclaw: numeric approval reply matched multiple pending requests channel=${ctx.channelId} reply_message_id=${replyMessageId} count=${pendingRecords.length}`,
         );
         return;
       }
@@ -2162,14 +2106,7 @@ const plugin = {
       if (choice === "reject") {
         approvalStore.resolve(existing.approval_id, approverIdentity, "rejected");
         api.logger.info?.(
-          `securityclaw: numeric approval reply rejected approval_id=${existing.approval_id} approver=${approverIdentity}`,
-        );
-        await sendAutoReply(
-          textForLocale(
-            approvalBridge.locale,
-            `已拒绝 ${existing.approval_id}，不会为 ${existing.actor_id} 增加授权。`,
-            `Rejected ${existing.approval_id}. No grant was added for ${existing.actor_id}.`,
-          ),
+          `securityclaw: numeric approval reply rejected approval_id=${existing.approval_id} approver=${approverIdentity} reply_message_id=${replyMessageId}`,
         );
         return;
       }
@@ -2179,14 +2116,7 @@ const plugin = {
         expires_at: grantExpiresAt,
       });
       api.logger.info?.(
-        `securityclaw: numeric approval reply approved approval_id=${existing.approval_id} approver=${approverIdentity} mode=${choice}`,
-      );
-      await sendAutoReply(
-        textForLocale(
-          approvalBridge.locale,
-          `已为 ${existing.actor_id} 添加${formatGrantModeLabel(choice, approvalBridge.locale)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}。`,
-          `${formatGrantModeLabel(choice, approvalBridge.locale)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}.`,
-        ),
+        `securityclaw: numeric approval reply approved approval_id=${existing.approval_id} approver=${approverIdentity} mode=${choice} reply_message_id=${replyMessageId}`,
       );
     });
 
@@ -2593,52 +2523,6 @@ const plugin = {
     api.on(
       "message_sending",
       async (event, ctx) => {
-        const conversationKeys = new Set<string>();
-        for (const key of buildApprovalConversationKeys({
-          ...(ctx.channelId !== undefined ? { channelId: ctx.channelId } : {}),
-          ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
-          ...(ctx.conversationId !== undefined ? { conversationId: ctx.conversationId } : {}),
-        })) {
-          conversationKeys.add(key);
-        }
-        for (const key of buildApprovalConversationKeys({
-          ...(ctx.channelId !== undefined ? { channelId: ctx.channelId } : {}),
-          ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
-          ...(typeof event.to === "string" ? { conversationId: event.to } : {}),
-        })) {
-          conversationKeys.add(key);
-        }
-
-        for (const conversationKey of conversationKeys) {
-          const pendingAutoReply = autoHandledApprovalReplies.get(conversationKey);
-          if (!pendingAutoReply) {
-            continue;
-          }
-          if (Date.now() > pendingAutoReply.expiresAt) {
-            for (const alias of pendingAutoReply.aliases) {
-              autoHandledApprovalReplies.delete(alias);
-            }
-            continue;
-          }
-          if (pendingAutoReply.remainingCancels <= 1) {
-            for (const alias of pendingAutoReply.aliases) {
-              autoHandledApprovalReplies.delete(alias);
-            }
-          } else {
-            const nextEntry: AutoHandledApprovalReply = {
-              ...pendingAutoReply,
-              remainingCancels: pendingAutoReply.remainingCancels - 1,
-            };
-            for (const alias of pendingAutoReply.aliases) {
-              autoHandledApprovalReplies.set(alias, nextEntry);
-            }
-          }
-          api.logger.info?.(
-            `securityclaw: suppressing outbound reply after numeric approval channel=${ctx.channelId} key=${conversationKey} to=${typeof event.to === "string" ? event.to : "unknown"}`,
-          );
-          return { cancel: true };
-        }
-
         const current = getRuntime();
         const traceId = ctx.conversationId ?? ctx.accountId ?? `trace-${Date.now()}`;
         const sanitized = sanitizeUnknown(current.dlpEngine, event.content);

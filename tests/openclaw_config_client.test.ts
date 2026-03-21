@@ -146,6 +146,96 @@ test("openclaw config client fast reads keep local findings and trim noisy rpc f
   assert.match(String(snapshot.writeReason), /read-only fallback/i);
 });
 
+test("openclaw config client fast reads fall back to local config when rpc reports invalid config", async () => {
+  const client = new OpenClawConfigClient(runtime, {
+    runCli() {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          path: "/tmp/openclaw.json",
+          valid: false,
+          hash: "rpc-hash",
+          config: {},
+          issues: [
+            {
+              path: "channels.discord.streaming",
+              message: "Invalid input",
+            },
+          ],
+        }, null, 2),
+      };
+    },
+    async loadLocalConfig() {
+      return {
+        channels: {
+          discord: {
+            enabled: true,
+            groupPolicy: "allowlist",
+          },
+        },
+      };
+    },
+  });
+
+  const snapshot = await client.readConfigSnapshot({ fast: true });
+  const channels = snapshot.config.channels as Record<string, unknown> | undefined;
+  assert.equal(snapshot.source, "local-file");
+  assert.equal(snapshot.gatewayOnline, true);
+  assert.equal(snapshot.writeSupported, false);
+  assert.match(String(snapshot.writeReason), /gateway config is invalid/i);
+  assert.match(String(snapshot.writeReason), /channels\.discord\.streaming/i);
+  assert.deepEqual(channels?.discord, {
+    enabled: true,
+    groupPolicy: "allowlist",
+  });
+});
+
+test("openclaw config client full reads fall back to local config when rpc reports invalid config", async () => {
+  const client = new OpenClawConfigClient(runtime, {
+    runCli() {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          path: "/tmp/openclaw.json",
+          valid: false,
+          hash: "rpc-hash",
+          config: {},
+          issues: [
+            {
+              path: "channels.discord.streaming",
+              message: "Invalid input",
+            },
+          ],
+        }, null, 2),
+      };
+    },
+    async loadLocalConfig() {
+      return {
+        gateway: {
+          bind: "loopback",
+        },
+        channels: {
+          discord: {
+            enabled: true,
+          },
+        },
+      };
+    },
+  });
+
+  const snapshot = await client.readConfigSnapshot();
+  const gateway = snapshot.config.gateway as { bind?: string } | undefined;
+  const channels = snapshot.config.channels as Record<string, unknown> | undefined;
+  assert.equal(snapshot.source, "local-file");
+  assert.equal(snapshot.gatewayOnline, true);
+  assert.equal(snapshot.writeSupported, false);
+  assert.match(String(snapshot.writeReason), /gateway config is invalid/i);
+  assert.equal(gateway?.bind, "loopback");
+  assert.deepEqual(channels?.discord, {
+    enabled: true,
+  });
+});
+
 test("openclaw config client requires rpc when writable access is requested", async () => {
   const client = new OpenClawConfigClient(runtime, {
     runCli() {
