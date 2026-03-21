@@ -137,6 +137,39 @@ test("mergeAccountPoliciesWithSessions puts approval-capable accounts first", ()
   );
 });
 
+test("mergeAccountPoliciesWithSessions matches saved slack admin policies by session key and refreshes the subject", () => {
+  const merged = mergeAccountPoliciesWithSessions(
+    [
+      {
+        subject: "slack:u0amkf3qb0x",
+        mode: "apply_rules",
+        is_admin: true,
+        approval_locale: "zh-CN",
+        session_key: "agent:main:slack:direct:u0amkf3qb0x",
+        session_id: "session-slack",
+      },
+    ],
+    [
+      {
+        subject: "slack:U0AMKF3QB0X",
+        label: "slack:U0AMKF3QB0X",
+        session_key: "agent:main:slack:direct:u0amkf3qb0x",
+        session_id: "session-slack",
+        agent_id: "main",
+        channel: "slack",
+        chat_type: "direct",
+        updated_at: "2026-03-20T05:51:00.000Z",
+      },
+    ],
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.subject, "slack:U0AMKF3QB0X");
+  assert.equal(merged[0]?.is_admin, true);
+  assert.equal(merged[0]?.approval_locale, "zh-CN");
+  assert.equal(merged[0]?.session_key, "agent:main:slack:direct:u0amkf3qb0x");
+});
+
 test("ensureDefaultAdminAccount no longer invents a default admin", () => {
   const sessions = [
     {

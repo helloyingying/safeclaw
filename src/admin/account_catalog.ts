@@ -34,7 +34,7 @@ function createAccountDisplayEntry(
   session: OpenClawChatSession | undefined,
   policy: AccountPolicyRecord | undefined,
 ): AccountPolicyRecord {
-  const subject = policy?.subject ?? session?.subject ?? "";
+  const subject = session?.subject ?? policy?.subject ?? "";
   const merged: AccountPolicyRecord = {
     ...(session ? createAccountPolicyDraftFromSession(session, session.subject) : {
       subject,
@@ -60,12 +60,38 @@ export function mergeAccountPoliciesWithSessions(
   const normalizedPolicies = AccountPolicyEngine.sanitize(policies);
   const visibleSessions = sessions;
   const policyBySubject = new Map(normalizedPolicies.map((policy) => [policy.subject, policy]));
+  const policyBySessionKey = new Map(
+    normalizedPolicies
+      .filter((policy) => policy.session_key)
+      .map((policy) => [policy.session_key as string, policy]),
+  );
+  const policyBySessionId = new Map(
+    normalizedPolicies
+      .filter((policy) => policy.session_id)
+      .map((policy) => [policy.session_id as string, policy]),
+  );
   const sessionOrder = new Map(visibleSessions.map((session, index) => [session.subject, index]));
   const merged: AccountPolicyRecord[] = [];
+  const consumePolicy = (policy: AccountPolicyRecord | undefined): AccountPolicyRecord | undefined => {
+    if (!policy) {
+      return undefined;
+    }
+    policyBySubject.delete(policy.subject);
+    if (policy.session_key) {
+      policyBySessionKey.delete(policy.session_key);
+    }
+    if (policy.session_id) {
+      policyBySessionId.delete(policy.session_id);
+    }
+    return policy;
+  };
+  const resolvePolicyForSession = (session: OpenClawChatSession): AccountPolicyRecord | undefined =>
+    policyBySubject.get(session.subject)
+    ?? (session.session_key ? policyBySessionKey.get(session.session_key) : undefined)
+    ?? (session.session_id ? policyBySessionId.get(session.session_id) : undefined);
 
   for (const session of visibleSessions) {
-    merged.push(createAccountDisplayEntry(session, policyBySubject.get(session.subject)));
-    policyBySubject.delete(session.subject);
+    merged.push(createAccountDisplayEntry(session, consumePolicy(resolvePolicyForSession(session))));
   }
 
   for (const policy of policyBySubject.values()) {

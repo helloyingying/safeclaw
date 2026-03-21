@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { SecurityClawLocale } from "../src/i18n/locale.ts";
+import type { AccountPolicyRecord } from "../src/types.ts";
 
 import plugin, { __setOpenClawReplyChunkHelpersForTests } from "../index.ts";
 import { ChatApprovalStore } from "../src/approvals/chat_approval_store.ts";
@@ -44,6 +45,67 @@ let replyChunkTestHelpersPromise: Promise<ReplyChunkTestHelpers> | undefined;
 
 function extractApprovalId(value: unknown): string | undefined {
   return String(value).match(/(?:approval_id=|(?:Request ID|审批单): )([a-f0-9-]+)/i)?.[1];
+}
+
+function collectSlackActionIds(blocks: unknown): string[] {
+  if (!Array.isArray(blocks)) {
+    return [];
+  }
+  const actionIds: string[] = [];
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const elements = (block as { elements?: unknown }).elements;
+    if (!Array.isArray(elements)) {
+      continue;
+    }
+    for (const element of elements) {
+      if (!element || typeof element !== "object") {
+        continue;
+      }
+      const actionId = (element as { action_id?: unknown }).action_id;
+      if (typeof actionId === "string") {
+        actionIds.push(actionId);
+      }
+    }
+  }
+  return actionIds;
+}
+
+function collectSlackBlocksByType(blocks: unknown, type: string): Array<Record<string, unknown>> {
+  if (!Array.isArray(blocks)) {
+    return [];
+  }
+  return blocks.filter((block): block is Record<string, unknown> => {
+    return Boolean(block) && typeof block === "object" && (block as { type?: unknown }).type === type;
+  });
+}
+
+function findSlackButton(blocks: unknown, value: string): { actionId: string; value: string } | undefined {
+  if (!Array.isArray(blocks)) {
+    return undefined;
+  }
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const elements = (block as { elements?: unknown }).elements;
+    if (!Array.isArray(elements)) {
+      continue;
+    }
+    for (const element of elements) {
+      if (!element || typeof element !== "object") {
+        continue;
+      }
+      const candidateValue = (element as { value?: unknown }).value;
+      const actionId = (element as { action_id?: unknown }).action_id;
+      if (candidateValue === value && typeof actionId === "string") {
+        return { actionId, value };
+      }
+    }
+  }
+  return undefined;
 }
 
 function resolveOpenClawReplyChunkFile(): string {
@@ -333,17 +395,24 @@ function seedAdminAccountPolicy(
   subject = "telegram:secops-admin",
   approvalLocale?: SecurityClawLocale,
 ): void {
+  seedAccountPolicies(dbPath, [
+    {
+      subject,
+      mode: "apply_rules",
+      is_admin: true,
+      ...(approvalLocale ? { approval_locale: approvalLocale } : {}),
+    },
+  ]);
+}
+
+function seedAccountPolicies(
+  dbPath: string,
+  policies: AccountPolicyRecord[],
+): void {
   const writer = new StrategyStore(dbPath);
   try {
     writer.writeOverride({
-      account_policies: [
-        {
-          subject,
-          mode: "apply_rules",
-          is_admin: true,
-          ...(approvalLocale ? { approval_locale: approvalLocale } : {}),
-        },
-      ],
+      account_policies: policies,
     });
   } finally {
     writer.close();
@@ -937,8 +1006,10 @@ test("chat approval bridge accepts discord button click messages", async () => {
 
     const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
     const messageReceived = harness.hooks.get("message_received") as MessageReceivedHook | undefined;
+    const messageSending = harness.hooks.get("message_sending") as MessageSendingHook | undefined;
     assert.ok(beforeToolCall);
     assert.ok(messageReceived);
+    assert.ok(messageSending);
 
     const blocked = await beforeToolCall(
       {
@@ -971,6 +1042,17 @@ test("chat approval bridge accepts discord button click messages", async () => {
         conversationId: "discord:1087701739362328666",
       },
     );
+
+    const sendingResult = await messageSending!(
+      {
+        content: "button click follow-up",
+      },
+      {
+        channelId: "discord",
+        conversationId: "discord:1087701739362328666",
+      },
+    );
+    assert.deepEqual(sendingResult, { cancel: true });
 
     const approved = await beforeToolCall(
       {
@@ -1170,10 +1252,189 @@ test("chat approval bridge sends slack approvals with button blocks", async () =
 
     assert.deepEqual(blocked?.block, true);
     assert.equal(harness.sentMessages.length, 1);
-    assert.equal(harness.sentMessages[0]?.to, "U024BE7LH");
+    assert.equal(harness.sentMessages[0]?.to, "user:U024BE7LH");
     assert.ok(Array.isArray(harness.sentMessages[0]?.opts?.blocks));
+    const sectionBlocks = collectSlackBlocksByType(harness.sentMessages[0]?.opts?.blocks, "section");
+    assert.equal(sectionBlocks.length, 1);
+    assert.match(JSON.stringify(sectionBlocks[0]), /(SecurityClaw Approval|SecurityClaw 审批请求)/);
+    assert.match(JSON.stringify(sectionBlocks[0]), /(Request ID|审批单)/);
+    const actionBlocks = collectSlackBlocksByType(harness.sentMessages[0]?.opts?.blocks, "actions");
+    assert.equal(actionBlocks.length, 1);
+    assert.equal(Array.isArray(actionBlocks[0]?.elements) ? actionBlocks[0].elements.length : 0, 3);
+    const actionIds = collectSlackActionIds(harness.sentMessages[0]?.opts?.blocks);
+    assert.equal(actionIds.length, 3);
+    assert.equal(new Set(actionIds).size, actionIds.length);
+    assert.ok(actionIds.every((entry) => entry.startsWith("openclaw:securityclaw:approval")));
     assert.match(JSON.stringify(harness.sentMessages[0]?.opts?.blocks), /(Approve|批准)/);
     assert.match(JSON.stringify(harness.sentMessages[0]?.opts?.blocks), /(Reject|拒绝)/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("chat approval bridge normalizes legacy lowercase slack admin subjects before sending approvals", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-slack-legacy-subject-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAccountPolicies(dbPath, [
+      {
+        subject: "slack:u0amkf3qb0x",
+        mode: "apply_rules",
+        is_admin: true,
+        session_key: "agent:main:slack:direct:u0amkf3qb0x",
+        session_id: "session-slack-admin",
+        agent_id: "main",
+        channel: "slack",
+        chat_type: "direct",
+      },
+    ]);
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    const beforePromptBuild = harness.hooks.get("before_prompt_build") as BeforePromptBuildHook | undefined;
+    assert.ok(beforeToolCall);
+    assert.ok(beforePromptBuild);
+
+    const blocked = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-slack-legacy-1",
+        sessionKey: "slack:U0AMKF3QB0X",
+        runId: "run-slack-legacy-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "slack",
+      },
+    );
+
+    const approvalId = extractApprovalId(blocked?.blockReason);
+    assert.ok(approvalId);
+    assert.equal(harness.sentMessages.length, 1);
+    assert.equal(harness.sentMessages[0]?.to, "user:U0AMKF3QB0X");
+    const approveButton = findSlackButton(harness.sentMessages[0]?.opts?.blocks, `sc-approve ${approvalId}`);
+    assert.ok(approveButton);
+
+    await enqueueReplySystemEvent(
+      `Slack interaction: ${JSON.stringify({
+        interactionType: "block_action",
+        actionId: approveButton.actionId,
+        userId: "U0AMKF3QB0X",
+        value: `sc-approve ${approvalId}`,
+      })}`,
+      { sessionKey: "slack:U0AMKF3QB0X" },
+    );
+
+    await beforePromptBuild(
+      {
+        prompt: "continue",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-slack-legacy-2",
+        sessionKey: "slack:U0AMKF3QB0X",
+        runId: "run-slack-legacy-2",
+        workspaceDir: "/tmp/workspace",
+        channelId: "slack",
+      },
+    );
+
+    const approved = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "/tmp/workspace/Downloads/after-slack-legacy-click" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-slack-legacy-3",
+        sessionKey: "slack:U0AMKF3QB0X",
+        runId: "run-slack-legacy-3",
+        workspaceDir: "/tmp/workspace",
+        channelId: "slack",
+      },
+    );
+
+    assert.equal(approved, undefined);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("chat approval bridge guides numeric slack replies back to the approval buttons", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-slack-guidance-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath, "slack:U024BE7LH");
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    const messageReceived = harness.hooks.get("message_received") as MessageReceivedHook | undefined;
+    assert.ok(beforeToolCall);
+    assert.ok(messageReceived);
+
+    const blocked = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-slack-guidance-1",
+        sessionKey: "slack:U024BE7LH",
+        runId: "run-slack-guidance-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "slack",
+      },
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.equal(harness.sentMessages.length, 1);
+    assert.equal(harness.sentMessages[0]?.to, "user:U024BE7LH");
+
+    await messageReceived(
+      {
+        from: "slack:U024BE7LH",
+        content: "1",
+        metadata: {
+          senderId: "U024BE7LH",
+        },
+      },
+      {
+        channelId: "slack",
+        conversationId: "slack:U024BE7LH",
+      },
+    );
+
+    assert.equal(harness.sentMessages.length, 2);
+    assert.equal(harness.sentMessages[1]?.to, "user:U024BE7LH");
+    assert.match(
+      String(harness.sentMessages[1]?.text),
+      /(请点审批消息里的按钮；不要单独发送 1、2、3。|Use the buttons on the approval message; do not send 1, 2, or 3 by itself\.)/,
+    );
+
+    const store = new ChatApprovalStore(dbPath);
+    try {
+      const approvalId = extractApprovalId(blocked?.blockReason);
+      assert.ok(approvalId);
+      assert.equal(store.getById(approvalId)?.status, "pending");
+    } finally {
+      store.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1214,11 +1475,13 @@ test("chat approval bridge applies slack button interactions from buffered syste
 
     const approvalId = extractApprovalId(blocked?.blockReason);
     assert.ok(approvalId);
+    const approveButton = findSlackButton(harness.sentMessages[0]?.opts?.blocks, `sc-approve ${approvalId}`);
+    assert.ok(approveButton);
 
     await enqueueReplySystemEvent(
       `Slack interaction: ${JSON.stringify({
         interactionType: "block_action",
-        actionId: "openclaw:securityclaw:approval",
+        actionId: approveButton.actionId,
         userId: "U024BE7LH",
         value: `sc-approve ${approvalId}`,
       })}`,
@@ -1256,6 +1519,91 @@ test("chat approval bridge applies slack button interactions from buffered syste
     );
 
     assert.equal(approved, undefined);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("chat approval bridge applies slack button approvals before the initiating session retries", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-slack-cross-session-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAccountPolicies(dbPath, [
+      {
+        subject: "slack:U024BE7LH",
+        mode: "apply_rules",
+        is_admin: true,
+        session_key: "agent:main:slack:direct:u024be7lh",
+        session_id: "session-slack-admin",
+        agent_id: "main",
+        channel: "slack",
+        chat_type: "direct",
+      },
+    ]);
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    assert.ok(beforeToolCall);
+
+    const blocked = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-feishu-1",
+        sessionKey: "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        runId: "run-feishu-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "feishu",
+      },
+    );
+
+    const approvalId = extractApprovalId(blocked?.blockReason);
+    assert.ok(approvalId);
+    const approveButton = findSlackButton(harness.sentMessages[0]?.opts?.blocks, `sc-approve ${approvalId}`);
+    assert.ok(approveButton);
+
+    await enqueueReplySystemEvent(
+      `Slack interaction: ${JSON.stringify({
+        interactionType: "block_action",
+        actionId: approveButton.actionId,
+        userId: "U024BE7LH",
+        value: `sc-approve ${approvalId}`,
+      })}`,
+      { sessionKey: "agent:main:slack:direct:u024be7lh" },
+    );
+
+    const approved = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-feishu-2",
+        sessionKey: "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        runId: "run-feishu-2",
+        workspaceDir: "/tmp/workspace",
+        channelId: "feishu",
+      },
+    );
+
+    assert.equal(approved, undefined);
+
+    const store = new ChatApprovalStore(dbPath);
+    try {
+      assert.equal(store.getById(approvalId)?.status, "approved");
+    } finally {
+      store.close();
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

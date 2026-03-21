@@ -45,6 +45,20 @@ test("session catalog reads openclaw sessions and resolves stable subjects", () 
             deliveryContext: {
               channel: "telegram"
             }
+          },
+          "agent:main:slack:direct:u0amkf3qb0x": {
+            sessionId: "session-slack",
+            updatedAt: Date.parse("2026-03-15T13:00:00.000Z"),
+            chatType: "direct",
+            deliveryContext: {
+              channel: "slack",
+              to: "user:U0AMKF3QB0X"
+            },
+            origin: {
+              provider: "slack",
+              from: "slack:U0AMKF3QB0X",
+              to: "user:U0AMKF3QB0X",
+            }
           }
         },
         null,
@@ -54,14 +68,16 @@ test("session catalog reads openclaw sessions and resolves stable subjects", () 
     );
 
     const sessions = listOpenClawChatSessions(tempDir);
-    assert.equal(sessions.length, 3);
-    assert.equal(sessions[0]?.subject, "agent:main:main");
-    assert.equal(sessions[0]?.label, "main");
-    assert.equal(sessions[0]?.channel, "webchat");
-    assert.equal(sessions[1]?.subject, "telegram:chat-99");
-    assert.equal(sessions[1]?.agent_id, "main");
-    assert.equal(sessions[1]?.channel, "telegram");
-    assert.equal(sessions[2]?.subject, "telegram:chat-42");
+    assert.equal(sessions.length, 4);
+    assert.equal(sessions[0]?.subject, "slack:U0AMKF3QB0X");
+    assert.equal(sessions[0]?.channel, "slack");
+    assert.equal(sessions[1]?.subject, "agent:main:main");
+    assert.equal(sessions[1]?.label, "main");
+    assert.equal(sessions[1]?.channel, "webchat");
+    assert.equal(sessions[2]?.subject, "telegram:chat-99");
+    assert.equal(sessions[2]?.agent_id, "main");
+    assert.equal(sessions[2]?.channel, "telegram");
+    assert.equal(sessions[3]?.subject, "telegram:chat-42");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

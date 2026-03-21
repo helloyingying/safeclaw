@@ -13,11 +13,14 @@ type RawSessionMetadata = {
   lastChannel?: unknown;
   deliveryContext?: {
     channel?: unknown;
+    to?: unknown;
   };
   origin?: {
     provider?: unknown;
     surface?: unknown;
     chatType?: unknown;
+    from?: unknown;
+    to?: unknown;
   };
   sessionFile?: unknown;
 };
@@ -49,6 +52,58 @@ function normalizeTimestamp(value: unknown): string | undefined {
       return new Date(parsed).toISOString();
     }
   }
+  return undefined;
+}
+
+const DIRECT_CHAT_TYPES = new Set(["direct", "dm", "private"]);
+
+function normalizeDirectSessionSubject(channel: string | undefined, value: string | undefined): string | undefined {
+  const normalizedChannel = normalizeString(channel)?.toLowerCase();
+  const trimmed = normalizeString(value);
+  if (!normalizedChannel || !trimmed) {
+    return undefined;
+  }
+
+  if (normalizedChannel === "telegram") {
+    const identifier = trimmed.replace(/^telegram:/i, "").trim();
+    return identifier ? `telegram:${identifier}` : undefined;
+  }
+
+  if (normalizedChannel === "discord") {
+    const scoped = trimmed.replace(/^discord:/i, "").trim();
+    if (!scoped || /^channel:/i.test(scoped)) {
+      return undefined;
+    }
+    const identifier = scoped.replace(/^user:/i, "").trim();
+    if (!identifier) {
+      return undefined;
+    }
+    const mention = identifier.match(/^<@!?(\d+)>$/);
+    return `discord:${mention?.[1] ?? identifier}`;
+  }
+
+  if (normalizedChannel === "slack") {
+    const scoped = trimmed.replace(/^slack:/i, "").trim();
+    if (!scoped || /^channel:/i.test(scoped)) {
+      return undefined;
+    }
+    const identifier = scoped.replace(/^user:/i, "").trim();
+    if (!identifier) {
+      return undefined;
+    }
+    return /^[UW][A-Z0-9]+$/i.test(identifier)
+      ? `slack:${identifier.toUpperCase()}`
+      : `slack:${identifier}`;
+  }
+
+  if (normalizedChannel === "feishu" || normalizedChannel === "lark") {
+    const identifier = trimmed
+      .replace(/^(feishu|lark):/i, "")
+      .replace(/^(user|open_id|dm):/i, "")
+      .trim();
+    return identifier ? `${normalizedChannel}:${identifier}` : undefined;
+  }
+
   return undefined;
 }
 
@@ -105,12 +160,18 @@ export function listOpenClawChatSessions(openClawHome = path.join(os.homedir(), 
         normalizeString(metadata.origin?.chatType);
       const updatedAt = normalizeTimestamp(metadata.updatedAt);
       const sessionFile = normalizeString(metadata.sessionFile);
-      const subject = ApprovalSubjectResolver.resolve({
+      const fallbackSubject = ApprovalSubjectResolver.resolve({
         agentId,
         sessionKey,
         ...(sessionId ? { sessionId } : {}),
         ...(channel ? { channelId: channel } : {})
       });
+      const subject = DIRECT_CHAT_TYPES.has(chatType?.toLowerCase() ?? "")
+        ? normalizeDirectSessionSubject(channel ?? provider, normalizeString(metadata.origin?.from))
+          ?? normalizeDirectSessionSubject(channel ?? provider, normalizeString(metadata.origin?.to))
+          ?? normalizeDirectSessionSubject(channel ?? provider, normalizeString(metadata.deliveryContext?.to))
+          ?? fallbackSubject
+        : fallbackSubject;
 
       const entry: OpenClawChatSession = {
         subject,

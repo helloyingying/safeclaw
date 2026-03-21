@@ -524,14 +524,16 @@ function splitApprovalSubject(value: string | undefined): { channel?: ApprovalCh
 }
 
 function normalizeApprovalIdentity(value: string | undefined, channel: ApprovalChannel): string | undefined {
-  const candidate = value?.trim();
+  let candidate = value?.trim();
   if (!candidate) {
     return undefined;
   }
   const channelPrefix = `${channel}:`;
   if (candidate.toLowerCase().startsWith(channelPrefix)) {
-    const unscoped = candidate.slice(channelPrefix.length).trim();
-    return unscoped || undefined;
+    candidate = candidate.slice(channelPrefix.length).trim();
+  }
+  if (channel === "slack") {
+    return normalizeSlackApprovalIdentity(candidate);
   }
   return candidate;
 }
@@ -574,7 +576,12 @@ function deriveApprovalBridgeFromAdminPolicies(
     for (const identity of identities) {
       targets.push({
         channel,
-        to: channel === "discord" ? normalizeDiscordApprovalTarget(identity) : identity,
+        to:
+          channel === "discord"
+            ? normalizeDiscordApprovalTarget(identity)
+            : channel === "slack"
+              ? normalizeSlackApprovalTarget(identity)
+              : identity,
       });
       approvers.push({
         channel,
@@ -631,6 +638,50 @@ function mergeApprovalBridgeConfig(
   };
 }
 
+function collectSlackApprovalEventSessionKeys(
+  accountPolicyEngine: AccountPolicyEngine,
+  hookContext?: SecurityClawHookContext,
+): string[] {
+  const sessionKeys = new Set<string>();
+  const addSessionKey = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      sessionKeys.add(trimmed);
+    }
+  };
+
+  addSessionKey(hookContext?.sessionKey);
+  for (const policy of accountPolicyEngine.listPolicies()) {
+    if (!policy.is_admin) {
+      continue;
+    }
+    const subject = splitApprovalSubject(policy.subject);
+    const channel =
+      resolveInteractiveApprovalChannel(policy.channel)
+      ?? resolveInteractiveApprovalChannel(policy.subject)
+      ?? subject.channel;
+    if (channel !== "slack") {
+      continue;
+    }
+
+    addSessionKey(policy.session_key);
+    addSessionKey(policy.subject);
+
+    const identity = normalizeApprovalIdentity(subject.identifier, channel);
+    if (!identity) {
+      continue;
+    }
+
+    addSessionKey(`slack:${identity}`);
+    addSessionKey(`slack:${identity.toLowerCase()}`);
+
+    const agentId = policy.agent_id?.trim() || "main";
+    addSessionKey(`agent:${agentId}:slack:direct:${identity.toLowerCase()}`);
+  }
+
+  return Array.from(sessionKeys);
+}
+
 function matchesApprover(approvers: ChatApprovalApprover[], ctx: SecurityClawApprovalCommandContext): boolean {
   const channel = normalizeApprovalChannel(ctx.channel);
   if (!channel) {
@@ -643,6 +694,14 @@ function matchesApprover(approvers: ChatApprovalApprover[], ctx: SecurityClawApp
       return;
     }
     senderIds.add(trimmed);
+    const normalizedIdentity = normalizeApprovalIdentity(trimmed, channel);
+    if (normalizedIdentity) {
+      senderIds.add(normalizedIdentity);
+      senderIds.add(`${channel}:${normalizedIdentity}`);
+      if (channel === "slack" || channel === "discord") {
+        senderIds.add(`user:${normalizedIdentity}`);
+      }
+    }
     const lower = trimmed.toLowerCase();
     const channelPrefix = `${channel}:`;
     if (lower.startsWith(channelPrefix)) {
@@ -915,11 +974,14 @@ function buildDiscordApprovalComponentSpec(
   };
 }
 
-function buildSlackApprovalActionId(accountId: string | undefined): string {
+type SlackApprovalActionVariant = "approve-temporary" | "approve-longterm" | "reject";
+
+function buildSlackApprovalActionId(accountId: string | undefined, variant?: SlackApprovalActionVariant): string {
   const normalized = normalizeApprovalAccountId(accountId);
+  const suffix = variant ? `|${variant}` : "";
   return normalized
-    ? `${SLACK_APPROVAL_ACTION_ID_PREFIX}:${encodeURIComponent(normalized)}`
-    : SLACK_APPROVAL_ACTION_ID_PREFIX;
+    ? `${SLACK_APPROVAL_ACTION_ID_PREFIX}:${encodeURIComponent(normalized)}${suffix}`
+    : `${SLACK_APPROVAL_ACTION_ID_PREFIX}${suffix}`;
 }
 
 function parseSlackApprovalActionAccountId(actionId: string | undefined): string | undefined {
@@ -927,7 +989,12 @@ function parseSlackApprovalActionAccountId(actionId: string | undefined): string
   if (!trimmed || !trimmed.startsWith(SLACK_APPROVAL_ACTION_ID_PREFIX)) {
     return undefined;
   }
-  const rawAccountId = trimmed.slice(SLACK_APPROVAL_ACTION_ID_PREFIX.length + 1);
+  const suffixIndex = trimmed.indexOf("|");
+  const baseActionId = suffixIndex >= 0 ? trimmed.slice(0, suffixIndex) : trimmed;
+  if (baseActionId === SLACK_APPROVAL_ACTION_ID_PREFIX) {
+    return undefined;
+  }
+  const rawAccountId = baseActionId.slice(SLACK_APPROVAL_ACTION_ID_PREFIX.length + 1);
   if (!rawAccountId) {
     return undefined;
   }
@@ -943,15 +1010,25 @@ function buildSlackApprovalBlocks(
   locale = runtimeLocale,
   accountId?: string,
 ): unknown[] {
-  const actionId = buildSlackApprovalActionId(accountId);
+  const approveTemporaryActionId = buildSlackApprovalActionId(accountId, "approve-temporary");
+  const approveLongtermActionId = buildSlackApprovalActionId(accountId, "approve-longterm");
+  const rejectActionId = buildSlackApprovalActionId(accountId, "reject");
   return [
     {
+      type: "section",
+      text: {
+        type: "plain_text",
+        text: formatApprovalPrompt(record, locale),
+        emoji: false,
+      },
+    },
+    {
       type: "actions",
-      block_id: `securityclaw_approval_${record.approval_id}_approve`,
+      block_id: `securityclaw_approval_${record.approval_id}`,
       elements: [
         {
           type: "button",
-          action_id: actionId,
+          action_id: approveTemporaryActionId,
           text: {
             type: "plain_text",
             text: formatApprovalButtonLabel(record, "temporary", locale),
@@ -962,7 +1039,7 @@ function buildSlackApprovalBlocks(
         },
         {
           type: "button",
-          action_id: actionId,
+          action_id: approveLongtermActionId,
           text: {
             type: "plain_text",
             text: formatApprovalButtonLabel(record, "longterm", locale),
@@ -970,15 +1047,9 @@ function buildSlackApprovalBlocks(
           },
           value: buildInteractiveApprovalToken(record, "approve", "longterm"),
         },
-      ],
-    },
-    {
-      type: "actions",
-      block_id: `securityclaw_approval_${record.approval_id}_reject`,
-      elements: [
         {
           type: "button",
-          action_id: actionId,
+          action_id: rejectActionId,
           text: {
             type: "plain_text",
             text: textForLocale(locale, "拒绝", "Reject"),
@@ -1279,6 +1350,28 @@ function normalizeApprovalConversationValue(channel: string, value: string | und
       aliases.add(`discord:${withoutUser}`);
       aliases.add(`user:${withoutUser}`);
     }
+  } else if (channel === "slack") {
+    const normalized = normalizeSlackApprovalTarget(trimmed);
+    const withoutProvider = trimmed.replace(/^slack:/i, "").trim();
+    if (withoutProvider) {
+      aliases.add(withoutProvider);
+      aliases.add(`slack:${withoutProvider}`);
+    }
+    if (normalized) {
+      aliases.add(normalized);
+    }
+    const withoutUser = normalized.replace(/^user:/i, "").trim();
+    if (withoutUser && withoutUser !== normalized) {
+      aliases.add(withoutUser);
+      aliases.add(`slack:${withoutUser}`);
+      aliases.add(`user:${withoutUser}`);
+    }
+    const withoutChannel = normalized.replace(/^channel:/i, "").trim();
+    if (withoutChannel && withoutChannel !== normalized) {
+      aliases.add(withoutChannel);
+      aliases.add(`slack:${withoutChannel}`);
+      aliases.add(`channel:${withoutChannel}`);
+    }
   } else if (channel === "feishu" || channel === "lark") {
     const unscoped = trimmed.replace(/^(feishu|lark):/i, "").trim();
     if (unscoped) {
@@ -1326,6 +1419,9 @@ function resolveIncomingApprovalReplyTarget(
   }
   if (channel === "discord") {
     return normalizeDiscordApprovalTarget(preferred);
+  }
+  if (channel === "slack") {
+    return normalizeSlackApprovalTarget(preferred);
   }
   if (channel === "feishu" || channel === "lark") {
     return preferred.replace(/^(feishu|lark):/i, "").trim();
@@ -1376,6 +1472,58 @@ function normalizeDiscordApprovalTarget(to: string): string {
     return `user:${trimmed.slice(2, -1).replace(/^!/, "")}`;
   }
   return /^\d+$/.test(trimmed) ? `user:${trimmed}` : trimmed;
+}
+
+function normalizeSlackApprovalIdentity(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const withoutUser = trimmed.replace(/^user:/i, "").trim();
+  if (!withoutUser) {
+    return undefined;
+  }
+  if (/^[UW][A-Z0-9]+$/i.test(withoutUser)) {
+    return withoutUser.toUpperCase();
+  }
+  if (/^[CDG][A-Z0-9]+$/i.test(withoutUser)) {
+    return withoutUser.toUpperCase();
+  }
+  return withoutUser;
+}
+
+function normalizeSlackApprovalTarget(to: string): string {
+  const trimmed = to.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("slack:")) {
+    const unscoped = trimmed.slice("slack:".length).trim();
+    return unscoped ? normalizeSlackApprovalTarget(unscoped) : trimmed;
+  }
+  if (lower.startsWith("user:")) {
+    const identity = normalizeSlackApprovalIdentity(trimmed);
+    return identity ? `user:${identity}` : trimmed;
+  }
+  if (lower.startsWith("channel:")) {
+    const raw = trimmed.slice("channel:".length).trim();
+    if (/^[CDG][A-Z0-9]+$/i.test(raw)) {
+      return `channel:${raw.toUpperCase()}`;
+    }
+    return trimmed;
+  }
+  const mention = trimmed.match(/^<@([A-Z0-9]+)>$/i);
+  if (mention) {
+    return `user:${mention[1].toUpperCase()}`;
+  }
+  if (/^[UW][A-Z0-9]+$/i.test(trimmed)) {
+    return `user:${trimmed.toUpperCase()}`;
+  }
+  if (/^[CDG][A-Z0-9]+$/i.test(trimmed)) {
+    return `channel:${trimmed.toUpperCase()}`;
+  }
+  return trimmed;
 }
 
 function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
@@ -1866,7 +2014,9 @@ async function sendChatNotification(
       text: string,
       opts?: Record<string, unknown>,
     ) => Promise<{ messageId?: string }>;
-    const result = await sendSlack(target.to, message, {
+    const normalizedTarget = normalizeSlackApprovalTarget(target.to);
+    notification.to = normalizedTarget;
+    const result = await sendSlack(normalizedTarget, message, {
       cfg: api.config,
       ...(target.account_id ? { accountId: target.account_id } : {}),
       ...(options.slackBlocks ? { blocks: options.slackBlocks } : {}),
@@ -2572,10 +2722,11 @@ const plugin = {
 
     async function processBufferedSlackApprovalInteractions(
       approvalBridge: ResolvedApprovalBridge,
+      accountPolicyEngine: AccountPolicyEngine,
       hookContext: SecurityClawHookContext,
     ): Promise<void> {
-      const sessionKey = hookContext.sessionKey?.trim();
-      if (!sessionKey) {
+      const sessionKeys = collectSlackApprovalEventSessionKeys(accountPolicyEngine, hookContext);
+      if (sessionKeys.length === 0) {
         return;
       }
 
@@ -2591,35 +2742,37 @@ const plugin = {
         }
       }
 
-      for (const event of replyChunkHelpers.peekSystemEventEntries(sessionKey)) {
-        const handledKey = `${sessionKey}|${event.contextKey ?? ""}|${event.ts}|${event.text}`;
-        if (handledApprovalInteractionEvents.has(handledKey)) {
-          continue;
-        }
+      for (const sessionKey of sessionKeys) {
+        for (const event of replyChunkHelpers.peekSystemEventEntries(sessionKey)) {
+          const handledKey = `${sessionKey}|${event.contextKey ?? ""}|${event.ts}|${event.text}`;
+          if (handledApprovalInteractionEvents.has(handledKey)) {
+            continue;
+          }
 
-        const action = parseSlackInteractiveApprovalEvent(event.text);
-        if (!action) {
-          continue;
-        }
+          const action = parseSlackInteractiveApprovalEvent(event.text);
+          if (!action) {
+            continue;
+          }
 
-        handledApprovalInteractionEvents.set(handledKey, Date.now());
-        const commandContext: SecurityClawApprovalCommandContext = {
-          channel: "slack",
-          from: `slack:${action.senderId}`,
-          senderId: action.senderId,
-          ...(action.accountId ? { accountId: action.accountId } : {}),
-          isAuthorizedSender: true,
-        };
-        const result = executeInteractiveApprovalAction(
-          approvalStore,
-          approvalBridge,
-          commandContext,
-          action,
-        );
-        if (result.ok) {
-          api.logger.info?.(
-            `securityclaw: applied slack approval button action session_key=${sessionKey} approval_id=${action.approvalId} kind=${action.kind}${action.kind === "approve" ? ` mode=${action.grantMode}` : ""}`,
+          handledApprovalInteractionEvents.set(handledKey, Date.now());
+          const commandContext: SecurityClawApprovalCommandContext = {
+            channel: "slack",
+            from: `slack:${action.senderId}`,
+            senderId: action.senderId,
+            ...(action.accountId ? { accountId: action.accountId } : {}),
+            isAuthorizedSender: true,
+          };
+          const result = executeInteractiveApprovalAction(
+            approvalStore,
+            approvalBridge,
+            commandContext,
+            action,
           );
+          if (result.ok) {
+            api.logger.info?.(
+              `securityclaw: applied slack approval button action session_key=${sessionKey} approval_id=${action.approvalId} kind=${action.kind}${action.kind === "approve" ? ` mode=${action.grantMode}` : ""}`,
+            );
+          }
         }
       }
     }
@@ -2775,6 +2928,14 @@ const plugin = {
 
       const interactiveAction = parseInteractiveApprovalToken(event.content);
       if (interactiveAction) {
+        const conversationHintKey = [
+          ctx.channelId,
+          normalizeApprovalAccountId(ctx.accountId) ?? "",
+          ctx.conversationId?.trim() ?? "",
+        ].join("|");
+        recentApprovalConversationHints.set(conversationHintKey, {
+          expiresAt: Date.now() + APPROVAL_CONVERSATION_HINT_TTL_MS,
+        });
         const result = executeInteractiveApprovalAction(
           approvalStore,
           approvalBridge,
@@ -2847,7 +3008,7 @@ const plugin = {
       async (_event, ctx) => {
         const hookContext = ctx as SecurityClawHookContext;
         const current = getRuntime();
-        await processBufferedSlackApprovalInteractions(resolveApprovalBridge(current), hookContext);
+        await processBufferedSlackApprovalInteractions(resolveApprovalBridge(current), current.accountPolicyEngine, hookContext);
         const traceId = hookContext.runId ?? hookContext.sessionId ?? hookContext.sessionKey ?? `trace-${Date.now()}`;
         const scope = resolveScope({ workspaceDir: hookContext.workspaceDir, channelId: hookContext.channelId });
         const prependSystemContext = [
@@ -2882,6 +3043,7 @@ const plugin = {
         const hookContext = ctx as SecurityClawHookContext;
         const current = getRuntime();
         const approvalBridge = resolveApprovalBridge(current);
+        await processBufferedSlackApprovalInteractions(approvalBridge, current.accountPolicyEngine, hookContext);
         const normalizedToolName = normalizeToolName(event.toolName);
         const rawArguments = event.params;
         const effectiveWorkspaceDir = resolveEffectiveWorkspaceDir(
