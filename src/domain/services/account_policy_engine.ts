@@ -1,6 +1,7 @@
 import type { AccountPolicyMode, AccountPolicyRecord } from "../../types.ts";
 import type { SecurityClawLocale } from "../../i18n/locale.ts";
 import { resolveSecurityClawLocale } from "../../i18n/locale.ts";
+import { canAssignAdminForAccount } from "./approval_channel.ts";
 import { isManageableAccountRecord } from "./account_subject_classifier.ts";
 
 export type AccountDecisionOverride = {
@@ -60,12 +61,14 @@ function normalizePolicyEntry(
     return undefined;
   }
 
-  const isAdmin = (value as { is_admin?: unknown }).is_admin === true;
   const record: AccountPolicyRecord = {
     subject,
     mode: normalizeMode((value as { mode?: unknown }).mode),
-    is_admin: isAdmin,
+    is_admin: false,
   };
+
+  const isAdmin = (value as { is_admin?: unknown }).is_admin === true && canAssignAdminForAccount(record);
+  record.is_admin = isAdmin;
 
   const approvalLocale =
     normalizeApprovalLocale((value as { approval_locale?: unknown }).approval_locale) ??

@@ -14,6 +14,8 @@ import type { AdminDecisionFilterId, AdminTabId } from "../../src/admin/dashboar
 import type { PluginSummary } from "../../src/admin/plugin_security_store.ts";
 import type { SkillSummary } from "../../src/admin/skill_interception_store.ts";
 import type { DecisionHistoryRecord } from "../../src/admin/server_types.ts";
+import { canAssignAdminForAccount } from "../../src/domain/services/approval_channel.ts";
+import { isManageableAccountRecord } from "../../src/domain/services/account_subject_classifier.ts";
 import type { SecurityClawLocale } from "../../src/i18n/locale.ts";
 import type { AccountPolicyMode, AccountPolicyRecord, Decision } from "../../src/types.ts";
 import { getActiveAdminLocale, ui } from "./dashboard_core.ts";
@@ -841,8 +843,8 @@ export function AdminAccessPanel({
           <div className="rule-title">{ui("管理员账号", "Admin account")}</div>
           <div className="rule-desc">
             {ui(
-              "先选一个管理员账号。审批和提醒消息会发给这个账号；没有管理员时，工具管理策略不会生效。",
-              "Choose an admin account first. Approval and warning messages go to that account; without an admin, tool management does not take effect."
+              "先选一个 Telegram、Slack 或 Discord 私聊管理员账号。审批和提醒消息会发给这个账号；没有可审批的管理员时，工具管理策略不会生效。",
+              "Choose a Telegram, Slack, or Discord DM admin account first. Approval and warning messages go to that account; without an approval-capable admin, tool management does not take effect."
             )}
           </div>
         </div>
@@ -862,15 +864,15 @@ export function AdminAccessPanel({
               `管理员已配置，审批和提醒会发到 ${accountPrimaryLabel(selectedAdminAccount)}。`,
               `An admin account is configured, and approval and warning messages will go to ${accountPrimaryLabel(selectedAdminAccount)}.`
             )
-            : (inactiveReason || ui("还没有管理员账号，所以工具策略不会生效。", "No admin account is configured, so tool management does not take effect."))}
+            : (inactiveReason || ui("还没有可审批的管理员账号，所以工具策略不会生效。", "No approval-capable admin account is configured, so tool management does not take effect."))}
         </p>
       </div>
 
       {adminConfigured ? (
         <div className="management-note">
           {ui(
-            "账号设置会决定谁收到审批和提醒。下面的工具策略只在管理员存在时才会参与判断。",
-            "Account settings decide who receives approvals and warnings. The tool policy below only participates when an admin exists."
+            "只有 Telegram、Slack、Discord 私聊支持按钮审批。下面的工具策略只在可审批管理员存在时才会参与判断。",
+            "Only Telegram, Slack, and Discord DMs support button approvals. The tool policy below only participates when an approval-capable admin exists."
           )}
         </div>
       ) : null}
@@ -879,68 +881,79 @@ export function AdminAccessPanel({
         <div className="chart-empty">{ui("还没有账号。", "No accounts yet.")}</div>
       ) : (
         <div className="account-list">
-          {displayAccounts.map((account) => (
-            <article key={account.subject} className={`account-card ${selectedAdminSubject === account.subject ? "active" : ""}`}>
-              <div className="account-card-head">
-                <div>
-                  <div className="account-title-row">
-                    <h3>{accountPrimaryLabel(account)}</h3>
-                    {account.is_admin ? <span className="tag meta-tag">{ui("管理员", "Admin")}</span> : null}
-                    <span className={`tag ${account.mode === "default_allow" ? "warn" : "allow"}`}>
-                      {accountModeLabel(account.mode)}
-                    </span>
+          {displayAccounts.map((account) => {
+            const approvalCapable = canAssignAdminForAccount(account);
+            const canAssignAdmin = approvalCapable;
+            const canEditRuleMode = isManageableAccountRecord(account);
+            return (
+              <article key={account.subject} className={`account-card ${selectedAdminSubject === account.subject ? "active" : ""}`}>
+                <div className="account-card-head">
+                  <div>
+                    <div className="account-title-row">
+                      <h3>{accountPrimaryLabel(account)}</h3>
+                      {account.is_admin ? <span className="tag meta-tag">{ui("管理员", "Admin")}</span> : null}
+                      <span className={`tag ${account.mode === "default_allow" ? "warn" : "allow"}`}>
+                        {accountModeLabel(account.mode)}
+                      </span>
+                      <span className={`tag ${approvalCapable ? "allow" : "warn"}`}>
+                        {approvalCapable ? ui("支持审批", "Approval ready") : ui("不支持审批", "No approval buttons")}
+                      </span>
+                    </div>
+                    <div className="account-subject">{account.subject}</div>
+                    <div className="account-meta">{accountMetaLabel(account)}</div>
                   </div>
-                  <div className="account-subject">{account.subject}</div>
-                  <div className="account-meta">{accountMetaLabel(account)}</div>
                 </div>
-              </div>
 
-              <div className="account-controls">
-                <label className="account-field">
-                  <span>{ui("规则模式", "Rule Mode")}</span>
-                  <select
-                    value={account.mode || "apply_rules"}
-                    onChange={(event) =>
-                      onUpdateAccountPolicy(account.subject, { mode: event.target.value as AccountPolicyMode })
-                    }
-                  >
-                    <option value="apply_rules">{ui("应用规则", "Apply Rules")}</option>
-                    <option value="default_allow">{ui("默认放行", "Default Allow")}</option>
-                  </select>
-                </label>
-
-                <label className="account-toggle">
-                  <input
-                    type="radio"
-                    name="admin-account"
-                    checked={selectedAdminSubject === account.subject}
-                    onChange={(event) => {
-                      if (event.target.checked) {
-                        onSetAdminAccount(account.subject);
-                      }
-                    }}
-                  />
-                  <span>{ui("设为管理员", "Set as admin")}</span>
-                </label>
-
-                {selectedAdminSubject === account.subject ? (
+                <div className="account-controls">
                   <label className="account-field">
-                    <span>{ui("审批消息语言", "Approval message language")}</span>
+                    <span>{ui("规则模式", "Rule Mode")}</span>
                     <select
-                      value={account.approval_locale || defaultApprovalLocale}
+                      disabled={!canEditRuleMode}
+                      value={account.mode || "apply_rules"}
                       onChange={(event) =>
-                        onUpdateAccountPolicy(account.subject, {
-                          approval_locale: event.target.value as SecurityClawLocale,
-                        })}
+                        onUpdateAccountPolicy(account.subject, { mode: event.target.value as AccountPolicyMode })
+                      }
                     >
-                      <option value="zh-CN">{ui("中文", "Chinese")}</option>
-                      <option value="en">English</option>
+                      <option value="apply_rules">{ui("应用规则", "Apply Rules")}</option>
+                      <option value="default_allow">{ui("默认放行", "Default Allow")}</option>
                     </select>
                   </label>
-                ) : null}
-              </div>
-            </article>
-          ))}
+
+                  {canAssignAdmin ? (
+                    <label className="account-toggle">
+                      <input
+                        type="radio"
+                        name="admin-account"
+                        checked={selectedAdminSubject === account.subject}
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            onSetAdminAccount(account.subject);
+                          }
+                        }}
+                      />
+                      <span>{ui("设为管理员", "Set as admin")}</span>
+                    </label>
+                  ) : null}
+
+                  {selectedAdminSubject === account.subject ? (
+                    <label className="account-field">
+                      <span>{ui("审批消息语言", "Approval message language")}</span>
+                      <select
+                        value={account.approval_locale || defaultApprovalLocale}
+                        onChange={(event) =>
+                          onUpdateAccountPolicy(account.subject, {
+                            approval_locale: event.target.value as SecurityClawLocale,
+                          })}
+                      >
+                        <option value="zh-CN">{ui("中文", "Chinese")}</option>
+                        <option value="en">English</option>
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </section>

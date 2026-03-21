@@ -112,3 +112,24 @@ test("group sessions are not treated as valid admin accounts", () => {
   assert.equal(policies[0]?.subject, "telegram:chat-42");
   assert.equal(new AccountPolicyEngine(policies).evaluate("telegram:chat-42"), undefined);
 });
+
+test("unsupported direct channels are not treated as valid admin accounts", () => {
+  const policies = canonicalizeAccountPolicies([
+    {
+      subject: "feishu:ops",
+      mode: "apply_rules",
+      is_admin: true,
+      channel: "feishu",
+      chat_type: "direct",
+    },
+    {
+      subject: "telegram:chat-42",
+      mode: "default_allow",
+      is_admin: false,
+    },
+  ]);
+
+  assert.equal(policies.length, 2);
+  assert.equal(policies.find((policy) => policy.subject === "feishu:ops")?.is_admin, false);
+  assert.equal(new AccountPolicyEngine(policies).evaluate("telegram:chat-42"), undefined);
+});

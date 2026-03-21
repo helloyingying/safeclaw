@@ -56,7 +56,7 @@ test("mergeAccountPoliciesWithSessions shows scanned sessions and overlays saved
   assert.equal(merged[1]?.label, "main");
 });
 
-test("mergeAccountPoliciesWithSessions hides group sessions and group account overrides", () => {
+test("mergeAccountPoliciesWithSessions shows group sessions alongside direct chats", () => {
   const merged = mergeAccountPoliciesWithSessions(
     [
       {
@@ -92,7 +92,48 @@ test("mergeAccountPoliciesWithSessions hides group sessions and group account ov
 
   assert.deepEqual(
     merged.map((account) => account.subject),
-    ["feishu:ou_20d3dfae71b68bb041bff70111fd3fb1"],
+    [
+      "agent:main:feishu:group:oc_4626b6abb8e311841083a1d164274578",
+      "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+    ],
+  );
+  assert.equal(merged[0]?.chat_type, "group");
+  assert.equal(merged[1]?.chat_type, "direct");
+});
+
+test("mergeAccountPoliciesWithSessions puts approval-capable accounts first", () => {
+  const merged = mergeAccountPoliciesWithSessions(
+    [],
+    [
+      {
+        subject: "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        label: "ops-feishu",
+        session_key: "agent:main:feishu:direct:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        session_id: "session-feishu",
+        agent_id: "main",
+        channel: "feishu",
+        chat_type: "direct",
+        updated_at: "2026-03-20T05:49:00.000Z",
+      },
+      {
+        subject: "telegram:chat-42",
+        label: "ops-telegram",
+        session_key: "telegram:direct:chat-42",
+        session_id: "session-telegram",
+        agent_id: "main",
+        channel: "telegram",
+        chat_type: "direct",
+        updated_at: "2026-03-20T05:50:00.000Z",
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    merged.map((account) => account.subject),
+    [
+      "telegram:chat-42",
+      "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+    ],
   );
 });
 
@@ -118,7 +159,7 @@ test("materializeAdminApprovalLocale fills the selected admin locale when it is 
   const next = materializeAdminApprovalLocale(
     [
       {
-        subject: "feishu:ops",
+        subject: "telegram:ops",
         mode: "apply_rules",
         is_admin: true,
       },
@@ -133,7 +174,7 @@ test("materializeAdminApprovalLocale fills the selected admin locale when it is 
 
   assert.deepEqual(next, [
     {
-      subject: "feishu:ops",
+      subject: "telegram:ops",
       mode: "apply_rules",
       is_admin: true,
       approval_locale: "zh-CN",
@@ -141,6 +182,27 @@ test("materializeAdminApprovalLocale fills the selected admin locale when it is 
     {
       subject: "telegram:reviewer",
       mode: "default_allow",
+      is_admin: false,
+    },
+  ]);
+});
+
+test("materializeAdminApprovalLocale leaves unsupported admin channels inactive", () => {
+  const next = materializeAdminApprovalLocale(
+    [
+      {
+        subject: "feishu:ops",
+        mode: "apply_rules",
+        is_admin: true,
+      },
+    ],
+    "zh-CN",
+  );
+
+  assert.deepEqual(next, [
+    {
+      subject: "feishu:ops",
+      mode: "apply_rules",
       is_admin: false,
     },
   ]);

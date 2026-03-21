@@ -1,7 +1,9 @@
 import os from "node:os";
+import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type {
   OpenClawPluginApi
@@ -32,6 +34,11 @@ import { announceAdminConsole, shouldAnnounceAdminConsoleForArgv } from "./src/a
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import { readProcessEnvValue, resolveSecurityClawAdminPort } from "./src/runtime/process_env.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
+import {
+  resolveInteractiveApprovalChannel,
+  supportsInteractiveApprovalChannel,
+  supportsInteractiveApprovalForAccount,
+} from "./src/domain/services/approval_channel.ts";
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
 import { ContextInferenceService } from "./src/domain/services/context_inference_service.ts";
 import { resolveConfiguredOpenClawWorkspace } from "./src/domain/services/openclaw_workspace_resolver.ts";
@@ -79,6 +86,29 @@ type SecurityClawApprovalCommandContext = {
   isAuthorizedSender: boolean;
 };
 
+type DiscordComponentButtonStyle = "primary" | "secondary" | "success" | "danger";
+
+type DiscordComponentEmoji = {
+  name: string;
+  id?: string;
+  animated?: boolean;
+};
+
+type DiscordComponentButtonSpec = {
+  label: string;
+  style?: DiscordComponentButtonStyle;
+  emoji?: DiscordComponentEmoji;
+  disabled?: boolean;
+};
+
+type DiscordComponentMessageSpec = {
+  reusable?: boolean;
+  blocks: Array<{
+    type: "actions";
+    buttons: DiscordComponentButtonSpec[];
+  }>;
+};
+
 type ApprovalNotificationResult = {
   sent: boolean;
   notifications: StoredApprovalNotification[];
@@ -90,9 +120,52 @@ type ChatNotificationOptions = {
     callback_data: string;
     style?: string;
   }>>;
+  discordComponentSpec?: DiscordComponentMessageSpec;
+  slackBlocks?: unknown[];
+};
+
+type ApprovalConversationHint = {
+  expiresAt: number;
 };
 
 type ApprovalGrantMode = "temporary" | "longterm";
+
+type InteractiveApprovalAction =
+  | {
+    kind: "approve";
+    approvalId: string;
+    grantMode: ApprovalGrantMode;
+    accountId?: string;
+  }
+  | {
+    kind: "reject";
+    approvalId: string;
+    accountId?: string;
+    };
+
+type OpenClawSystemEventEntry = {
+  text: string;
+  ts: number;
+  contextKey?: string | null;
+};
+
+type OpenClawRunMessageActionInput = {
+  cfg: unknown;
+  action: string;
+  params: Record<string, unknown>;
+  agentId?: string;
+  sessionKey?: string;
+  defaultAccountId?: string;
+  dryRun?: boolean;
+  toolContext?: unknown;
+  sandboxRoot?: string;
+};
+
+type OpenClawReplyChunkHelpers = {
+  runMessageAction: (input: OpenClawRunMessageActionInput) => Promise<unknown>;
+  peekSystemEventEntries: (sessionKey: string) => OpenClawSystemEventEntry[];
+  enqueueSystemEvent?: (text: string, options?: { sessionKey?: string; contextKey?: string }) => boolean;
+};
 
 type ResolvedApprovalBridge = {
   enabled: boolean;
@@ -102,6 +175,7 @@ type ResolvedApprovalBridge = {
 };
 
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 const HOME_DIR = os.homedir();
 const APPROVAL_APPROVE_COMMAND = "securityclaw-approve";
 const APPROVAL_REJECT_COMMAND = "securityclaw-reject";
@@ -112,6 +186,11 @@ const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
 const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
 const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
 const APPROVAL_NOTIFICATION_HISTORY_LIMIT = 12;
+const APPROVAL_CONVERSATION_HINT_TTL_MS = 10_000;
+const INTERACTIVE_APPROVAL_TOKEN_RE = /\bsc-(approve|reject)\s+([a-f0-9-]+)(?:\s+(long))?\b/i;
+const SLACK_INTERACTION_EVENT_PREFIX = "Slack interaction: ";
+const SLACK_APPROVAL_ACTION_ID_PREFIX = "openclaw:securityclaw:approval";
+const INTERACTIVE_APPROVAL_EVENT_RETENTION_MS = 10 * 60 * 1000;
 const SECURITYCLAW_PROTECTED_STORAGE_RULE_ID = "internal:securityclaw-protected-storage";
 const SECURITYCLAW_PROTECTED_STORAGE_REASON = "SECURITYCLAW_STATE_STORAGE_PROTECTED";
 const CHANNEL_METHOD_SUFFIX_OVERRIDES: Record<string, string> = {
@@ -130,6 +209,13 @@ const getChannelPluginCompat = (OpenClawCompat as Record<string, unknown>).getCh
   | ((id: string) => unknown)
   | undefined;
 const contextInference = new ContextInferenceService();
+let openClawReplyChunkHelpersPromise: Promise<OpenClawReplyChunkHelpers | undefined> | undefined;
+let openClawReplyChunkHelpersOverride: OpenClawReplyChunkHelpers | undefined;
+
+export function __setOpenClawReplyChunkHelpersForTests(helpers: OpenClawReplyChunkHelpers | undefined): void {
+  openClawReplyChunkHelpersOverride = helpers;
+  openClawReplyChunkHelpersPromise = undefined;
+}
 
 function resolveRuntimeLocale(): SecurityClawLocale {
   const systemLocale = Intl.DateTimeFormat().resolvedOptions().locale;
@@ -144,6 +230,122 @@ function text(zhText: string, enText: string): string {
 
 function textForLocale(locale: SecurityClawLocale, zhText: string, enText: string): string {
   return pickLocalized(locale, zhText, enText);
+}
+
+function resolveRunningOpenClawDistDir(): string | undefined {
+  const entry = typeof process.argv[1] === "string" ? process.argv[1].trim() : "";
+  if (!entry) {
+    return undefined;
+  }
+  const resolved = path.resolve(entry);
+  const distDir = path.dirname(resolved);
+  if (path.basename(resolved) !== "index.js" || path.basename(distDir) !== "dist") {
+    return undefined;
+  }
+  const packageDir = path.dirname(distDir);
+  return path.basename(packageDir) === "openclaw" ? distDir : undefined;
+}
+
+function resolveOpenClawDistDir(): string | undefined {
+  const runtimeDistDir = resolveRunningOpenClawDistDir();
+  if (runtimeDistDir) {
+    return runtimeDistDir;
+  }
+  try {
+    return path.dirname(require.resolve("openclaw"));
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveOpenClawChunkFile(distDir: string, prefix: string, subdir?: string): string | undefined {
+  try {
+    const baseDir = subdir ? path.join(distDir, subdir) : distDir;
+    const filename = readdirSync(baseDir)
+      .filter((entry) => entry.startsWith(prefix) && entry.endsWith(".js"))
+      .sort()[0];
+    return filename ? path.join(baseDir, filename) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readOpenClawExportAlias(source: string, symbol: string): string | undefined {
+  return source.match(new RegExp(`\\b${escapeRegExp(symbol)}\\s+as\\s+([A-Za-z_$][\\w$]*)\\b`))?.[1];
+}
+
+async function loadOpenClawReplyChunkHelpers(): Promise<OpenClawReplyChunkHelpers | undefined> {
+  if (openClawReplyChunkHelpersOverride) {
+    return openClawReplyChunkHelpersOverride;
+  }
+  if (!openClawReplyChunkHelpersPromise) {
+    openClawReplyChunkHelpersPromise = (async () => {
+      const distDir = resolveOpenClawDistDir();
+      if (!distDir) {
+        return undefined;
+      }
+
+      const replyChunkFile = resolveOpenClawChunkFile(distDir, "reply-");
+      if (!replyChunkFile) {
+        return undefined;
+      }
+
+      const source = readFileSync(replyChunkFile, "utf8");
+      const runMessageActionAlias = readOpenClawExportAlias(source, "runMessageAction");
+      const peekSystemEventEntriesAlias = readOpenClawExportAlias(source, "peekSystemEventEntries");
+      const enqueueSystemEventAlias = readOpenClawExportAlias(source, "enqueueSystemEvent");
+      if (!runMessageActionAlias || !peekSystemEventEntriesAlias) {
+        return undefined;
+      }
+
+      const chunkModule = await import(pathToFileURL(replyChunkFile).href) as Record<string, unknown>;
+      const runMessageAction = chunkModule[runMessageActionAlias];
+      const peekSystemEventEntries = chunkModule[peekSystemEventEntriesAlias];
+      const enqueueSystemEvent = enqueueSystemEventAlias
+        ? chunkModule[enqueueSystemEventAlias]
+        : undefined;
+      if (typeof runMessageAction !== "function" || typeof peekSystemEventEntries !== "function") {
+        return undefined;
+      }
+
+      return {
+        runMessageAction: runMessageAction as OpenClawReplyChunkHelpers["runMessageAction"],
+        peekSystemEventEntries: peekSystemEventEntries as OpenClawReplyChunkHelpers["peekSystemEventEntries"],
+        ...(typeof enqueueSystemEvent === "function"
+          ? { enqueueSystemEvent: enqueueSystemEvent as NonNullable<OpenClawReplyChunkHelpers["enqueueSystemEvent"]> }
+          : {}),
+      };
+    })();
+  }
+
+  return openClawReplyChunkHelpersPromise;
+}
+
+function readMessageActionResultMessageId(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") {
+    return undefined;
+  }
+
+  const record = result as Record<string, unknown>;
+  for (const key of ["messageId", "message_id", "id"]) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  for (const key of ["message", "data", "result"]) {
+    const nested = readMessageActionResultMessageId(record[key]);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return undefined;
 }
 
 function resolvePluginStateDir(api: OpenClawPluginApi): string {
@@ -356,12 +558,15 @@ function deriveApprovalBridgeFromAdminPolicies(
   const approvers: ChatApprovalApprover[] = [];
   let locale: SecurityClawLocale = runtimeLocale;
   for (const policy of accountPolicyEngine.listPolicies()) {
-    if (!policy.is_admin) {
+    if (!policy.is_admin || !supportsInteractiveApprovalForAccount(policy)) {
       continue;
     }
     locale = policy.approval_locale ?? runtimeLocale;
     const subject = splitApprovalSubject(policy.subject);
-    const channel = normalizeApprovalChannel(policy.channel) ?? subject.channel;
+    const channel =
+      resolveInteractiveApprovalChannel(policy.channel)
+      ?? resolveInteractiveApprovalChannel(policy.subject)
+      ?? subject.channel;
     if (!channel) {
       continue;
     }
@@ -504,16 +709,6 @@ function formatApprovalPrompt(record: StoredApprovalRecord, locale = runtimeLoca
     `${textForLocale(locale, "权限", "Permission")}: ${formatApprovalPermission(record, locale)}`,
     `${textForLocale(locale, "请求截止", "Request expires")}: ${formatTimestampForApproval(record.expires_at, APPROVAL_DISPLAY_TIMEZONE, locale)}`,
     `${textForLocale(locale, "审批单", "Request ID")}: ${record.approval_id}`,
-    "",
-    textForLocale(locale, "选项", "Options"),
-    `1. ${textForLocale(locale, "批准", "Approve")} ${formatApprovalGrantDuration(record, "temporary", locale)}`,
-    `2. ${textForLocale(locale, "批准", "Approve")} ${formatApprovalGrantDuration(record, "longterm", locale)}`,
-    `3. ${textForLocale(locale, "拒绝", "Reject")}`,
-    textForLocale(
-      locale,
-      "按这条消息里的操作审批；不要单独发送 1、2、3。",
-      "Use the approval actions in this message; do not send 1, 2, or 3 by itself.",
-    ),
   ].join("\n");
 }
 
@@ -615,8 +810,7 @@ function formatApprovalButtonLabel(
   mode: ApprovalGrantMode,
   locale = runtimeLocale,
 ): string {
-  const optionIndex = mode === "temporary" ? "1" : "2";
-  return `${optionIndex}. ${textForLocale(locale, "批准", "Approve")} ${formatCompactApprovalGrantDuration(record, mode, locale)}`;
+  return `${textForLocale(locale, "批准", "Approve")} ${formatCompactApprovalGrantDuration(record, mode, locale)}`;
 }
 
 function buildApprovalNotificationButtons(
@@ -638,12 +832,226 @@ function buildApprovalNotificationButtons(
     ],
     [
       {
-        text: `3. ${textForLocale(locale, "拒绝", "Reject")}`,
+        text: textForLocale(locale, "拒绝", "Reject"),
         callback_data: `/${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
         style: "danger",
       },
     ],
   ];
+}
+
+function buildInteractiveApprovalToken(
+  record: StoredApprovalRecord,
+  action: "approve" | "reject",
+  mode: ApprovalGrantMode = "temporary",
+): string {
+  if (action === "reject") {
+    return `sc-reject ${record.approval_id}`;
+  }
+  return `sc-approve ${record.approval_id}${mode === "longterm" ? " long" : ""}`;
+}
+
+function parseInteractiveApprovalToken(value: string | undefined): InteractiveApprovalAction | undefined {
+  const match = value?.match(INTERACTIVE_APPROVAL_TOKEN_RE);
+  if (!match) {
+    return undefined;
+  }
+  const approvalId = match[2]?.trim();
+  if (!approvalId) {
+    return undefined;
+  }
+  if ((match[1] ?? "").toLowerCase() === "reject") {
+    return { kind: "reject", approvalId };
+  }
+  return {
+    kind: "approve",
+    approvalId,
+    grantMode: match[3] ? "longterm" : "temporary",
+  };
+}
+
+function formatDiscordApprovalButtonLabel(
+  record: StoredApprovalRecord,
+  mode: ApprovalGrantMode,
+  locale = runtimeLocale,
+): string {
+  return `${formatApprovalButtonLabel(record, mode, locale)} · ${buildInteractiveApprovalToken(record, "approve", mode)}`;
+}
+
+function formatDiscordRejectButtonLabel(record: StoredApprovalRecord, locale = runtimeLocale): string {
+  return `${textForLocale(locale, "拒绝", "Reject")} · ${buildInteractiveApprovalToken(record, "reject")}`;
+}
+
+function buildDiscordApprovalComponentSpec(
+  record: StoredApprovalRecord,
+  locale = runtimeLocale,
+): DiscordComponentMessageSpec {
+  return {
+    reusable: true,
+    blocks: [
+      {
+        type: "actions",
+        buttons: [
+          {
+            label: formatDiscordApprovalButtonLabel(record, "temporary", locale),
+            style: "success",
+          },
+          {
+            label: formatDiscordApprovalButtonLabel(record, "longterm", locale),
+            style: "primary",
+          },
+        ],
+      },
+      {
+        type: "actions",
+        buttons: [
+          {
+            label: formatDiscordRejectButtonLabel(record, locale),
+            style: "danger",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function buildSlackApprovalActionId(accountId: string | undefined): string {
+  const normalized = normalizeApprovalAccountId(accountId);
+  return normalized
+    ? `${SLACK_APPROVAL_ACTION_ID_PREFIX}:${encodeURIComponent(normalized)}`
+    : SLACK_APPROVAL_ACTION_ID_PREFIX;
+}
+
+function parseSlackApprovalActionAccountId(actionId: string | undefined): string | undefined {
+  const trimmed = actionId?.trim();
+  if (!trimmed || !trimmed.startsWith(SLACK_APPROVAL_ACTION_ID_PREFIX)) {
+    return undefined;
+  }
+  const rawAccountId = trimmed.slice(SLACK_APPROVAL_ACTION_ID_PREFIX.length + 1);
+  if (!rawAccountId) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(rawAccountId);
+  } catch {
+    return rawAccountId;
+  }
+}
+
+function buildSlackApprovalBlocks(
+  record: StoredApprovalRecord,
+  locale = runtimeLocale,
+  accountId?: string,
+): unknown[] {
+  const actionId = buildSlackApprovalActionId(accountId);
+  return [
+    {
+      type: "actions",
+      block_id: `securityclaw_approval_${record.approval_id}_approve`,
+      elements: [
+        {
+          type: "button",
+          action_id: actionId,
+          text: {
+            type: "plain_text",
+            text: formatApprovalButtonLabel(record, "temporary", locale),
+            emoji: true,
+          },
+          value: buildInteractiveApprovalToken(record, "approve", "temporary"),
+          style: "primary",
+        },
+        {
+          type: "button",
+          action_id: actionId,
+          text: {
+            type: "plain_text",
+            text: formatApprovalButtonLabel(record, "longterm", locale),
+            emoji: true,
+          },
+          value: buildInteractiveApprovalToken(record, "approve", "longterm"),
+        },
+      ],
+    },
+    {
+      type: "actions",
+      block_id: `securityclaw_approval_${record.approval_id}_reject`,
+      elements: [
+        {
+          type: "button",
+          action_id: actionId,
+          text: {
+            type: "plain_text",
+            text: textForLocale(locale, "拒绝", "Reject"),
+            emoji: true,
+          },
+          value: buildInteractiveApprovalToken(record, "reject"),
+          style: "danger",
+        },
+      ],
+    },
+  ];
+}
+
+function resolveApprovalNotificationOptions(
+  _cfg: unknown,
+  target: ChatApprovalTarget,
+  record: StoredApprovalRecord,
+  locale = runtimeLocale,
+): ChatNotificationOptions {
+  if (target.channel === "telegram") {
+    return {
+      buttons: buildApprovalNotificationButtons(record, locale),
+    };
+  }
+  if (target.channel === "discord") {
+    return {
+      discordComponentSpec: buildDiscordApprovalComponentSpec(record, locale),
+    };
+  }
+  if (target.channel === "slack") {
+    return {
+      slackBlocks: buildSlackApprovalBlocks(record, locale, target.account_id),
+    };
+  }
+  return {};
+}
+
+function parseSlackInteractiveApprovalEvent(value: string | undefined): (InteractiveApprovalAction & { senderId: string }) | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || !trimmed.startsWith(SLACK_INTERACTION_EVENT_PREFIX)) {
+    return undefined;
+  }
+  try {
+    const payload = JSON.parse(trimmed.slice(SLACK_INTERACTION_EVENT_PREFIX.length)) as Record<string, unknown>;
+    const actionId = typeof payload.actionId === "string" ? payload.actionId : undefined;
+    if (!actionId || !actionId.startsWith(SLACK_APPROVAL_ACTION_ID_PREFIX)) {
+      return undefined;
+    }
+    const senderId = typeof payload.userId === "string" ? payload.userId.trim() : "";
+    if (!senderId) {
+      return undefined;
+    }
+    const valueCandidates = [
+      typeof payload.value === "string" ? payload.value : undefined,
+      ...(Array.isArray(payload.selectedValues)
+        ? payload.selectedValues.filter((entry): entry is string => typeof entry === "string")
+        : []),
+    ];
+    for (const candidate of valueCandidates) {
+      const action = parseInteractiveApprovalToken(candidate);
+      if (action) {
+        const accountId = parseSlackApprovalActionAccountId(actionId);
+        return {
+          ...action,
+          senderId,
+          ...(accountId ? { accountId } : {}),
+        };
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 function formatWarnNotificationPrompt(params: {
@@ -711,7 +1119,7 @@ function nowIsoString(): string {
 function parseApprovalGrantMode(args: string | undefined): ApprovalGrantMode {
   const value = args?.trim();
   const mode = value ? value.split(/\s+/)[1]?.toLowerCase() : undefined;
-  if (mode === "2" || mode === "long" || mode === "longterm" || mode === "permanent" || mode === "长期") {
+  if (mode === "long" || mode === "longterm" || mode === "permanent" || mode === "长期") {
     return "longterm";
   }
   return "temporary";
@@ -739,31 +1147,207 @@ function parseApprovalReplyChoice(value: string | undefined): ApprovalGrantMode 
   return undefined;
 }
 
-function readMetadataString(
-  metadata: Record<string, unknown>,
-  ...keys: string[]
-): string | undefined {
-  for (const key of keys) {
-    const value = metadata[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value);
-    }
+function approvePendingApproval(
+  approvalStore: ChatApprovalStore,
+  approvalBridge: ResolvedApprovalBridge,
+  commandContext: SecurityClawApprovalCommandContext,
+  approvalId: string,
+  grantMode: ApprovalGrantMode,
+): { ok: boolean; text: string } {
+  const existing = approvalStore.getById(approvalId);
+  if (!existing) {
+    return {
+      ok: false,
+      text: textForLocale(
+        approvalBridge.locale,
+        `审批请求不存在: ${approvalId}`,
+        `Approval request not found: ${approvalId}`,
+      ),
+    };
   }
-  return undefined;
+  if (existing.status !== "pending") {
+    return {
+      ok: false,
+      text: textForLocale(
+        approvalBridge.locale,
+        `审批请求当前状态为 ${existing.status}，无法重复批准。`,
+        `Approval request is ${existing.status}; it cannot be approved again.`,
+      ),
+    };
+  }
+  const grantExpiresAt = resolveApprovalGrantExpiry(existing, grantMode);
+  approvalStore.resolve(
+    approvalId,
+    `${commandContext.channel ?? "unknown"}:${commandContext.from ?? "unknown"}`,
+    "approved",
+    { expires_at: grantExpiresAt },
+  );
+  return {
+    ok: true,
+    text: textForLocale(
+      approvalBridge.locale,
+      `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode, approvalBridge.locale)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}。`,
+      `${formatGrantModeLabel(grantMode, approvalBridge.locale)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}.`,
+    ),
+  };
 }
 
-function extractApprovalReplyMessageId(metadata: Record<string, unknown>): string | undefined {
-  return readMetadataString(
-    metadata,
-    "replyToMessageId",
-    "replyToId",
-    "reply_to_message_id",
-    "reply_to_id",
-    "quotedMessageId",
-    "quoted_message_id",
+function rejectPendingApproval(
+  approvalStore: ChatApprovalStore,
+  approvalBridge: ResolvedApprovalBridge,
+  commandContext: SecurityClawApprovalCommandContext,
+  approvalId: string,
+): { ok: boolean; text: string } {
+  const existing = approvalStore.getById(approvalId);
+  if (!existing) {
+    return {
+      ok: false,
+      text: textForLocale(
+        approvalBridge.locale,
+        `审批请求不存在: ${approvalId}`,
+        `Approval request not found: ${approvalId}`,
+      ),
+    };
+  }
+  if (existing.status !== "pending") {
+    return {
+      ok: false,
+      text: textForLocale(
+        approvalBridge.locale,
+        `审批请求当前状态为 ${existing.status}，无法重复拒绝。`,
+        `Approval request is ${existing.status}; it cannot be rejected again.`,
+      ),
+    };
+  }
+  approvalStore.resolve(
+    approvalId,
+    `${commandContext.channel ?? "unknown"}:${commandContext.from ?? "unknown"}`,
+    "rejected",
+  );
+  return {
+    ok: true,
+    text: textForLocale(
+      approvalBridge.locale,
+      `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。`,
+      `Rejected ${approvalId}. No grant was added for ${existing.actor_id}.`,
+    ),
+  };
+}
+
+function executeInteractiveApprovalAction(
+  approvalStore: ChatApprovalStore,
+  approvalBridge: ResolvedApprovalBridge,
+  commandContext: SecurityClawApprovalCommandContext,
+  action: InteractiveApprovalAction,
+): { ok: boolean; text: string } {
+  if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
+    return {
+      ok: false,
+      text: textForLocale(
+        approvalBridge.locale,
+        "你无权审批 SecurityClaw 请求。",
+        "You are not allowed to approve SecurityClaw requests.",
+      ),
+    };
+  }
+  return action.kind === "reject"
+    ? rejectPendingApproval(approvalStore, approvalBridge, commandContext, action.approvalId)
+    : approvePendingApproval(approvalStore, approvalBridge, commandContext, action.approvalId, action.grantMode);
+}
+
+function normalizeApprovalConversationValue(channel: string, value: string | undefined): string[] {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const aliases = new Set<string>([trimmed]);
+  if (channel === "telegram") {
+    const unscoped = trimmed.replace(/^telegram:/i, "").trim();
+    if (unscoped) {
+      aliases.add(unscoped);
+      aliases.add(`telegram:${unscoped}`);
+    }
+  } else if (channel === "discord") {
+    const withoutChannel = trimmed.replace(/^discord:/i, "").trim();
+    const withoutUser = withoutChannel.replace(/^user:/i, "").trim();
+    if (withoutChannel) {
+      aliases.add(withoutChannel);
+    }
+    if (withoutUser) {
+      aliases.add(withoutUser);
+      aliases.add(`discord:${withoutUser}`);
+      aliases.add(`user:${withoutUser}`);
+    }
+  } else if (channel === "feishu" || channel === "lark") {
+    const unscoped = trimmed.replace(/^(feishu|lark):/i, "").trim();
+    if (unscoped) {
+      aliases.add(unscoped);
+      aliases.add(`feishu:${unscoped}`);
+      aliases.add(`lark:${unscoped}`);
+    }
+  }
+
+  return Array.from(aliases);
+}
+
+function notificationMatchesConversation(
+  channel: string,
+  notificationTo: string,
+  conversationValues: string[],
+): boolean {
+  if (conversationValues.length === 0) {
+    return false;
+  }
+
+  const conversationAliases = new Set<string>();
+  for (const value of conversationValues) {
+    for (const alias of normalizeApprovalConversationValue(channel, value)) {
+      conversationAliases.add(alias);
+    }
+  }
+
+  for (const alias of normalizeApprovalConversationValue(channel, notificationTo)) {
+    if (conversationAliases.has(alias)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveIncomingApprovalReplyTarget(
+  channel: string,
+  conversationId: string | undefined,
+  from: string,
+): string {
+  const preferred = conversationId?.trim() || from.trim();
+  if (channel === "telegram") {
+    return preferred.replace(/^telegram:/i, "").trim();
+  }
+  if (channel === "discord") {
+    return normalizeDiscordApprovalTarget(preferred);
+  }
+  if (channel === "feishu" || channel === "lark") {
+    return preferred.replace(/^(feishu|lark):/i, "").trim();
+  }
+  return preferred;
+}
+
+function formatUnexpectedNumericApprovalGuidance(
+  channel: string,
+  locale = runtimeLocale,
+): string {
+  if (supportsInteractiveApprovalChannel(channel)) {
+    return textForLocale(
+      locale,
+      "请点审批消息里的按钮；不要单独发送 1、2、3。",
+      "Use the buttons on the approval message; do not send 1, 2, or 3 by itself.",
+    );
+  }
+  return textForLocale(
+    locale,
+    "当前通道不支持审批按钮，请先在后台选择 Telegram、Slack 或 Discord 管理员账号。",
+    "This channel does not support approval buttons. Choose a Telegram, Slack, or Discord admin account in the dashboard first.",
   );
 }
 
@@ -1185,9 +1769,89 @@ async function sendChatNotification(
       text: string,
       opts?: Record<string, unknown>,
     ) => Promise<{ messageId?: string }>;
-    const result = await sendDiscord(normalizeDiscordApprovalTarget(target.to), message, {
+    const normalizedTarget = normalizeDiscordApprovalTarget(target.to);
+    if (options.discordComponentSpec && api.source !== "test") {
+      const replyChunkHelpers = await loadOpenClawReplyChunkHelpers();
+      const runMessageAction = replyChunkHelpers?.runMessageAction;
+      if (typeof runMessageAction === "function") {
+        const params: Record<string, unknown> = {
+          channel: "discord",
+          to: normalizedTarget,
+          message,
+          components: options.discordComponentSpec,
+        };
+        if (target.account_id) {
+          params.accountId = target.account_id;
+        }
+        const result = await runMessageAction({
+          cfg: api.config,
+          action: "send",
+          params,
+          ...(target.account_id ? { defaultAccountId: target.account_id } : {}),
+        });
+        const messageId = readMessageActionResultMessageId(result);
+        if (messageId) {
+          notification.message_id = messageId;
+        }
+        notification.sent_at = nowIsoString();
+        return notification;
+      }
+    }
+    const handleDiscordAction = (api.runtime.channel.discord as {
+      messageActions?: {
+        handleAction?: (ctx: {
+          channel: string;
+          action: string;
+          cfg: unknown;
+          params: Record<string, unknown>;
+          accountId?: string | null;
+        }) => Promise<unknown>;
+      };
+    }).messageActions?.handleAction;
+
+    if (options.discordComponentSpec && typeof handleDiscordAction === "function") {
+      const params: Record<string, unknown> = {
+        to: normalizedTarget,
+        message,
+        components: options.discordComponentSpec,
+      };
+      if (target.account_id) {
+        params.accountId = target.account_id;
+      }
+      const result = await handleDiscordAction({
+        channel: "discord",
+        action: "send",
+        cfg: api.config,
+        params,
+        ...(target.account_id ? { accountId: target.account_id } : {}),
+      });
+      const messageId = readMessageActionResultMessageId(result);
+      if (messageId) {
+        notification.message_id = messageId;
+      }
+      notification.sent_at = nowIsoString();
+      return notification;
+    }
+
+    if (options.discordComponentSpec && api.source !== "test") {
+      api.logger.warn?.(
+        "securityclaw: discord approval buttons unavailable because discord message actions are missing; falling back to plain discord message",
+      );
+      const result = await sendDiscord(normalizedTarget, message, {
+        cfg: api.config,
+        ...(target.account_id ? { accountId: target.account_id } : {}),
+      });
+      if (result?.messageId) {
+        notification.message_id = result.messageId;
+      }
+      notification.sent_at = nowIsoString();
+      return notification;
+    }
+
+    const result = await sendDiscord(normalizedTarget, message, {
       cfg: api.config,
       ...(target.account_id ? { accountId: target.account_id } : {}),
+      ...(options.discordComponentSpec ? { components: options.discordComponentSpec } : {}),
     });
     if (result?.messageId) {
       notification.message_id = result.messageId;
@@ -1205,6 +1869,7 @@ async function sendChatNotification(
     const result = await sendSlack(target.to, message, {
       cfg: api.config,
       ...(target.account_id ? { accountId: target.account_id } : {}),
+      ...(options.slackBlocks ? { blocks: options.slackBlocks } : {}),
     });
     if (result?.messageId) {
       notification.message_id = result.messageId;
@@ -1335,7 +2000,7 @@ async function notifyChatTargets(
   message: string,
   params: {
     label: string;
-    options?: ChatNotificationOptions;
+    options?: ChatNotificationOptions | ((target: ChatApprovalTarget) => ChatNotificationOptions);
   },
 ): Promise<ApprovalNotificationResult> {
   if (targets.length === 0) {
@@ -1352,7 +2017,8 @@ async function notifyChatTargets(
     let lastError: unknown;
     for (let attempt = 1; attempt <= APPROVAL_NOTIFICATION_MAX_ATTEMPTS; attempt += 1) {
       try {
-        const notification = await sendChatNotification(api, target, message, params.options);
+        const options = typeof params.options === "function" ? params.options(target) : params.options;
+        const notification = await sendChatNotification(api, target, message, options);
         notifications.push(notification);
         sent = true;
         delivered = true;
@@ -1386,12 +2052,17 @@ async function notifyApprovalTargets(
   record: StoredApprovalRecord,
   locale: SecurityClawLocale,
 ): Promise<ApprovalNotificationResult> {
-  return notifyChatTargets(api, targets, formatApprovalPrompt(record, locale), {
-    label: `approval prompt approval_id=${record.approval_id}`,
-    options: {
-      buttons: buildApprovalNotificationButtons(record, locale),
-    },
-  });
+  let sent = false;
+  const notifications: StoredApprovalNotification[] = [];
+  for (const target of targets) {
+    const result = await notifyChatTargets(api, [target], formatApprovalPrompt(record, locale), {
+      label: `approval prompt approval_id=${record.approval_id}`,
+      options: (currentTarget) => resolveApprovalNotificationOptions(api.config, currentTarget, record, locale),
+    });
+    sent = sent || result.sent;
+    notifications.push(...result.notifications);
+  }
+  return { sent, notifications };
 }
 
 async function notifyApprovalTargetsOnce(
@@ -1459,6 +2130,35 @@ function formatApprovalBlockReason(params: {
     ...(params.rules && params.rules !== "-" ? [`${text("规则", "Policy")}: ${params.rules}`] : []),
     `${text("审批单", "Request ID")}: ${params.approvalId}`,
     `${text("状态", "Status")}: ${notifyHint}`,
+    `${text("追踪", "Trace")}: ${params.traceId}`,
+  ];
+  return lines.join("\n");
+}
+
+function formatApprovalBridgeUnavailableReason(params: {
+  toolName: string;
+  scope: string;
+  traceId: string;
+  resourceScope: ResourceScope;
+  reasonCodes: string[];
+  rules: string;
+}): string {
+  const reasons = params.reasonCodes.join(", ");
+  const lines = [
+    text("SecurityClaw 需要审批", "SecurityClaw Approval Required"),
+    `${text("工具", "Tool")}: ${params.toolName}`,
+    `${text("范围", "Scope")}: ${params.scope}`,
+    `${text("资源", "Resource")}: ${formatResourceScopeDetail(params.resourceScope)}`,
+    `${text("原因", "Reason")}: ${reasons || text("策略要求复核", "Policy review required")}`,
+    ...(params.rules && params.rules !== "-" ? [`${text("规则", "Policy")}: ${params.rules}`] : []),
+    `${text("状态", "Status")}: ${text(
+      "还没有可审批的管理员账号。",
+      "No approval-capable admin account is configured yet.",
+    )}`,
+    `${text("处理", "Action")}: ${text(
+      "先在后台选择 Telegram、Slack 或 Discord 的私聊管理员账号，再重试。",
+      "Choose a Telegram, Slack, or Discord DM admin account in the dashboard, then retry.",
+    )}`,
     `${text("追踪", "Trace")}: ${params.traceId}`,
   ];
   return lines.join("\n");
@@ -1855,7 +2555,9 @@ const plugin = {
       return mergeApprovalBridgeConfig(deriveApprovalBridgeFromAdminPolicies(current.accountPolicyEngine));
     }
     const approvalStore = new ChatApprovalStore(dbPath);
+    const recentApprovalConversationHints = new Map<string, ApprovalConversationHint>();
     const inflightApprovalNotifications = new Map<string, Promise<ApprovalNotificationResult>>();
+    const handledApprovalInteractionEvents = new Map<string, number>();
     const warnNotificationSentAt = new Map<string, number>();
     const initialApprovalBridge = resolveApprovalBridge(runtime);
     if (initialApprovalBridge.enabled) {
@@ -1866,6 +2568,60 @@ const plugin = {
         api.logger.warn?.("securityclaw: approval bridge is enabled but no approvers are configured");
       }
       api.logger.info?.("securityclaw: approval bridge source=account_policies_admin");
+    }
+
+    async function processBufferedSlackApprovalInteractions(
+      approvalBridge: ResolvedApprovalBridge,
+      hookContext: SecurityClawHookContext,
+    ): Promise<void> {
+      const sessionKey = hookContext.sessionKey?.trim();
+      if (!sessionKey) {
+        return;
+      }
+
+      const replyChunkHelpers = await loadOpenClawReplyChunkHelpers();
+      if (!replyChunkHelpers) {
+        return;
+      }
+
+      const expirationBefore = Date.now() - INTERACTIVE_APPROVAL_EVENT_RETENTION_MS;
+      for (const [key, timestamp] of handledApprovalInteractionEvents.entries()) {
+        if (timestamp < expirationBefore) {
+          handledApprovalInteractionEvents.delete(key);
+        }
+      }
+
+      for (const event of replyChunkHelpers.peekSystemEventEntries(sessionKey)) {
+        const handledKey = `${sessionKey}|${event.contextKey ?? ""}|${event.ts}|${event.text}`;
+        if (handledApprovalInteractionEvents.has(handledKey)) {
+          continue;
+        }
+
+        const action = parseSlackInteractiveApprovalEvent(event.text);
+        if (!action) {
+          continue;
+        }
+
+        handledApprovalInteractionEvents.set(handledKey, Date.now());
+        const commandContext: SecurityClawApprovalCommandContext = {
+          channel: "slack",
+          from: `slack:${action.senderId}`,
+          senderId: action.senderId,
+          ...(action.accountId ? { accountId: action.accountId } : {}),
+          isAuthorizedSender: true,
+        };
+        const result = executeInteractiveApprovalAction(
+          approvalStore,
+          approvalBridge,
+          commandContext,
+          action,
+        );
+        if (result.ok) {
+          api.logger.info?.(
+            `securityclaw: applied slack approval button action session_key=${sessionKey} approval_id=${action.approvalId} kind=${action.kind}${action.kind === "approve" ? ` mode=${action.grantMode}` : ""}`,
+          );
+        }
+      }
     }
 
     api.registerCommand({
@@ -1906,39 +2662,14 @@ const plugin = {
             ),
           };
         }
-        const existing = approvalStore.getById(approvalId);
-        if (!existing) {
-          return {
-            text: textForLocale(
-              approvalBridge.locale,
-              `审批请求不存在: ${approvalId}`,
-              `Approval request not found: ${approvalId}`,
-            ),
-          };
-        }
-        if (existing.status !== "pending") {
-          return {
-            text: textForLocale(
-              approvalBridge.locale,
-              `审批请求当前状态为 ${existing.status}，无法重复批准。`,
-              `Approval request is ${existing.status}; it cannot be approved again.`,
-            ),
-          };
-        }
-        const grantMode = parseApprovalGrantMode(commandContext.args);
-        const grantExpiresAt = resolveApprovalGrantExpiry(existing, grantMode);
-        approvalStore.resolve(
-          approvalId,
-          `${commandContext.channel ?? "unknown"}:${commandContext.from ?? "unknown"}`,
-          "approved",
-          { expires_at: grantExpiresAt },
-        );
         return {
-          text: textForLocale(
-            approvalBridge.locale,
-            `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode, approvalBridge.locale)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}。`,
-            `${formatGrantModeLabel(grantMode, approvalBridge.locale)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${formatTimestampForApproval(grantExpiresAt, APPROVAL_DISPLAY_TIMEZONE, approvalBridge.locale)}.`,
-          ),
+          text: approvePendingApproval(
+            approvalStore,
+            approvalBridge,
+            commandContext,
+            approvalId,
+            parseApprovalGrantMode(commandContext.args),
+          ).text,
         };
       },
     });
@@ -1981,36 +2712,13 @@ const plugin = {
             ),
           };
         }
-        const existing = approvalStore.getById(approvalId);
-        if (!existing) {
-          return {
-            text: textForLocale(
-              approvalBridge.locale,
-              `审批请求不存在: ${approvalId}`,
-              `Approval request not found: ${approvalId}`,
-            ),
-          };
-        }
-        if (existing.status !== "pending") {
-          return {
-            text: textForLocale(
-              approvalBridge.locale,
-              `审批请求当前状态为 ${existing.status}，无法重复拒绝。`,
-              `Approval request is ${existing.status}; it cannot be rejected again.`,
-            ),
-          };
-        }
-        approvalStore.resolve(
-          approvalId,
-          `${commandContext.channel ?? "unknown"}:${commandContext.from ?? "unknown"}`,
-          "rejected",
-        );
         return {
-          text: textForLocale(
-            approvalBridge.locale,
-            `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。`,
-            `Rejected ${approvalId}. No grant was added for ${existing.actor_id}.`,
-          ),
+          text: rejectPendingApproval(
+            approvalStore,
+            approvalBridge,
+            commandContext,
+            approvalId,
+          ).text,
         };
       },
     });
@@ -2049,8 +2757,7 @@ const plugin = {
 
     api.on("message_received", async (event, ctx) => {
       const approvalBridge = resolveApprovalBridge();
-      const choice = parseApprovalReplyChoice(event.content);
-      if (!approvalBridge.enabled || !choice) {
+      if (!approvalBridge.enabled) {
         return;
       }
 
@@ -2065,58 +2772,73 @@ const plugin = {
         ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
         isAuthorizedSender: true,
       };
-      if (!matchesApprover(approvalBridge.approvers, commandContext)) {
+
+      const interactiveAction = parseInteractiveApprovalToken(event.content);
+      if (interactiveAction) {
+        const result = executeInteractiveApprovalAction(
+          approvalStore,
+          approvalBridge,
+          commandContext,
+          interactiveAction,
+        );
+        if (result.ok) {
+          api.logger.info?.(
+            `securityclaw: applied interactive approval message channel=${ctx.channelId} from=${event.from} approval_id=${interactiveAction.approvalId} kind=${interactiveAction.kind}${interactiveAction.kind === "approve" ? ` mode=${interactiveAction.grantMode}` : ""}`,
+          );
+        }
         return;
       }
 
-      const replyMessageId = extractApprovalReplyMessageId(metadata);
-      if (!replyMessageId) {
-        api.logger.info?.(
-          `securityclaw: ignoring numeric approval reply without reply target channel=${ctx.channelId ?? "unknown"} from=${event.from}`,
-        );
+      const choice = parseApprovalReplyChoice(event.content);
+      if (!choice) {
         return;
       }
-      const pendingRecords = approvalStore
+      if (!supportsInteractiveApprovalChannel(ctx.channelId) || !matchesApprover(approvalBridge.approvers, commandContext)) {
+        return;
+      }
+
+      const pendingRecordsForConversation = approvalStore
         .listPending(20)
         .filter((record) =>
           record.notifications.some((notification) =>
             notification.channel === ctx.channelId &&
             normalizeApprovalAccountId(notification.account_id) === normalizeApprovalAccountId(ctx.accountId) &&
-            notification.message_id?.trim() === replyMessageId
+            notificationMatchesConversation(
+              ctx.channelId,
+              notification.to,
+              [ctx.conversationId, event.from, typeof metadata.senderId === "string" ? metadata.senderId : undefined].filter(
+                (value): value is string => Boolean(value),
+              ),
+            )
           )
         );
 
-      if (pendingRecords.length === 0) {
+      if (pendingRecordsForConversation.length === 0) {
         api.logger.info?.(
-          `securityclaw: numeric approval reply found no pending request channel=${ctx.channelId} reply_message_id=${replyMessageId}`,
+          `securityclaw: ignoring numeric approval reply without pending request channel=${ctx.channelId ?? "unknown"} from=${event.from}`,
         );
         return;
       }
-
-      if (pendingRecords.length > 1) {
-        api.logger.info?.(
-          `securityclaw: numeric approval reply matched multiple pending requests channel=${ctx.channelId} reply_message_id=${replyMessageId} count=${pendingRecords.length}`,
-        );
-        return;
-      }
-
-      const existing = pendingRecords[0]!;
-      const approverIdentity = `${ctx.channelId}:${commandContext.senderId ?? commandContext.from ?? "unknown"}`;
-
-      if (choice === "reject") {
-        approvalStore.resolve(existing.approval_id, approverIdentity, "rejected");
-        api.logger.info?.(
-          `securityclaw: numeric approval reply rejected approval_id=${existing.approval_id} approver=${approverIdentity} reply_message_id=${replyMessageId}`,
-        );
-        return;
-      }
-
-      const grantExpiresAt = resolveApprovalGrantExpiry(existing, choice);
-      approvalStore.resolve(existing.approval_id, approverIdentity, "approved", {
-        expires_at: grantExpiresAt,
+      const replyTarget = resolveIncomingApprovalReplyTarget(ctx.channelId, ctx.conversationId, event.from);
+      await sendChatNotification(
+        api,
+        {
+          channel: ctx.channelId,
+          to: replyTarget,
+          ...(normalizeApprovalAccountId(ctx.accountId) ? { account_id: ctx.accountId } : {}),
+        },
+        formatUnexpectedNumericApprovalGuidance(ctx.channelId, approvalBridge.locale),
+      );
+      const conversationHintKey = [
+        ctx.channelId,
+        normalizeApprovalAccountId(ctx.accountId) ?? "",
+        ctx.conversationId?.trim() || event.from.trim(),
+      ].join("|");
+      recentApprovalConversationHints.set(conversationHintKey, {
+        expiresAt: Date.now() + APPROVAL_CONVERSATION_HINT_TTL_MS,
       });
       api.logger.info?.(
-        `securityclaw: numeric approval reply approved approval_id=${existing.approval_id} approver=${approverIdentity} mode=${choice} reply_message_id=${replyMessageId}`,
+        `securityclaw: guided numeric approval reply channel=${ctx.channelId ?? "unknown"} from=${event.from} pending=${pendingRecordsForConversation.length} choice=${choice}`,
       );
     });
 
@@ -2125,6 +2847,7 @@ const plugin = {
       async (_event, ctx) => {
         const hookContext = ctx as SecurityClawHookContext;
         const current = getRuntime();
+        await processBufferedSlackApprovalInteractions(resolveApprovalBridge(current), hookContext);
         const traceId = hookContext.runId ?? hookContext.sessionId ?? hookContext.sessionKey ?? `trace-${Date.now()}`;
         const scope = resolveScope({ workspaceDir: hookContext.workspaceDir, channelId: hookContext.channelId });
         const prependSystemContext = [
@@ -2215,7 +2938,27 @@ const plugin = {
           effectiveReasonCodes = [...(accountOverride?.reason_codes ?? outcome.reason_codes)];
 
           if (effectiveDecision === "challenge" && approvalBridge.enabled) {
+            if (!approvalRequestKey) {
+              throw new Error("securityclaw: missing approval request key for challenge decision");
+            }
+            const requestKey = approvalRequestKey;
+            const challengeTtlMs =
+              (outcome.challenge_ttl_seconds ?? current.config.defaults.approval_ttl_seconds) * 1000;
             const approvalScope = decisionContext.scope;
+            const createPendingApproval = () => approvalStore.create({
+              request_key: requestKey,
+              session_scope: approvalSubject,
+              expires_at: new Date(Date.now() + challengeTtlMs).toISOString(),
+              policy_version: current.config.policy_version,
+              actor_id: approvalSubject,
+              scope: approvalScope,
+              tool_name: effectiveToolName,
+              resource_scope: decisionContext.resource_scope,
+              resource_paths: decisionContext.resource_paths,
+              reason_codes: outcome.reason_codes,
+              rule_ids: ruleIds,
+              args_summary: argsSummary,
+            });
             const approved = approvalStore.findApproved(approvalSubject, approvalRequestKey);
             if (approved) {
               effectiveDecision = "allow";
@@ -2229,26 +2972,15 @@ const plugin = {
               };
 
               if (!pending) {
-                pending = approvalStore.create({
-                  request_key: approvalRequestKey,
-                  session_scope: approvalSubject,
-                  expires_at: new Date(
-                    Date.now() +
-                      ((outcome.challenge_ttl_seconds ?? current.config.defaults.approval_ttl_seconds) * 1000),
-                  ).toISOString(),
-                  policy_version: current.config.policy_version,
-                  actor_id: approvalSubject,
-                  scope: approvalScope,
-                  tool_name: effectiveToolName,
-                  resource_scope: decisionContext.resource_scope,
-                  resource_paths: decisionContext.resource_paths,
-                  reason_codes: outcome.reason_codes,
-                  rule_ids: ruleIds,
-                  args_summary: argsSummary,
-                });
+                pending = createPendingApproval();
               }
 
               if (approvalBridge.targets.length > 0 && shouldResendPendingApproval(pending)) {
+                if (notificationResult.sent) {
+                  approvalStore.expirePending(pending.approval_id);
+                  pending = createPendingApproval();
+                  notificationResult = { sent: false, notifications: [] };
+                }
                 notificationResult = await notifyApprovalTargetsOnce(
                   api,
                   approvalBridge.targets,
@@ -2374,16 +3106,25 @@ const plugin = {
             block: true,
             blockReason:
               approvalBlockReason ??
-              formatToolBlockReason(
-                event.toolName,
-                decisionContext.scope,
-                traceId,
-                effectiveDecision,
-                effectiveDecisionSource,
-                decisionContext.resource_scope,
-                effectiveReasonCodes,
-                rules,
-              )
+              (approvalBridge.enabled
+                ? formatToolBlockReason(
+                  event.toolName,
+                  decisionContext.scope,
+                  traceId,
+                  effectiveDecision,
+                  effectiveDecisionSource,
+                  decisionContext.resource_scope,
+                  effectiveReasonCodes,
+                  rules,
+                )
+                : formatApprovalBridgeUnavailableReason({
+                  toolName: event.toolName,
+                  scope: decisionContext.scope,
+                  traceId,
+                  resourceScope: decisionContext.resource_scope,
+                  reasonCodes: effectiveReasonCodes,
+                  rules,
+                }))
           };
         }
 
@@ -2523,6 +3264,20 @@ const plugin = {
     api.on(
       "message_sending",
       async (event, ctx) => {
+        const conversationHintKey = [
+          ctx.channelId,
+          normalizeApprovalAccountId(ctx.accountId) ?? "",
+          ctx.conversationId?.trim() ?? "",
+        ].join("|");
+        const recentHint = recentApprovalConversationHints.get(conversationHintKey);
+        if (recentHint) {
+          if (recentHint.expiresAt > Date.now()) {
+            recentApprovalConversationHints.delete(conversationHintKey);
+            return { cancel: true };
+          }
+          recentApprovalConversationHints.delete(conversationHintKey);
+        }
+
         const current = getRuntime();
         const traceId = ctx.conversationId ?? ctx.accountId ?? `trace-${Date.now()}`;
         const sanitized = sanitizeUnknown(current.dlpEngine, event.content);

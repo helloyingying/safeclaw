@@ -329,6 +329,21 @@ export class ChatApprovalStore implements UserApprovalContextRepository {
     return updated;
   }
 
+  expirePending(approvalId: string): StoredApprovalRecord | undefined {
+    const existing = this.getById(approvalId);
+    if (!existing || existing.status !== "pending") {
+      return existing;
+    }
+
+    const updated: StoredApprovalRecord = {
+      ...existing,
+      status: "expired",
+    };
+
+    this.#write(updated);
+    return updated;
+  }
+
   listPending(limit = 10): StoredApprovalRecord[] {
     const rows = this.#db
       .prepare(

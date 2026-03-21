@@ -98,3 +98,36 @@ test("runtime override ignores group sessions marked as admin accounts", () => {
     false,
   );
 });
+
+test("runtime override ignores unsupported direct-message admin channels", () => {
+  const base = ConfigManager.fromFile("./config/policy.default.yaml").getConfig();
+  const strategy = buildStrategyV2FromConfig(base);
+  const overrideDirectory = "/tmp/securityclaw-runtime-override-unsupported-admin-test";
+  strategy.exceptions.directory_overrides = [
+    {
+      id: "unsupported-admin-should-not-apply",
+      directory: overrideDirectory,
+      decision: "allow",
+      operations: ["read"],
+      reason_codes: ["USER_FILE_RULE_ALLOW"],
+    },
+  ];
+
+  const next = applyRuntimeOverride(base, {
+    strategy,
+    account_policies: [
+      {
+        subject: "feishu:ops",
+        mode: "apply_rules",
+        is_admin: true,
+        channel: "feishu",
+        chat_type: "direct",
+      },
+    ],
+  });
+
+  assert.equal(
+    next.file_rules.some((rule) => rule.directory === overrideDirectory),
+    false,
+  );
+});

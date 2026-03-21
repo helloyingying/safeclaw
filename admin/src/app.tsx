@@ -58,6 +58,7 @@ import {
   pruneAccountPolicyOverrides,
 } from "../../src/admin/account_catalog.ts";
 import { canonicalizeAccountPolicies } from "../../src/domain/services/account_policy_engine.ts";
+import { canAssignAdminForAccount } from "../../src/domain/services/approval_channel.ts";
 import { resolveSecurityClawLocale } from "../../src/i18n/locale.ts";
 import {
   ACCOUNT_MODE_TEXT,
@@ -1315,7 +1316,10 @@ function App() {
     accountsPayload?.inactive_reason?.trim() ||
     (adminConfigured
       ? ui("管理员已经配置，但工具管理当前没有生效。", "An admin is configured, but tool management is not active.")
-      : ui("还没有管理员账号，所以工具策略不会生效。", "No admin account is configured, so tool management does not take effect."));
+      : ui(
+        "还没有可审批的管理员账号，所以工具策略不会生效。",
+        "No approval-capable admin account is configured, so tool management does not take effect.",
+      ));
   const normalizedFileRules = useMemo(() => normalizeFileRules(fileRules), [fileRules]);
   const normalizedNewFileRuleOperations = useMemo(
     () => normalizeFileRuleOperations(newFileRuleOperations),
@@ -2623,6 +2627,11 @@ function App() {
     const defaultApprovalLocale = getActiveAdminLocale();
     const session = availableSessions.find((item) => item.subject === subject);
     setAccountPolicies((current) => {
+      const existing = current.find((account) => account.subject === subject);
+      const candidate = existing ?? createAccountPolicyDraftFromSession(session, subject);
+      if (!canAssignAdminForAccount(candidate)) {
+        return pruneAccountPolicyOverrides(current);
+      }
       let next = current.map((account) =>
         account.subject === subject
           ? {

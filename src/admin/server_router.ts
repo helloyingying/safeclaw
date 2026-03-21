@@ -82,8 +82,8 @@ function buildManagementPayload(
     ...management,
     inactive_reason: localize(
       locale,
-      "还没有管理员账号，所以工具策略不会生效。",
-      "No admin account is configured, so tool management does not take effect.",
+      "还没有可审批的管理员账号。先选择 Telegram、Slack 或 Discord 私聊账号，工具策略才会生效。",
+      "No approval-capable admin account is configured. Choose a Telegram, Slack, or Discord DM account to activate tool management.",
     ),
   };
 }
@@ -114,13 +114,13 @@ function formatAccountManagementMessage(locale: Parameters<typeof localize>[0], 
   if (!management.admin_configured) {
     return localize(
       locale,
-      "账号策略已保存到本地 SQLite，但当前没有管理员，工具策略暂不会生效。",
-      "Account settings have been saved to local SQLite, but no admin is configured yet, so tool management is not active.",
+      "账号策略已保存到本地 SQLite，但当前没有可审批的管理员账号，工具策略暂不会生效。",
+      "Account settings have been saved to local SQLite, but no approval-capable admin account is configured yet, so tool management is not active.",
     );
   }
   return localize(
     locale,
-    "账号策略已保存到本地 SQLite，工具页里的提醒和审批会发给管理员账号。",
+    "账号策略已保存到本地 SQLite。工具页里的提醒和审批会发给管理员账号。",
     "Account settings have been saved to local SQLite. Tool approvals and warnings will go to the admin account.",
   );
 }

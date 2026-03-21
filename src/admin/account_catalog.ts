@@ -1,5 +1,5 @@
 import { AccountPolicyEngine } from "../domain/services/account_policy_engine.ts";
-import { isManageableAccountRecord } from "../domain/services/account_subject_classifier.ts";
+import { canAssignAdminForAccount } from "../domain/services/approval_channel.ts";
 import type { SecurityClawLocale } from "../i18n/locale.ts";
 import type { AccountPolicyRecord } from "../types.ts";
 import type { OpenClawChatSession } from "./openclaw_session_catalog.ts";
@@ -58,7 +58,7 @@ export function mergeAccountPoliciesWithSessions(
   sessions: OpenClawChatSession[],
 ): AccountPolicyRecord[] {
   const normalizedPolicies = AccountPolicyEngine.sanitize(policies);
-  const visibleSessions = sessions.filter((session) => isManageableAccountRecord(session));
+  const visibleSessions = sessions;
   const policyBySubject = new Map(normalizedPolicies.map((policy) => [policy.subject, policy]));
   const sessionOrder = new Map(visibleSessions.map((session, index) => [session.subject, index]));
   const merged: AccountPolicyRecord[] = [];
@@ -73,6 +73,12 @@ export function mergeAccountPoliciesWithSessions(
   }
 
   return merged.sort((left, right) => {
+    const leftApprovalCapable = canAssignAdminForAccount(left);
+    const rightApprovalCapable = canAssignAdminForAccount(right);
+    if (leftApprovalCapable !== rightApprovalCapable) {
+      return leftApprovalCapable ? -1 : 1;
+    }
+
     const leftOrder = sessionOrder.get(left.subject) ?? Number.MAX_SAFE_INTEGER;
     const rightOrder = sessionOrder.get(right.subject) ?? Number.MAX_SAFE_INTEGER;
     if (leftOrder !== rightOrder) {
