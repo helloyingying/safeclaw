@@ -259,3 +259,105 @@ test("openclaw config client requires rpc when writable access is requested", as
     /gateway unavailable/i,
   );
 });
+
+test("openclaw config client falls back to the resolved cli entry when the openclaw binary is unavailable", async () => {
+  const client = new OpenClawConfigClient(runtime, {
+    resolveCliEntry() {
+      return "/tmp/openclaw.mjs";
+    },
+  });
+  const internalClient = client as unknown as {
+    runCli: (args: string[], timeoutMs?: number) => Promise<{
+      status: number | null;
+      stdout?: string;
+      stderr?: string;
+      error?: unknown;
+    }>;
+    runCliWithCommand: (command: string, args: string[], timeoutMs: number) => Promise<{
+      status: number | null;
+      stdout?: string;
+      stderr?: string;
+      error?: unknown;
+    }>;
+  };
+  const calls: Array<{ command: string; args: string[]; timeoutMs: number }> = [];
+
+  internalClient.runCliWithCommand = async (command, args, timeoutMs) => {
+    calls.push({ command, args, timeoutMs });
+    if (calls.length === 1) {
+      const error = Object.assign(new Error("openclaw not found"), { code: "ENOENT" });
+      return {
+        status: null,
+        stdout: "",
+        stderr: "",
+        error,
+      };
+    }
+    return {
+      status: 0,
+      stdout: '{"ok":true}',
+      stderr: "",
+    };
+  };
+
+  const result = await internalClient.runCli(["gateway", "status"], 3210);
+
+  assert.deepEqual(calls, [
+    {
+      command: "openclaw",
+      args: ["gateway", "status"],
+      timeoutMs: 3210,
+    },
+    {
+      command: process.execPath,
+      args: ["/tmp/openclaw.mjs", "gateway", "status"],
+      timeoutMs: 3210,
+    },
+  ]);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '{"ok":true}');
+});
+
+test("openclaw config client worker runner captures stdout without child_process in the caller", async () => {
+  const client = new OpenClawConfigClient(runtime);
+  const internalClient = client as unknown as {
+    runCliWithCommand: (command: string, args: string[], timeoutMs: number) => Promise<{
+      status: number | null;
+      stdout?: string;
+      stderr?: string;
+      error?: unknown;
+    }>;
+  };
+
+  const result = await internalClient.runCliWithCommand(
+    process.execPath,
+    ["-e", "process.stdout.write('{\"ok\":true}')"],
+    2000,
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, "{\"ok\":true}");
+  assert.equal(result.stderr, "");
+  assert.equal(result.error, undefined);
+});
+
+test("openclaw config client worker runner reports timeouts", async () => {
+  const client = new OpenClawConfigClient(runtime);
+  const internalClient = client as unknown as {
+    runCliWithCommand: (command: string, args: string[], timeoutMs: number) => Promise<{
+      status: number | null;
+      stdout?: string;
+      stderr?: string;
+      error?: unknown;
+    }>;
+  };
+
+  const result = await internalClient.runCliWithCommand(
+    process.execPath,
+    ["-e", "setTimeout(() => {}, 5000)"],
+    100,
+  );
+
+  assert.equal(result.status, null);
+  assert.match(String(result.error), /timed out/i);
+});

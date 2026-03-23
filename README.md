@@ -1,6 +1,7 @@
 # SecurityClaw
 
 [中文文档](./README.zh-CN.md)
+
 [X / @znarygo](https://x.com/znarygo)
 
 > **Use OpenClaw on your primary machine with confidence.**

@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { Worker } from "node:worker_threads";
 
 import { resolveOpenClawWorkspaceFromConfig } from "../domain/services/openclaw_workspace_resolver.ts";
 import type { AdminRuntime } from "./server_types.ts";
@@ -16,6 +16,7 @@ type OpenClawConfigClientDeps = {
   runCli?: (args: string[], timeoutMs?: number) => RunProcessSyncResult | Promise<RunProcessSyncResult>;
   loadLocalConfig?: () => Promise<unknown>;
   hardeningCache?: HardeningCache;
+  resolveCliEntry?: () => string | undefined;
 };
 
 type ReadConfigSnapshotOptions = {
@@ -23,18 +24,56 @@ type ReadConfigSnapshotOptions = {
   requireWritable?: boolean;
 };
 
-const requireFromHere = createRequire(import.meta.url);
-const OPENCLAW_ENTRY = requireFromHere.resolve("openclaw");
-const OPENCLAW_CLI_ENTRY = path.resolve(path.dirname(OPENCLAW_ENTRY), "../openclaw.mjs");
 const DEFAULT_RPC_TIMEOUT_MS = 15000;
 const FAST_RPC_TIMEOUT_MS = 8000;
 const FAST_RPC_GRACE_MS = 1200;
 const MAX_BOOTSTRAP_AUDIT_CHARS = 120000;
+const requireFromHere = createRequire(import.meta.url);
+const PROCESS_RUNNER_WORKER_URL = new URL("../runtime/process_runner_worker.mjs", import.meta.url);
 const OPENCLAW_CLI_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   OPENCLAW_HIDE_BANNER: "1",
   OPENCLAW_SUPPRESS_NOTES: "1",
 };
+
+function tryResolveModulePath(specifier: string): string | undefined {
+  try {
+    return requireFromHere.resolve(specifier);
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveRunningOpenClawCliEntry(): string | undefined {
+  const entry = typeof process.argv[1] === "string" ? process.argv[1].trim() : "";
+  if (!entry) {
+    return undefined;
+  }
+  const resolved = path.resolve(entry);
+  const distDir = path.dirname(resolved);
+  if (path.basename(resolved) !== "index.js" || path.basename(distDir) !== "dist") {
+    return undefined;
+  }
+  const packageDir = path.dirname(distDir);
+  return path.basename(packageDir) === "openclaw"
+    ? path.join(packageDir, "openclaw.mjs")
+    : undefined;
+}
+
+function resolveOpenClawCliEntry(): string | undefined {
+  const runtimeCliEntry = resolveRunningOpenClawCliEntry();
+  if (runtimeCliEntry) {
+    return runtimeCliEntry;
+  }
+  const exportedCliEntry = tryResolveModulePath("openclaw/cli-entry");
+  if (exportedCliEntry) {
+    return exportedCliEntry;
+  }
+  const openClawEntry = tryResolveModulePath("openclaw");
+  return openClawEntry
+    ? path.resolve(path.dirname(openClawEntry), "../openclaw.mjs")
+    : undefined;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -44,6 +83,37 @@ function readErrnoCode(error: unknown): string {
   return typeof error === "object" && error && "code" in error && typeof error.code === "string"
     ? error.code
     : "";
+}
+
+function restoreProcessError(error: unknown, timeoutMs: number): unknown {
+  const record = asRecord(error);
+  const message = typeof record.message === "string" ? record.message : String(error);
+  const code = typeof record.code === "string" ? record.code : "";
+  if (code === "ETIMEDOUT" || /timed out/i.test(message)) {
+    return new Error(`OpenClaw command timed out after ${timeoutMs}ms`);
+  }
+  const restored = new Error(message || "OpenClaw command failed");
+  if (typeof record.name === "string" && record.name) {
+    restored.name = record.name;
+  }
+  if (code) {
+    (restored as NodeJS.ErrnoException).code = code;
+  }
+  return restored;
+}
+
+function normalizeProcessWorkerResult(value: unknown, timeoutMs: number): RunProcessSyncResult {
+  const record = asRecord(value);
+  const status = record.status === null || typeof record.status === "number" ? record.status : null;
+  const stdout = typeof record.stdout === "string" ? record.stdout : "";
+  const stderr = typeof record.stderr === "string" ? record.stderr : "";
+  const error = "error" in record ? restoreProcessError(record.error, timeoutMs) : undefined;
+  return {
+    status,
+    stdout,
+    stderr,
+    ...(error ? { error } : {}),
+  };
 }
 
 function extractJsonPayload(raw: string): unknown {
@@ -210,50 +280,66 @@ export class OpenClawConfigClient {
 
   private runCliWithCommand(command: string, args: string[], timeoutMs: number): Promise<RunProcessSyncResult> {
     return new Promise((resolve) => {
-      let stdout = "";
-      let stderr = "";
-      let processError: unknown;
-      let timedOut = false;
-
-      const child = spawn(command, args, {
-        cwd: this.runtime.openClawHome,
-        env: OPENCLAW_CLI_ENV,
-        stdio: "pipe",
-        windowsHide: true,
-      });
-
-      child.stdout?.setEncoding("utf8");
-      child.stderr?.setEncoding("utf8");
-      child.stdout?.on("data", (chunk: string) => {
-        stdout += chunk;
-      });
-      child.stderr?.on("data", (chunk: string) => {
-        stderr += chunk;
-      });
-      child.on("error", (error) => {
-        processError = error;
-      });
-
-      const timer = timeoutMs > 0
-        ? setTimeout(() => {
-            timedOut = true;
-            processError = new Error(`OpenClaw command timed out after ${timeoutMs}ms`);
-            child.kill("SIGKILL");
-          }, timeoutMs)
-        : null;
-
-      child.on("close", (code) => {
-        if (timer) {
-          clearTimeout(timer);
+      let settled = false;
+      const finish = (result: RunProcessSyncResult) => {
+        if (settled) {
+          return;
         }
-        resolve({
-          status: timedOut ? null : code,
-          stdout,
-          stderr,
-          ...(processError ? { error: processError } : {}),
+        settled = true;
+        resolve(result);
+      };
+
+      try {
+        const worker = new Worker(PROCESS_RUNNER_WORKER_URL, {
+          workerData: {
+            command,
+            args,
+            timeoutMs,
+            cwd: this.runtime.openClawHome,
+            env: OPENCLAW_CLI_ENV,
+          },
         });
-      });
+        worker.once("message", (value) => {
+          finish(normalizeProcessWorkerResult(value, timeoutMs));
+        });
+        worker.once("error", (error) => {
+          finish({
+            status: null,
+            stdout: "",
+            stderr: "",
+            error,
+          });
+        });
+        worker.once("exit", (code) => {
+          if (settled) {
+            return;
+          }
+          finish({
+            status: null,
+            stdout: "",
+            stderr: "",
+            error: new Error(
+              code === 0
+                ? "OpenClaw command worker exited before returning a result"
+                : `OpenClaw command worker exited with code ${code}`,
+            ),
+          });
+        });
+      } catch (error) {
+        finish({
+          status: null,
+          stdout: "",
+          stderr: "",
+          error,
+        });
+      }
     });
+  }
+
+  private resolveCliEntry(): string | undefined {
+    return typeof this.deps.resolveCliEntry === "function"
+      ? this.deps.resolveCliEntry()
+      : resolveOpenClawCliEntry();
   }
 
   private async runCli(args: string[], timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<RunProcessSyncResult> {
@@ -265,7 +351,11 @@ export class OpenClawConfigClient {
     if (!directError || directError.code !== "ENOENT") {
       return direct;
     }
-    return this.runCliWithCommand(process.execPath, [OPENCLAW_CLI_ENTRY, ...args], timeoutMs);
+    const cliEntry = this.resolveCliEntry();
+    if (!cliEntry) {
+      return direct;
+    }
+    return this.runCliWithCommand(process.execPath, [cliEntry, ...args], timeoutMs);
   }
 
   private async loadLocalConfig(): Promise<unknown> {
